@@ -1,0 +1,4 @@
+# Large mesh assets should be stored in Git LFS, not regular Git objects.
+*.obj filter=lfs diff=lfs merge=lfs -text
+*.glb filter=lfs diff=lfs merge=lfs -text
+*.gltf filter=lfs diff=lfs merge=lfs -text

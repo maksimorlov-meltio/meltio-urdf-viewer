@@ -1,0 +1,46 @@
+# --- Python virtual environments (created locally per README setup) ---
+.venv/
+venv/
+venv311/
+env/
+
+# --- Python caches / build artifacts ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# --- Node / frontend build output ---
+node_modules/
+
+# --- Local dataset / cache artifacts (large, regenerated locally) ---
+**/projects/avisualizer/database/
+**/*.cache.npz
+Sensors.csv
+
+# --- Secrets & local env (never commit real values) ---
+.env
+*.env
+!*.env.example
+
+# --- Editor / OS / tooling noise ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
+.playwright-mcp/
+
+# --- Launcher's dedicated browser profile (if ever created here) ---
+MeltioViewer/
+
+# Raw mesh sources / heavy media not needed at runtime (URDF uses .glb)
+**/assets/*/OBJ_Files/
+**/seed_data/
+*.mp4

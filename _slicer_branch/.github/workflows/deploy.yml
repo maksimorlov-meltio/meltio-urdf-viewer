@@ -1,0 +1,138 @@
+name: build-and-publish
+
+# Build the service images and deploy to the prod server on push to main.
+# Only the image whose source changed is rebuilt, so a platform-only change no
+# longer rebuilds/redeploys orbit + slicer.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      orbit: ${{ steps.f.outputs.orbit }}
+      aslicer: ${{ steps.f.outputs.aslicer }}
+      platform: ${{ steps.f.outputs.platform }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dorny/paths-filter@v3
+        id: f
+        with:
+          filters: |
+            orbit:
+              - 'projects/avisualizer/**'
+            aslicer:
+              - 'projects/aslicer/**'
+            platform:
+              - 'projects/platform/**'
+
+  build:
+    needs: changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write          # required to push to GHCR
+    strategy:
+      matrix:
+        include:
+          - name: orbit
+            context: ./projects/avisualizer
+          - name: aslicer
+            context: ./projects/aslicer
+          - name: platform
+            context: ./projects/platform
+    steps:
+      - name: Checkout
+        if: needs.changes.outputs[matrix.name] == 'true'
+        uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        if: needs.changes.outputs[matrix.name] == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Lowercase the image owner
+        if: needs.changes.outputs[matrix.name] == 'true'
+        id: owner
+        run: echo "name=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Short commit SHA
+        if: needs.changes.outputs[matrix.name] == 'true'
+        id: ver
+        run: echo "v=$(echo "${GITHUB_SHA}" | cut -c1-7)" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        if: needs.changes.outputs[matrix.name] == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push ${{ matrix.name }}
+        if: needs.changes.outputs[matrix.name] == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          push: true
+          build-args: |
+            PLATFORM_VERSION=${{ steps.ver.outputs.v }}
+          tags: |
+            ghcr.io/${{ steps.owner.outputs.name }}/${{ matrix.name }}:latest
+            ghcr.io/${{ steps.owner.outputs.name }}/${{ matrix.name }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+  deploy:
+    needs: [build, changes]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Sync compose files to server
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          scp -i ~/.ssh/deploy_key docker-compose.yml docker-compose.prod.yml \
+            "$SSH_USER@$SSH_HOST:~/meltio/"
+
+      - name: Pull new images and restart
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          ORBIT: ${{ needs.changes.outputs.orbit }}
+          ASLICER: ${{ needs.changes.outputs.aslicer }}
+          PLATFORM: ${{ needs.changes.outputs.platform }}
+        run: |
+          # Only the services rebuilt this run get --force-recreate, so a
+          # platform-only deploy doesn't needlessly restart orbit/slicer. (plain
+          # up -d did not reliably swap a container onto its freshly-pulled image.)
+          FORCE=""
+          [ "$ORBIT" = "true" ] && FORCE="$FORCE orbit"
+          [ "$ASLICER" = "true" ] && FORCE="$FORCE slicer"   # compose service is 'slicer'
+          [ "$PLATFORM" = "true" ] && FORCE="$FORCE platform"
+          # Build the remote command locally so $FORCE expands here, while \$C / \$n
+          # stay literal and expand on the server.
+          REMOTE="cd ~/meltio && C='docker compose -f docker-compose.yml -f docker-compose.prod.yml' && n=0 && until \$C pull; do n=\$((n+1)); if [ \$n -ge 5 ]; then echo 'compose pull failed' >&2; exit 1; fi; echo 'compose pull failed; retrying in 15s' >&2; sleep 15; done && \$C up -d"
+          [ -n "$FORCE" ] && REMOTE="$REMOTE && \$C up -d --force-recreate$FORCE"
+          REMOTE="$REMOTE && \$C ps && docker image prune -f"
+          ssh -i ~/.ssh/deploy_key "$SSH_USER@$SSH_HOST" "$REMOTE"

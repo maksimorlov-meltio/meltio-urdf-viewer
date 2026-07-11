@@ -1,0 +1,42 @@
+.venv/
+node_modules/
+.env
+# Secrets (tunnel tokens, PATs, etc.) — never commit
+token/
+tokens/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+.coverage
+htmlcov/
+*.log
+.vscode/
+.DS_Store
+bin/
+obj/
+build/
+dist/
+*.spec
+
+# Local dataset/cache artifacts not meant for git history
+projects/avisualizer/database/SN92_Octagon-20/Sensors.csv
+# Runtime-seeded aslicer machine profiles (regenerated on first launch)
+projects/aslicer/profiles/
+projects/avisualizer/database/*/Sensors.*.cache.npz
+projects/avisualizer/database/02-06-2026 12.09 Head Factory/
+projects/avisualizer/database/05-06-2026 16.02 Night Failure/
+projects/avisualizer/database/08-06-2026 18.00 Head Gerardo Success/
+projects/avisualizer/database/08-06-2026 18.00/
+projects/avisualizer/database/09-06-2026 09.40 Head Gerardo Fast Failure/
+projects/avisualizer/database/09-06-2026 17.01/
+projects/avisualizer/database/SN02_Alinox-17.5_P1ofV1_V51(M260611095836)_260615161247/
+projects/avisualizer/database/H11_Facchetti_NoPause_18_23_gradi_2_260608183606/
+projects/avisualizer/database/H11_Facchetti_NoPause_18_23_gradi_2_260609072550/
+projects/avisualizer/database/H11_Facchetti_NoPause_18_23_gradi_2_260609085149/
+projects/avisualizer/database/H11_Facchetti_NoPause_18_23_gradi_2_260609102719/
+projects/avisualizer/database/H11_Facchetti_NoPause_18_23_gradi_2_260609143145/
+# small-torture-test STL is the bundled default sample — keep it tracked
+
+# Local Playwright e2e harness (not shipped)
+.e2e/

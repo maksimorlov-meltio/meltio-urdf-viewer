@@ -1,0 +1,126 @@
+# Beta channel for the platform only. Adds a SEPARATE platform instance
+# (platform-beta) with its own Postgres + MinIO, in the same compose project as
+# prod so the existing cloudflared can route a public hostname to it. It does NOT
+# touch the prod orbit/slicer/platform — iterate on the `beta` branch freely.
+#
+# Deploy (only the beta services):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+#     -f docker-compose.beta.yml up -d platform-beta db-beta minio-beta
+#
+# Then add a Cloudflare public hostname  beta.meltio.cloud -> platform-beta:8090
+# (+ an Access app) once.
+#
+# Pixel streaming (screencast) on beta is OFF until you (1) `export
+# PLATFORM_RENDER_SECRET=<shared>` and `PLATFORM_RENDER_URL=wss://render-beta.meltio.cloud`
+# on the host, (2) add a Cloudflare hostname render-beta.meltio.cloud -> render-beta:8092
+# (+ Access), then (3) `up -d render-beta platform-beta`. See docs/PIXEL_STREAMING.md.
+name: meltio
+
+services:
+  platform-beta:
+    image: ghcr.io/${IMAGE_OWNER:-machine-software}/platform:beta
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql+psycopg://meltio:meltio@db-beta:5432/meltio
+      - PLATFORM_DEV_USER_EMAIL=${PLATFORM_DEV_USER_EMAIL:-}
+      - PLATFORM_SUPERUSER_EMAILS=${PLATFORM_SUPERUSER_EMAILS:-}
+      - PLATFORM_S3_ENDPOINT_URL=http://minio-beta:9000
+      - PLATFORM_S3_REGION=${PLATFORM_S3_REGION:-eu-north-1}
+      - PLATFORM_S3_BUCKET=meltio-platform-beta
+      - PLATFORM_S3_ACCESS_KEY=${PLATFORM_S3_ACCESS_KEY:-minioadmin}
+      - PLATFORM_S3_SECRET_KEY=${PLATFORM_S3_SECRET_KEY:-minioadmin}
+      # Pixel streaming — empty PLATFORM_RENDER_URL keeps it off (safe default).
+      - PLATFORM_RENDER_URL=${PLATFORM_RENDER_URL:-}
+      - PLATFORM_RENDER_SECRET=${PLATFORM_RENDER_SECRET:-}
+      # WebRTC viewer ICE servers (TURN) handed to the browser — public EIP address.
+      - PLATFORM_RENDER_ICE_SERVERS=${PLATFORM_RENDER_ICE_SERVERS:-}
+    expose:
+      - "8090"
+    depends_on:
+      db-beta:
+        condition: service_healthy
+      minio-beta:
+        condition: service_started
+
+  # Pixel-streaming render service for beta (headless Chromium). Internal-only
+  # until a Cloudflare hostname routes render-beta.meltio.cloud -> render-beta:8092.
+  # Small warm pool to keep idle cost low on the shared box.
+  render-beta:
+    image: ghcr.io/${IMAGE_OWNER:-machine-software}/platform-render:beta
+    restart: unless-stopped
+    environment:
+      - PLATFORM_URL=http://platform-beta:8090
+      - PLATFORM_RENDER_SECRET=${PLATFORM_RENDER_SECRET:-}
+      - RENDER_ALLOW_DEBUG_FRAME=0
+      - RENDER_POOL_SIZE=${RENDER_POOL_SIZE:-1}
+      - RENDER_MAX_SESSIONS=${RENDER_MAX_SESSIONS:-4}
+      # Screencast tuning — set in .env to dial quality/rate without a rebuild.
+      - RENDER_JPEG_QUALITY=${RENDER_JPEG_QUALITY:-60}
+      - RENDER_EVERY_NTH=${RENDER_EVERY_NTH:-1}
+      # WebRTC (Phase 1+): ICE servers for the in-page peer. The render peer reaches
+      # coturn via the host gateway (no EIP hairpin from inside the instance); coturn
+      # hands out relay candidates on the public EIP. Empty = screenshot path only.
+      - RENDER_ICE_SERVERS=${RENDER_ICE_SERVERS:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose:
+      - "8092"
+    depends_on:
+      platform-beta:
+        condition: service_started
+
+  # TURN/STUN server for WebRTC media (3D pixel streaming). WebRTC media is UDP and
+  # the Cloudflare Tunnel only carries TCP/WS, so the headless render peer gets a
+  # publicly reachable relay candidate from here. Host networking so the relay binds
+  # the EC2 interface directly — needs SG inbound UDP 3478 + 49160-49200.
+  coturn-beta:
+    image: coturn/coturn:4.6
+    restart: unless-stopped
+    network_mode: host
+    command:
+      - -n
+      - --log-file=stdout
+      - --listening-port=3478
+      - --min-port=49160
+      - --max-port=49200
+      - --realm=meltio.cloud
+      - --fingerprint
+      - --lt-cred-mech
+      - --user=meltio:${TURN_PASSWORD:-changeme}
+      - --external-ip=${TURN_EXTERNAL_IP:-51.21.52.142}
+      - --no-tls
+      - --no-dtls
+      - --no-multicast-peers
+
+  db-beta:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=meltio
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-meltio}
+      - POSTGRES_DB=meltio
+    volumes:
+      - platform_beta_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U meltio"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    expose:
+      - "5432"
+
+  minio-beta:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=${PLATFORM_S3_ACCESS_KEY:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${PLATFORM_S3_SECRET_KEY:-minioadmin}
+    volumes:
+      - platform_beta_objects:/data
+    expose:
+      - "9000"
+
+volumes:
+  platform_beta_db:
+  platform_beta_objects:

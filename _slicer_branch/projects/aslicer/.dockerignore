@@ -1,0 +1,11 @@
+# Keep caches, virtualenvs, build artifacts and tests out of the image.
+.venv/
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+**/.pytest_cache/
+tests/
+dist/
+build/
+*.egg-info/
+.git/

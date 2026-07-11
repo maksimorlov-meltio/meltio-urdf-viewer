@@ -1,0 +1,447 @@
+<?xml version="1.0"?>
+<robot name="M600_PRO">
+
+  <!-- ===================== LINKS ===================== -->
+
+  <!-- Base / anchor component -->
+  <link name="chassis_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <geometry>
+        <mesh filename="Chassis.glb" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <link name="front_door_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <geometry>
+        <mesh filename="Front Door.glb" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <link name="spools_door_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <geometry>
+        <mesh filename="Spools Door.glb" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <link name="top_cover_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <geometry>
+        <mesh filename="Top Cover.glb" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <link name="gas_spring_main_part_left_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <geometry>
+        <mesh filename="Gas Spring Main Part Left.glb" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <link name="gas_spring_main_part_right_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <geometry>
+        <mesh filename="Gas Spring Main Part Right.glb" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <link name="gas_spring_secondary_part_left_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <geometry>
+        <mesh filename="Gas Spring Secondary Part Left.glb" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <link name="gas_spring_secondary_part_right_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <geometry>
+        <mesh filename="Gas Spring Secondary Part Right.glb" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <link name="palpador_pro_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <geometry>
+        <mesh filename="Palpador PRO.glb" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <link name="wire_spool_door_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <geometry>
+        <mesh filename="Wire Drum Door.glb" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <link name="wire_drum_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <geometry>
+        <mesh filename="Wire Drum.glb" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <link name="handle_link">
+    <visual>
+      <origin xyz="-0.002 0.009 0" rpy="0 3.141592653589793 0"/>
+      <geometry>
+        <mesh filename="Handle.glb" scale="0.0254 0.0254 0.0254"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <link name="handle_x_pivot_link"/>
+
+  <link name="user_step_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <geometry>
+        <mesh filename="User Step.glb" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <link name="z_axis_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <geometry>
+        <mesh filename="Z axis.glb" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <link name="eje_x_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <geometry>
+        <mesh filename="Eje X.glb" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <link name="eje_y_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <geometry>
+        <mesh filename="Eje Y.glb" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <link name="spool_1_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <geometry>
+        <mesh filename="Spool Cooper.glb" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <link name="spool_2_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <geometry>
+        <mesh filename="Spool Stainless Steel.glb" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <link name="display_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <geometry>
+        <mesh filename="Display.glb" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <link name="head_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <geometry>
+        <mesh filename="Head.glb" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <link name="feeder_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <geometry>
+        <mesh filename="Feeder.glb" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <link name="central_feeder_wheel_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <geometry>
+        <mesh filename="Central Feeder Wheel.glb" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <link name="left_feeder_wheel_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <geometry>
+        <mesh filename="Left Feeder Wheel.glb" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <link name="right_feeder_wheel_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <geometry>
+        <mesh filename="Right Feeder Wheel.glb" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <!-- ===================== JOINTS ===================== -->
+
+  <!-- Chassis -> Front Door -->
+  <!-- Parent reference: X=515 mm, Y=162.25 mm, Z=-546 mm -->
+  <!-- Child reference:  X=0 mm,   Y=0 mm,      Z=0 mm -->
+  <!-- Revolute about Y axis, limits 0 to 120 degrees -->
+  <joint name="front_door_joint" type="revolute">
+    <parent link="chassis_link"/>
+    <child link="front_door_link"/>
+    <origin xyz="0.515 0.16225 -0.546" rpy="0 0 0"/>
+    <axis xyz="0 -1 0"/>
+    <limit lower="0" upper="2.0943951023931953" effort="1000" velocity="1.0"/>
+  </joint>
+
+  <!-- Chassis -> Spools Door -->
+  <!-- Parent reference: X=-530.724 mm, Y=736 mm, Z=-371.705 mm -->
+  <!-- Child reference:  X=0 mm,       Y=0 mm, Z=0 mm -->
+  <!-- Revolute about Y axis, limits 0 to 90 degrees (single direction) -->
+  <joint name="spools_door_joint" type="revolute">
+    <parent link="chassis_link"/>
+    <child link="spools_door_link"/>
+    <origin xyz="-0.534 0.736 -0.374" rpy="0 0 0"/>
+    <axis xyz="0 -1 0"/>
+    <limit lower="0" upper="1.5707963267948966" effort="1000" velocity="1.0"/>
+  </joint>
+
+  <!-- Spools Door -> Wire Spool Door -->
+  <joint name="wire_spool_door_joint" type="revolute">
+    <parent link="spools_door_link"/>
+    <child link="wire_spool_door_link"/>
+    <origin xyz="0.0147 0.4681 0.509" rpy="0 0 0"/>
+    <axis xyz="0 0 -1"/>
+    <limit lower="0" upper="0.6108652381980153" effort="1000" velocity="1.0"/>
+  </joint>
+
+  <!-- Chassis -> Wire Drum (fixed) -->
+  <joint name="wire_drum_joint" type="fixed">
+    <parent link="chassis_link"/>
+    <child link="wire_drum_link"/>
+    <origin xyz="-1.265 0.67 0.3137" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Spools Door -> Handle (Y-axis only, 0 to 90 degrees) -->
+  <joint name="handle_joint" type="revolute">
+    <parent link="spools_door_link"/>
+    <child link="handle_x_pivot_link"/>
+    <origin xyz="0.0088 0.3735 0.63" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="0" upper="1.5707963267948966" effort="1000" velocity="1.0"/>
+  </joint>
+
+  <!-- Handle extra DOF -> Handle mesh (Z-axis rotation with +2 mm X and -19 mm Y pivot, 0 to 90 degrees) -->
+  <joint name="handle_z_joint" type="revolute">
+    <parent link="handle_x_pivot_link"/>
+    <child link="handle_link"/>
+    <origin xyz="0.002 -0.019 0" rpy="0 0 0"/>
+    <axis xyz="0 0 -1"/>
+    <limit lower="0" upper="1.5707963267948966" effort="1000" velocity="1.0"/>
+  </joint>
+
+  <!-- Chassis -> Top Cover -->
+  <!-- Parent reference: X=338.65 mm, Y=1808.4 mm, Z=-404.5 mm -->
+  <!-- Child reference:  X=0 mm,      Y=0 mm,      Z=0 mm -->
+  <!-- Revolute about Z axis, limits 0 to 40 degrees -->
+  <joint name="top_cover_joint" type="revolute">
+    <parent link="chassis_link"/>
+    <child link="top_cover_link"/>
+    <origin xyz="0.34265 1.8124 -0.4045" rpy="0 0 0"/>
+    <axis xyz="0 0 -1"/>
+    <limit lower="0" upper="0.6981317007977318" effort="1000" velocity="1.0"/>
+  </joint>
+
+  <!-- Top Cover -> Gas Spring Secondary Part Left -->
+  <!-- Revolute about Z axis, range +80.5 to +68 degrees -->
+  <joint name="gas_spring_secondary_part_left_joint" type="revolute">
+    <parent link="top_cover_link"/>
+    <child link="gas_spring_secondary_part_left_link"/>
+    <origin xyz="-0.489 -0.03 -0.0496" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="1.4049900478554354" upper="1.1868238913561442" effort="1000" velocity="1.0"/>
+  </joint>
+
+  <!-- Top Cover -> Gas Spring Secondary Part Right -->
+  <!-- Revolute about Z axis, range +80.5 to +68 degrees -->
+  <joint name="gas_spring_secondary_part_right_joint" type="revolute">
+    <parent link="top_cover_link"/>
+    <child link="gas_spring_secondary_part_right_link"/>
+    <origin xyz="-0.49 -0.03 0.689" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="1.4049900478554354" upper="1.1868238913561442" effort="1000" velocity="1.0"/>
+  </joint>
+
+  <!-- Chassis -> Gas Spring Main Part Left -->
+  <!-- Revolute about Z axis, lower 80.5 degrees and upper 28 degrees -->
+  <joint name="gas_spring_main_part_left_joint" type="revolute">
+    <parent link="chassis_link"/>
+    <child link="gas_spring_main_part_left_link"/>
+    <origin xyz="0.1446 1.7328 -0.4535" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="1.4049900478554354" upper="0.4886921905584123" effort="1000" velocity="1.0"/>
+  </joint>
+
+  <!-- Chassis -> Gas Spring Main Part Right -->
+  <!-- Revolute about Z axis, lower 80.5 degrees and upper 28 degrees -->
+  <joint name="gas_spring_main_part_right_joint" type="revolute">
+    <parent link="chassis_link"/>
+    <child link="gas_spring_main_part_right_link"/>
+    <origin xyz="0.1446 1.7328 0.2848" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+            <limit lower="1.4049900478554354" upper="0.4886921905584123" effort="1000" velocity="1.0"/>
+  </joint>
+
+  <!-- Chassis -> Palpador PRO -->
+  <!-- Linear movement (prismatic) -->
+  <joint name="palpador_pro_joint" type="prismatic">
+    <parent link="chassis_link"/>
+    <child link="palpador_pro_link"/>
+    <origin xyz="0.337 1.3845 0.23" rpy="0 0 0"/>
+    <axis xyz="-1 0 0"/>
+    <limit lower="0" upper="0.417" effort="1000" velocity="1.0"/>
+  </joint>
+
+  <!-- Chassis -> User Step -->
+  <joint name="user_step_joint" type="fixed">
+    <parent link="chassis_link"/>
+    <child link="user_step_link"/>
+    <origin xyz="-0.526 0.210 -0.4075" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Chassis -> Z axis -->
+  <joint name="z_axis_joint" type="prismatic">
+    <parent link="chassis_link"/>
+    <child link="z_axis_link"/>
+    <origin xyz="0.3423 0.6 -0.1608" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="0" upper="0.65" effort="1000" velocity="1.0"/>
+  </joint>
+
+  <!-- Z axis -> Eje X -->
+  <joint name="eje_x_joint" type="prismatic">
+    <parent link="z_axis_link"/>
+    <child link="eje_x_link"/>
+    <origin xyz="-0.265 -0.1531 0.1269" rpy="0 0 0"/>
+    <axis xyz="-1 0 0"/>
+    <limit lower="0" upper="0.316" effort="1000" velocity="1.0"/>
+  </joint>
+
+  <!-- Eje X -> Eje Y -->
+  <joint name="eje_y_joint" type="prismatic">
+    <parent link="eje_x_link"/>
+    <child link="eje_y_link"/>
+    <origin xyz="-0.0041 0.08248 0" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-0.203" upper="0.210" effort="1000" velocity="1.0"/>
+  </joint>
+
+  <!-- Chassis -> Spool 1 -->
+  <joint name="spool_1_joint" type="revolute">
+    <parent link="chassis_link"/>
+    <child link="spool_1_link"/>
+    <origin xyz="-0.3905 1.27 -0.004" rpy="0 0 0"/>
+    <axis xyz="-1 0 0"/>
+    <limit lower="0" upper="12.566370614359172" effort="1000" velocity="1.0"/>
+  </joint>
+
+  <!-- Chassis -> Spool 2 -->
+  <joint name="spool_2_joint" type="revolute">
+    <parent link="chassis_link"/>
+    <child link="spool_2_link"/>
+    <origin xyz="-0.3905 0.87 0.058" rpy="0 0 0"/>
+    <axis xyz="-1 0 0"/>
+    <limit lower="0" upper="12.566370614359172" effort="1000" velocity="1.0"/>
+  </joint>
+
+  <!-- Chassis -> Display -->
+  <joint name="display_joint" type="fixed">
+    <parent link="chassis_link"/>
+    <child link="display_link"/>
+    <origin xyz="-0.5255 1.205 -0.46" rpy="0.06981317007977318 0 0"/>
+  </joint>
+
+  <!-- Chassis -> Head -->
+  <joint name="head_joint" type="fixed">
+    <parent link="chassis_link"/>
+    <child link="head_link"/>
+    <origin xyz="-0.0255 1.4855 -0.1018" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Head -> Feeder -->
+  <joint name="feeder_joint" type="fixed">
+    <parent link="head_link"/>
+    <child link="feeder_link"/>
+    <origin xyz="-0.041 0.1516 -0.059" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Feeder -> Central Feeder Wheel -->
+  <joint name="central_feeder_wheel_joint" type="revolute">
+    <parent link="feeder_link"/>
+    <child link="central_feeder_wheel_link"/>
+    <origin xyz="0.01625 -0.07 0.0589" rpy="0 0 0"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="-12.566370614359172" upper="12.566370614359172" effort="1000" velocity="1.0"/>
+  </joint>
+
+  <!-- Feeder -> Left Feeder Wheel -->
+  <joint name="left_feeder_wheel_joint" type="revolute">
+    <parent link="feeder_link"/>
+    <child link="left_feeder_wheel_link"/>
+    <origin xyz="0.01625 -0.076 0.0355" rpy="0 0 0"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="-12.566370614359172" upper="12.566370614359172" effort="1000" velocity="1.0"/>
+  </joint>
+
+  <!-- Feeder -> Right Feeder Wheel -->
+  <joint name="right_feeder_wheel_joint" type="revolute">
+    <parent link="feeder_link"/>
+    <child link="right_feeder_wheel_link"/>
+    <origin xyz="0.01625 -0.076 0.0805" rpy="0 0 0"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="-12.566370614359172" upper="12.566370614359172" effort="1000" velocity="1.0"/>
+  </joint>
+
+</robot>

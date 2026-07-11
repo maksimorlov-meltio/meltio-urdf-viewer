@@ -1,0 +1,16 @@
+# Keep caches, virtualenvs, build artifacts and tests out of the image.
+.venv/
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+**/.pytest_cache/
+tests/
+dist/
+build/
+*.egg-info/
+.git/
+
+# Sensor datasets are large and user/run-specific — keep them out of the image.
+# The built-in default sample lives in seed_data/ (copied to /app/database by
+# the Dockerfile), so the whole database/ scratch folder is excluded here.
+database/

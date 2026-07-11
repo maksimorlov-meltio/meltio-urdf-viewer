@@ -1,0 +1,109 @@
+# Base stack for the Meltio process-intelligence services.
+#
+# This file defines the two app containers. Locally, docker-compose.override.yml
+# is auto-merged on top to publish ports for testing. On the server we instead
+# merge docker-compose.prod.yml (added in a later phase) for Caddy + auth.
+#
+# Image names are parameterised via .env (IMAGE_OWNER) so an org rename is a
+# one-line change rather than an edit across every file.
+name: meltio
+
+services:
+  orbit:
+    image: ghcr.io/${IMAGE_OWNER:-machine-software}/orbit:${TAG:-latest}
+    build:
+      context: ./projects/avisualizer
+    expose:
+      - "8080"
+
+  slicer:
+    image: ghcr.io/${IMAGE_OWNER:-machine-software}/aslicer:${TAG:-latest}
+    build:
+      context: ./projects/aslicer
+    expose:
+      - "8765"
+    # The slicer persists machine profiles to /app/profiles — keep them across
+    # container restarts/redeploys in a named volume.
+    volumes:
+      - slicer_profiles:/app/profiles
+
+  # The new unified platform shell. Grows alongside orbit/slicer until it reaches
+  # parity, then hostnames cut over and the two legacy apps retire.
+  platform:
+    image: ghcr.io/${IMAGE_OWNER:-machine-software}/platform:${TAG:-latest}
+    build:
+      context: ./projects/platform
+    expose:
+      - "8090"
+    environment:
+      - DATABASE_URL=${PLATFORM_DATABASE_URL:-postgresql+psycopg://meltio:meltio@db:5432/meltio}
+      # Local dev has no Cloudflare Access in front — fake an identity so /api/me
+      # works. On the server this is unset; the SSO header supplies identity.
+      - PLATFORM_DEV_USER_EMAIL=${PLATFORM_DEV_USER_EMAIL:-}
+      # Comma-separated emails auto-granted the superuser role on sign-in.
+      - PLATFORM_SUPERUSER_EMAILS=${PLATFORM_SUPERUSER_EMAILS:-}
+      - PLATFORM_S3_ENDPOINT_URL=${PLATFORM_S3_ENDPOINT_URL:-http://minio:9000}
+      - PLATFORM_S3_REGION=${PLATFORM_S3_REGION:-eu-north-1}
+      - PLATFORM_S3_BUCKET=${PLATFORM_S3_BUCKET:-meltio-platform}
+      - PLATFORM_S3_ACCESS_KEY=${PLATFORM_S3_ACCESS_KEY:-minioadmin}
+      - PLATFORM_S3_SECRET_KEY=${PLATFORM_S3_SECRET_KEY:-minioadmin}
+    depends_on:
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_started
+
+  # Pixel-streaming render service (MVP): headless Chromium renders the slicer
+  # server-side and streams frames. See docs/PIXEL_STREAMING.md. Optional — only
+  # started when explicitly brought up; not part of the prod/beta deploy yet.
+  render:
+    # Opt-in only (no published image): a default `docker compose pull`/`up` skips
+    # it via the profile, so prod/beta deploys don't choke on the missing image.
+    # Run it locally with `docker compose --profile render up` (or `up render`).
+    profiles: ["render"]
+    image: ghcr.io/${IMAGE_OWNER:-machine-software}/render:${TAG:-latest}
+    build:
+      context: ./projects/platform/render-service
+    environment:
+      - PLATFORM_URL=${RENDER_PLATFORM_URL:-http://platform:8090}
+    expose:
+      - "8092"
+    depends_on:
+      - platform
+
+  # Bundled Postgres for the platform (metadata). Cloud may instead point
+  # PLATFORM_DATABASE_URL at RDS; on-prem uses this container as-is.
+  db:
+    image: postgres:16
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-meltio}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-meltio}
+      - POSTGRES_DB=${POSTGRES_DB:-meltio}
+    volumes:
+      - platform_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-meltio}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    expose:
+      - "5432"
+
+  # Bundled S3-compatible object store (blobs: STL, slice output, sensor data,
+  # logs, video, OTA artifacts). Cloud may use real S3 instead.
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=${PLATFORM_S3_ACCESS_KEY:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${PLATFORM_S3_SECRET_KEY:-minioadmin}
+    volumes:
+      - platform_objects:/data
+    expose:
+      - "9000"
+      - "9001"
+
+volumes:
+  slicer_profiles:
+  platform_db:
+  platform_objects:

@@ -1,0 +1,4 @@
+fastapi
+uvicorn[standard]
+# Pin to the Playwright base-image version so the bundled Chromium matches.
+playwright==1.48.0

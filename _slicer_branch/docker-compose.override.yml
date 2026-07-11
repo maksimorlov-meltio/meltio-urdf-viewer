@@ -1,0 +1,45 @@
+# Local development overrides — auto-merged by `docker compose up` on your
+# laptop. Publishes the two apps directly on localhost so you can test the
+# containers without Caddy or any auth in front.
+#
+#   Orbit  -> http://localhost:8080
+#   Slicer -> http://localhost:8765
+#
+# This file is NOT used on the server (there we pass -f flags explicitly).
+services:
+  orbit:
+    ports:
+      - "8080:8080"
+    # Datasets live on the host, not in the image. Mount your local database
+    # folder so Orbit sees your real sensor data (it also writes .cache.npz here),
+    # plus the bundled seed sample so the default dataset is present locally too.
+    volumes:
+      - ./projects/avisualizer/database:/app/database
+      - ./projects/avisualizer/seed_data/small-torture-test_1-0-0:/app/database/small-torture-test_1-0-0
+
+  slicer:
+    ports:
+      - "8765:8765"
+
+  platform:
+    ports:
+      - "8090:8090"
+    environment:
+      # Pixel streaming is OFF locally by default. To test it: start the render
+      # service (`docker compose up -d render`) and set the URL, e.g.
+      #   PLATFORM_RENDER_URL=ws://localhost:8092 docker compose up -d platform
+      # (?stream=1 in the slicer URL also forces streaming for any part).
+      - PLATFORM_RENDER_URL=${PLATFORM_RENDER_URL:-}
+      # Shared secret so the client gets a signed render token (auth path).
+      - PLATFORM_RENDER_SECRET=dev-render-secret
+
+  render:
+    ports:
+      - "8092:8092"
+    environment:
+      - PLATFORM_RENDER_SECRET=dev-render-secret
+
+  # Expose the MinIO console for local poking (http://localhost:9001).
+  minio:
+    ports:
+      - "9001:9001"

@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+.coverage
+htmlcov/
+*.log
+.vscode/
+.DS_Store
+
+# Local dataset/cache artifacts not meant for git history
+projects/avisualizer/database/SN92_Octagon-20/Sensors.csv
+projects/avisualizer/database/*/Sensors.*.cache.npz

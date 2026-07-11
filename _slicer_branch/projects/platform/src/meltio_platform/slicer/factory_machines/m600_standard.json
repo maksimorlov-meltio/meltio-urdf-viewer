@@ -1,0 +1,15 @@
+{
+  "key": "m600_standard",
+  "name": "M600",
+  "axes": "3-axis",
+  "build_volume_x_mm": 300.0,
+  "build_volume_y_mm": 400.0,
+  "build_volume_z_mm": 600.0,
+  "origin_corner": "top_right",
+  "start_print_macro": "; Start of PRINT_START macro\n\nG215 F15000 W1 ; Activate gas flow and set minimum oxygen value\nM114\nG100 S5 ; Chiller relay on\nG100 S6 ; Chiller enable\nG4 S5 ; Time to establish stable gas flow\nM400 ; Wait until finish Gcode buffer\nG90 ; Absolute mode\nG117 ; Home axis Z\nM83 ; Extrusion relative mode\nG100 F1 ; Door fan enabled\nG123 C W Z15 S200 ; Define process sensibility - automatic current\nT0 ; Select tool\n\nM400 ; Wait until finish Gcode buffer\nG114 ; Tare Load Cell\n\n; End of PRINT_START macro",
+  "end_print_macro": "; Start of PRINT_END macro\n\nG108 W0\nG91 ; Relative mode\nG1 Z150 F600\nG90 ; Absolute mode\nG1 X150 Y200 F2400\nM150 R0 U128 B0 P255 ; End light colour\n\n; End of PRINT_END macro",
+  "start_deposition_macro": "; Start of START_DEPOSITION macro\n; Feature: #feature_type\n\n\nM400 ; Wait until finish Gcode buffer\nG108 P W1000 E ; Laser power\nG4 P100 ; Laser power ramp up\nM400 ; Wait until finish Gcode buffer\nG1 E2 F2400\nG123 E C W ; Enable process control current mode\nG112 P O ; Turn OFF HotWire\nG108 P W#laser_power E ; Laser power\n\n; End of START_DEPOSITION macro",
+  "stop_deposition_macro": "; Start of STOP_DEPOSITION macro\n\nG123 D\nG1 E-#retraction F2400\nG4 S0.1 ; Laser on time after retraction\nM400 ; Wait until finish Gcode buffer\nG108 W0\n\n; End of STOP_DEPOSITION macro",
+  "pre_short_travel_macro": "; Start of PRE_SHORT_TRAVEL macro\n\nG123 D\n\n; End of PRE_SHORT_TRAVEL macro",
+  "short_travel_end_macro": "; Start of SHORT_TRAVEL_END macro\n\nG123 E I\n\n; End of SHORT_TRAVEL_END macro"
+}

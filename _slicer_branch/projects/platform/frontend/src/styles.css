@@ -1,0 +1,630 @@
+/* Tokens — see projects/platform/STYLEGUIDE.md (shared with the slicer). */
+
+/* iOS Safari/Chrome auto-zoom (and stay zoomed) when a focused field's font-size is
+   under 16px. Bump every text-entry field to 16px on touch devices to prevent it,
+   without disabling pinch-zoom. */
+@media (pointer: coarse) {
+  input:not([type="range"]):not([type="checkbox"]):not([type="radio"]),
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+
+:root {
+  color-scheme: dark;
+  --bg: #0f1620;
+  --panel: #131c27;
+  --panel2: #0f1822;
+  --line: rgba(118, 179, 255, 0.16);
+  --guide: rgba(118, 179, 255, 0.16);
+  --fg: #cfe8ff;
+  --muted: #7e94aa;
+  --accent: #76b3ff;
+  --accent-soft: rgba(74, 163, 255, 0.18);
+  --control-bg: #16202c;
+  --control-border: rgba(118, 179, 255, 0.40);
+  --danger: #c2606a;
+  --ok: #8fe0b4;
+  --warn: #7a6a2f;
+  --radius: 6px;
+  --radius-lg: 10px;
+}
+
+/* Section caption — matches the slicer's .section-title */
+.section-title {
+  margin: 0 0 0.6rem; font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);
+}
+
+* { box-sizing: border-box; }
+html, body { max-width: 100%; overflow-x: hidden; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 14px;
+}
+
+/* Top bar — sticky so the nav + account are always reachable (esp. over the
+   full-height slicer on mobile). */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.8rem 1.4rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel2);
+}
+.brand { font-weight: 700; }
+.who { color: var(--muted); font-size: 0.9rem; }
+.who .org { color: var(--fg); }
+.link {
+  background: none; border: none; color: #8ab4f8; cursor: pointer;
+  margin-left: 0.7rem; font-size: 0.9rem;
+}
+.app { display: flex; flex-direction: column; min-height: 100vh; }
+.main { flex: 1 1 auto; display: flex; min-height: 0; }
+/* Viewport-relative so it adapts across laptop/desktop widths (full mobile
+   pass comes later). Wider on standard laptops than the old 1080px cap. */
+.content { flex: 1 1 auto; width: min(94vw, 1500px); margin: 0 auto; padding: 1.6rem 1.4rem; }
+/* Embedded slicer fills the area below the shared header. */
+.slicer-frame { flex: 1 1 auto; width: 100%; border: 0; background: var(--bg); }
+/* Pixel-streamed viewer (heavy parts): server-rendered frames + input capture. */
+.streamed-viewer {
+  flex: 1 1 auto; min-height: 0; width: 100%; position: relative;
+  overflow: hidden; background: var(--bg); touch-action: none; cursor: grab;
+}
+.streamed-viewer:active { cursor: grabbing; }
+.streamed-viewer img { width: 100%; height: 100%; object-fit: contain; display: block; }
+
+/* WebRTC viewer (Phase 2): streamed 3D <video> + React GUI rebuilt to match the
+   slicer's own controls (works web + mobile). */
+.wrtc {
+  flex: 1 1 auto; min-height: 0; width: 100%; position: relative;
+  overflow: hidden; background: var(--bg);
+}
+.wrtc-video {
+  width: 100%; height: 100%; object-fit: contain; display: block;
+  touch-action: none; cursor: grab;
+}
+.wrtc-connecting {
+  position: absolute; inset: 0; display: flex; align-items: center;
+  justify-content: center; color: var(--muted); font-size: 14px; pointer-events: none;
+}
+/* Shared rail look: translucent, blurred, rounded icon buttons. */
+.wrtc-rail { position: absolute; display: flex; gap: 6px; z-index: 2; }
+.wrtc-rail button {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 40px; height: 40px; padding: 0; border-radius: 11px;
+  border: 1px solid var(--line); color: var(--fg); cursor: pointer;
+  background: color-mix(in srgb, var(--panel) 78%, transparent);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+}
+.wrtc-rail button svg { width: 21px; height: 21px; }
+.wrtc-rail button.on { border-color: var(--accent); color: var(--accent); }
+.wrtc-rail button:disabled { opacity: 0.35; cursor: default; }
+
+.wrtc-views { top: 12px; left: 12px; flex-direction: column; }
+.wrtc-model { top: 12px; left: 60px; flex-direction: column; }
+.wrtc-thermal { top: 12px; left: 60px; }
+.wrtc-thermal button {
+  border: none; background: transparent; -webkit-backdrop-filter: none; backdrop-filter: none;
+}
+.wrtc-thermal button.on { color: var(--accent); }
+
+/* Vertical layer slider under the view rail. */
+.wrtc-vslider {
+  -webkit-appearance: slider-vertical; appearance: slider-vertical;
+  writing-mode: vertical-lr; direction: rtl;
+  width: 40px; height: 120px; accent-color: var(--accent); cursor: pointer;
+}
+
+.wrtc-bottom {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 2;
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  background: linear-gradient(to top, color-mix(in srgb, var(--bg) 88%, transparent), transparent);
+}
+.wrtc-status { font-size: 12px; color: var(--muted); min-height: 14px; }
+
+.wrtc-playback { display: flex; align-items: center; gap: 10px; }
+.wrtc-play {
+  width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--line);
+  background: var(--panel); color: var(--fg); font-size: 12px; cursor: pointer;
+  flex: none; line-height: 1;
+}
+.wrtc-progress { flex: 1 1 auto; min-width: 0; accent-color: var(--accent); cursor: pointer; }
+.wrtc-speed { position: relative; flex: none; }
+.wrtc-speed-btn {
+  width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--line);
+  background: var(--panel); color: var(--fg); cursor: pointer; display: inline-flex;
+  align-items: center; justify-content: center;
+}
+.wrtc-speed-btn svg { width: 19px; height: 19px; }
+.wrtc-speed-btn.on { border-color: var(--accent); color: var(--accent); }
+.wrtc-speed-slider {
+  position: absolute; bottom: 46px; left: 50%; transform: translateX(-50%);
+  -webkit-appearance: slider-vertical; appearance: slider-vertical;
+  writing-mode: vertical-lr; direction: rtl;
+  width: 34px; height: 110px; accent-color: var(--accent);
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 6px 0;
+}
+
+/* Bottom action rail: icon + label, kept compact. */
+.wrtc-actions { position: static; justify-content: center; gap: 14px; }
+.wrtc-actions button {
+  flex-direction: column; width: auto; min-width: 52px; height: auto; gap: 2px;
+  padding: 6px 8px; font-size: 10px; border-radius: 11px;
+}
+.wrtc-actions button span { font-size: 10px; line-height: 1; }
+
+/* Profile picker sheet. */
+.wrtc-sheet-backdrop {
+  position: absolute; inset: 0; z-index: 5; background: rgba(0, 0, 0, 0.4);
+  display: flex; align-items: flex-end; justify-content: center;
+}
+.wrtc-sheet {
+  width: 100%; max-width: 440px; max-height: 70%; overflow: auto;
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 14px 14px 0 0; padding: 14px;
+}
+.wrtc-sheet-head {
+  display: flex; align-items: center; justify-content: space-between;
+  font-weight: 600; margin-bottom: 10px;
+}
+.wrtc-sheet-head button { border: none; background: none; color: var(--muted); font-size: 16px; cursor: pointer; }
+.wrtc-sheet-list { display: flex; flex-direction: column; gap: 6px; }
+.wrtc-sheet-list button {
+  text-align: left; padding: 11px 12px; border-radius: 9px; border: 1px solid var(--line);
+  background: var(--bg); color: var(--fg); font-size: 13px; cursor: pointer;
+}
+.wrtc-sheet-list button.on { border-color: var(--accent); color: var(--accent); }
+.wrtc-sheet-empty { color: var(--muted); font-size: 13px; padding: 8px; }
+/* In the slicer the page must never scroll (the 3D canvas swallows touch, so a
+   scrolled-away header would be unreachable). Pin the shell to the viewport and
+   let the iframe own the area below the sticky header. Uses dvh so the mobile
+   URL bar doesn't introduce phantom scroll. */
+.app.slicer-view { height: 100vh; height: 100dvh; overflow: hidden; }
+.app.slicer-view .main { min-height: 0; overflow: hidden; }
+body:has(.app.slicer-view) { overflow: hidden; }
+.error {
+  background: #3a1d22; border: 1px solid var(--danger); color: #f0b8be;
+  padding: 0.6rem 0.8rem; border-radius: 8px; margin-bottom: 1rem; cursor: pointer;
+}
+
+.badge {
+  display: inline-block; padding: 0.05rem 0.45rem; margin-left: 0.35rem;
+  border-radius: 999px; font-size: 0.72rem; border: 1px solid var(--line); color: var(--muted);
+}
+
+/* Buttons / selects / inputs — one quiet, consistent control (see STYLEGUIDE.md) */
+.tool-btn, .control, select, input[type="text"] {
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  padding: 0.45rem 0.8rem; background: var(--control-bg); color: var(--fg);
+  border: 1px solid var(--control-border); border-radius: var(--radius);
+  cursor: pointer; text-decoration: none; font-size: 13px;
+}
+.tool-btn:hover, .control:hover, select:hover { border-color: var(--accent); }
+.tool-btn.primary {
+  background: var(--accent-soft); border-color: var(--accent);
+  color: var(--fg); font-weight: 600;
+}
+
+/* Stacked org/Private panels */
+.panels { display: flex; flex-direction: column; gap: 1rem; }
+.panel {
+  border: 1px solid var(--line); border-radius: var(--radius-lg);
+  background: var(--panel2);
+}
+.panel.private { border-color: var(--control-border); }
+/* Every panel header gets a faint tint so it reads as a distinct band above the
+   file list (originally only the Private panel had this). */
+.panel-head {
+  display: flex; align-items: center; gap: 0.55rem; cursor: pointer;
+  /* Left padding matches .tnode so the org toggle lines up with row chevrons. */
+  padding: 0.6rem 0.75rem 0.6rem 0.3rem; border-bottom: 1px solid var(--line);
+  background: rgba(118, 179, 255, 0.05);
+  border-top-left-radius: var(--radius-lg); border-top-right-radius: var(--radius-lg);
+}
+.panel-head.dragover { background: var(--accent-soft); }
+/* Org/Private disclosure toggle — same size/position as the per-part chevron. */
+.panel-toggle {
+  color: var(--accent); font-size: 1.2rem;
+  width: 1.5rem; height: 1.5rem; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.panel-toggle.open { transform: rotate(90deg); }
+.panel-title { font-weight: 600; font-size: 0.95rem; }
+.panel-count { color: var(--muted); font-size: 0.8rem; }
+.panel-head .tools { margin-left: auto; }
+.tools { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+/* Tree (inside a panel): grows with its content so row menus are never clipped;
+   the page scrolls vertically instead. */
+.tree {
+  padding: 0.4rem 0;
+}
+.children {
+  margin-left: 1.05rem;
+  border-left: 1px solid var(--guide);
+}
+/* Loose (org-level) files sit further left than parts inside a project — they're
+   siblings of the project folders, not nested in one — and have no guide line. */
+.root-files { border-left: none; margin-left: 0; }
+/* Root STL slices jump to depth 2 so they align with slices of STLs that live
+   inside a project (which are already two levels in). */
+.children-root { margin-left: 2.1rem; }
+/* Parts inside a project get a clear accent guide + faint tint, so project
+   membership reads at a glance vs. loose root files (which have no line). */
+.proj-children {
+  border-left: 2px solid rgba(118, 179, 255, 0.45);
+  background: rgba(118, 179, 255, 0.035);
+}
+
+.tnode {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.28rem 0.7rem 0.28rem 0.3rem;
+  cursor: default;
+  user-select: none;
+  min-height: 30px;
+}
+.tnode:hover { background: #18222e; }
+.tnode.dragover { background: var(--accent-soft); }
+.tnode.folder .lbl { font-weight: 600; }
+.tnode.part .lbl { font-weight: 500; }
+.tnode.slice .lbl,
+.tnode.group .lbl { color: #cdd9e6; }
+.tnode.slice, .tnode.part, .tnode.folder { cursor: pointer; }
+.tnode.profile .lbl { font-weight: 500; }
+.tnode.profile { cursor: grab; }
+/* A shared profile awaiting an org admin's approval. */
+.tnode.pending .meta { color: #e0a64b; font-weight: 600; }
+.tnode.pending .lbl { color: #e8c98a; }
+.tnode.note { cursor: default; font-style: italic; padding-left: 1.6rem; }
+
+/* Disclosure control: a clear, accent-tinted chevron that rotates open and
+   shows a rounded hover "pill", so expandable rows read as interactive. Leaf
+   rows render an empty same-width spacer to keep alignment. */
+.chev {
+  width: 1.5rem; height: 1.5rem; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 6px;
+  color: var(--accent); font-size: 1.2rem; cursor: pointer;
+}
+.chev.open { transform: rotate(90deg); }
+.chev:not(.leaf):hover { background: var(--accent-soft); color: var(--fg); }
+.tnode:hover .chev:not(.leaf) { background: var(--accent-soft); }
+.chev.leaf { color: transparent; cursor: default; }
+.lbl {
+  flex: 0 1 auto; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* short, fixed labels (version, group, note) should never be clipped */
+.tnode.slice .lbl, .tnode.group .lbl, .tnode.note .lbl { flex: none; }
+.meta {
+  flex: 1 1 auto; min-width: 0;
+  color: var(--muted); font-size: 0.8rem; margin-left: 0.5rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* One quiet kebab per row, revealed on hover (and kept while its menu is open
+   via :focus-within) — overlaid at the right so it never steals row width. */
+.acts {
+  position: absolute; right: 0.5rem; top: 0; height: 100%;
+  display: flex; align-items: center;
+  opacity: 0; pointer-events: none; transition: opacity 0.1s;
+}
+.tnode:hover .acts,
+.tnode .acts:focus-within { opacity: 1; pointer-events: auto; }
+.rowmenu { position: relative; }
+.kebab {
+  background: none; border: none; color: var(--muted); cursor: pointer;
+  font-size: 1.15rem; line-height: 1; padding: 0 0.35rem; border-radius: 6px;
+}
+.kebab:hover { color: var(--fg); background: #1f2a37; }
+.rowmenu-backdrop { position: fixed; inset: 0; z-index: 40; }
+.rowmenu-pop {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 50;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  padding: 0.3rem; min-width: 180px; display: flex; flex-direction: column; gap: 0.1rem;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+}
+.rowmenu-pop button {
+  text-align: left; background: none; border: none; color: var(--fg);
+  padding: 0.4rem 0.55rem; border-radius: 6px; cursor: pointer; font-size: 0.85rem;
+}
+.rowmenu-pop button:hover { background: #18222e; }
+.rowmenu-pop button.danger { color: #e79aa3; }
+.act {
+  background: var(--control-bg); border: 1px solid var(--control-border); color: var(--fg);
+  border-radius: var(--radius); padding: 0.2rem 0.55rem; font-size: 0.78rem;
+  cursor: pointer; text-decoration: none;
+}
+.act:hover { border-color: var(--accent); }
+.act.danger { color: #e79aa3; border-color: #5a3037; }
+.muted { color: var(--muted); }
+
+/* Admin */
+.card {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 10px; padding: 1.1rem 1.2rem;
+}
+.users { width: 100%; border-collapse: collapse; }
+.users th, .users td {
+  text-align: left; padding: 0.55rem 0.5rem; border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+.users select { padding: 0.35rem 0.5rem; }
+
+/* --- Platform header / navigator (PR12) --- */
+.nav { display: flex; align-items: center; gap: 0.4rem; }
+.nav .brand { margin-right: 1.8rem; }
+/* Meltio wordmark (dark source art) forced white for the dark ribbon. */
+.brand-logo { height: 16px; width: auto; display: block; filter: brightness(0) invert(1); }
+/* Nav tabs use the app's control language (rounded, tinted-active). */
+.tab {
+  background: none; border: 1px solid transparent; color: var(--muted); cursor: pointer;
+  padding: 0.35rem 0.8rem; border-radius: var(--radius); font-size: 0.88rem;
+  text-decoration: none;
+}
+.tab:hover { color: var(--fg); border-color: var(--line); }
+.tab.active { color: var(--accent); background: var(--accent-soft); border-color: var(--control-border); }
+
+.account { position: relative; }
+/* The account trigger is just the initials avatar everywhere (desktop + mobile);
+   the email/role/caret are not shown — the dropdown carries that detail. */
+.acct-trigger {
+  display: inline-flex; align-items: center;
+  background: none; border: none; border-radius: 50%;
+  color: var(--fg); font-size: 0.9rem; padding: 0; cursor: pointer;
+}
+.acct-trigger:hover .acct-avatar { border-color: var(--accent); }
+.acct-avatar {
+  width: 1.7rem; height: 1.7rem; border-radius: 50%; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--accent-soft); color: var(--accent);
+  border: 1px solid var(--control-border); font-size: 0.72rem; font-weight: 700;
+}
+.acct-email, .acct-role, .acct-caret { display: none; }
+.acct-menu {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 50;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 0.3rem; min-width: 210px; display: flex; flex-direction: column; gap: 0.1rem;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+}
+/* Permissions console + Account settings share one consistent item style. */
+.acct-item {
+  text-align: left; background: none; border: none; color: var(--fg);
+  padding: 0.5rem 0.6rem; border-radius: 6px; cursor: pointer; font-size: 0.88rem;
+}
+.acct-item:hover:not(:disabled) { background: #18222e; }
+.acct-item:disabled { color: var(--muted); cursor: default; }
+.acct-version {
+  margin-top: 0.2rem; padding: 0.35rem 0.6rem 0.1rem;
+  border-top: 1px solid var(--line);
+  color: var(--muted); font-size: 0.72rem; letter-spacing: 0.02em;
+}
+
+.tree.drop-root { outline: 2px dashed var(--accent); outline-offset: -4px; }
+
+/* Admin org settings (PR13) */
+.admin-card { margin-bottom: 1.2rem; }
+.org-setting { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.5rem; }
+.org-setting select { padding: 0.35rem 0.5rem; }
+
+/* Permissions viewer (PR15) */
+.perm { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
+.perm th, .perm td {
+  padding: 0.4rem 0.55rem; border-bottom: 1px solid var(--line); text-align: left;
+}
+.perm th:not(:first-child), .perm td.cell-check { text-align: center; }
+.perm .cell-check { color: #8fe0b4; }
+.perm thead th { color: var(--muted); font-weight: 600; }
+.perm input[type="checkbox"] { accent-color: var(--accent); cursor: pointer; width: 15px; height: 15px; }
+
+/* Create-org form */
+.org-create { display: flex; gap: 0.5rem; margin-bottom: 0.9rem; }
+.org-create input { flex: 1 1 auto; }
+
+/* Org switcher at "My files" */
+.org-switch { margin-left: 0.8rem; font-size: 0.85rem; padding: 0.3rem 0.5rem; }
+
+/* Themed input dialog (replaces browser prompt) */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(6, 10, 16, 0.55);
+  display: flex; align-items: center; justify-content: center;
+}
+.modal {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius-lg); padding: 1.1rem 1.2rem;
+  width: 360px; max-width: calc(100vw - 2rem);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.5);
+}
+.modal h3 { margin: 0 0 0.8rem; font-size: 1rem; font-weight: 600; }
+.modal-input { width: 100%; }
+.modal-actions {
+  display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem;
+}
+.tool-btn:disabled { opacity: 0.5; cursor: default; }
+
+/* Favourite star — a leading toggle (kept clear of the right-side ⋯ menu). */
+.star {
+  flex: none; width: 1.2rem; text-align: center;
+  background: none; border: none; cursor: pointer; color: var(--muted);
+  font-size: 0.92rem; line-height: 1; padding: 0;
+}
+.star.on { color: #f0c245; }
+.star:hover { color: #f0c245; }
+.star-spacer { flex: none; width: 1.2rem; }
+
+/* Per-user org memberships (admin) — a tidy stacked list, one org per line */
+.memberships { display: flex; flex-direction: column; gap: 0.35rem; align-items: flex-start; }
+.mrow { display: flex; align-items: center; gap: 0.45rem; }
+.mname { min-width: 9rem; font-size: 0.84rem; }
+.mbadge {
+  font-size: 0.72rem; color: var(--muted);
+  background: var(--panel2); border: 1px solid var(--line);
+  border-radius: 999px; padding: 0.08rem 0.55rem;
+}
+.mremove {
+  background: none; border: none; color: var(--muted); cursor: pointer;
+  font-size: 1rem; line-height: 1; padding: 0 0.2rem;
+}
+.mremove:hover { color: var(--fg); }
+.mlimit { font-size: 0.72rem; }
+.chip-role { font-size: 0.74rem; padding: 0.12rem 0.35rem; border-radius: 5px; }
+.org-add { font-size: 0.78rem; padding: 0.25rem 0.45rem; margin-top: 0.1rem; }
+
+/* Audit log table */
+.audit { font-size: 0.8rem; }
+.audit td { vertical-align: top; }
+
+/* --- Responsive base (full mobile pass + multi-panel comes next) --- */
+/* Admin tables can be wide; let cards scroll horizontally rather than overflow. */
+.card { overflow-x: auto; }
+
+@media (max-width: 720px) {
+  body { font-size: 13px; }
+  .topbar { gap: 0.5rem; padding: 0.6rem 0.8rem; }
+  .nav { flex-wrap: wrap; }
+  .nav .brand { margin-right: 0.8rem; }
+  .content { padding: 1rem 0.7rem; }
+
+  /* Mobile browsers auto-zoom when a focused control's font is < 16px — which
+     then leaves the page zoomed/shifted. Keep form controls at 16px. */
+  input, select, textarea { font-size: 16px; }
+
+  /* Panel toolbar: buttons share the row + wrap — never scroll sideways. */
+  .panel-head { flex-wrap: wrap; gap: 0.5rem; }
+  .panel-head .tools { margin-left: 0; width: 100%; }
+  .panel-head .tools .tool-btn { flex: 1 1 auto; justify-content: center; }
+
+  /* Admin tables stack into labelled cards (no horizontal scroll). */
+  .rtable thead { display: none; }
+  .rtable, .rtable tbody, .rtable tr, .rtable td { display: block; width: 100%; }
+  .rtable tr {
+    border: 1px solid var(--line); border-radius: 8px;
+    margin-bottom: 0.6rem; padding: 0.4rem 0.6rem;
+  }
+  /* Label above value so wide content (selects, membership chips) gets the full
+     card width and never needs horizontal scroll. */
+  .rtable td {
+    border: none; padding: 0.3rem 0; display: flex;
+    flex-direction: column; align-items: stretch; gap: 0.2rem;
+  }
+  .rtable td::before {
+    content: attr(data-label); color: var(--muted); font-weight: 600;
+    font-size: 0.76rem;
+  }
+  .rtable td.cap-name {
+    font-weight: 600; color: var(--fg); padding-top: 0.5rem; font-size: 0.9rem;
+  }
+  .rtable td.cap-name::before { content: none; }
+  .rtable td.cell-check { flex-direction: row; align-items: center; justify-content: space-between; }
+  .rtable .mname { min-width: 0; }
+  .rtable .mrow { flex-wrap: wrap; }
+
+  /* Touch has no hover: keep the row actions in-flow and always visible so they
+     reserve space (no overlap with the label/meta), with bigger tap targets. */
+  .acts {
+    position: static; opacity: 1; pointer-events: auto;
+    margin-left: auto; padding-left: 0.5rem; background: none;
+  }
+  .meta { flex: 0 1 auto; }
+  .act { padding: 0.4rem 0.75rem; font-size: 0.85rem; }
+  .kebab { font-size: 1.4rem; padding: 0.1rem 0.5rem; }
+  .star { width: 1.6rem; font-size: 1.05rem; }
+
+  /* No hover on touch: a larger, plain accent triangle reads as the expand
+     control (no box). Org/Private toggle matches the per-part chevron. */
+  .chev, .panel-toggle { width: 2rem; height: 2rem; font-size: 1.6rem; }
+}
+
+/* WebRTC legend (toolpath/thermal) + thermal chart. */
+.wrtc-legend {
+  position: absolute; top: 12px; right: 12px; z-index: 2; max-width: 180px;
+  display: flex; flex-direction: column; gap: 6px; padding: 9px 11px;
+  font-size: 11px; color: var(--fg); border-radius: 11px; border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 80%, transparent);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+}
+.wrtc-legend-item { display: flex; align-items: center; gap: 7px; }
+.wrtc-legend-item i { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+.wrtc-legend-scale { display: flex; flex-direction: column; gap: 4px; }
+.wrtc-legend-bar {
+  height: 8px; border-radius: 4px;
+  background: linear-gradient(to right, #2b6cff, #18c29c, #f5d020, #f53d3d);
+}
+.wrtc-legend-ends { display: flex; justify-content: space-between; color: var(--muted); }
+.wrtc-legend-stats { display: flex; flex-direction: column; gap: 2px; border-top: 1px solid var(--line); padding-top: 6px; }
+.wrtc-legend-stats div { display: flex; justify-content: space-between; gap: 12px; }
+.wrtc-legend-stats span { color: var(--muted); }
+.wrtc-thermchart {
+  width: 100%; height: 56px; border-radius: 8px; border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 70%, transparent);
+}
+
+/* Profile Manager modal (mirrors the slicer's overlay; responsive web + mobile). */
+.pm-backdrop {
+  position: absolute; inset: 0; z-index: 10; background: rgba(0, 0, 0, 0.45);
+  display: flex; align-items: center; justify-content: center; padding: 16px;
+}
+.pm-dialog {
+  width: 100%; max-width: 680px; max-height: 92%; display: flex; flex-direction: column;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
+}
+.pm-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; border-bottom: 1px solid var(--line);
+}
+.pm-head h2 { margin: 0; font-size: 15px; }
+.pm-x { border: none; background: none; color: var(--muted); font-size: 16px; cursor: pointer; }
+.pm-body { padding: 14px 16px; overflow: auto; }
+.pm-body h3 { margin: 16px 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.pm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+.pm-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.pm-field > span { color: var(--muted); }
+.pm-field.pm-grow { grid-column: span 2; }
+.pm-field input, .pm-field select {
+  padding: 7px 9px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--bg); color: var(--fg); font-size: 13px; width: 100%;
+}
+.pm-field input:disabled, .pm-field select:disabled { opacity: 0.55; }
+.pm-btns { display: flex; gap: 6px; }
+.pm-btns button {
+  flex: 1; padding: 7px 8px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--bg); color: var(--fg); font-size: 12px; cursor: pointer;
+}
+.pm-toggle {
+  padding: 7px 9px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--bg); color: var(--fg); font-size: 13px; cursor: pointer; text-align: left;
+}
+.pm-toggle.on { border-color: var(--accent); color: var(--accent); }
+.pm-danger { color: var(--danger, #e5484d); }
+.pm-notice { font-size: 12px; color: var(--muted); margin: 10px 0 0; }
+.pm-error { font-size: 12px; color: var(--danger, #e5484d); margin: 8px 0 0; }
+.pm-table-wrap { overflow-x: auto; }
+.pm-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.pm-table th, .pm-table td { padding: 5px 6px; text-align: left; border-bottom: 1px solid var(--line); }
+.pm-table th { color: var(--muted); font-weight: 500; }
+.pm-table input { width: 64px; padding: 5px 6px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
+.pm-na { color: var(--muted); }
+.pm-actions {
+  display: flex; justify-content: flex-end; gap: 10px;
+  padding: 12px 16px; border-top: 1px solid var(--line);
+}
+.pm-actions button { padding: 9px 16px; border-radius: 9px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); font-size: 13px; cursor: pointer; }
+.pm-actions .pm-primary { border: none; background: var(--accent); color: #fff; font-weight: 600; }
+.pm-actions .pm-primary:disabled { opacity: 0.5; }
+.wrtc-sheet-manage {
+  margin-top: 10px; width: 100%; padding: 9px; border-radius: 9px;
+  border: 1px dashed var(--line); background: none; color: var(--muted); font-size: 12px; cursor: pointer;
+}

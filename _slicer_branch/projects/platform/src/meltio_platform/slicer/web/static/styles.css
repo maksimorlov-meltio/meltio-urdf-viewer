@@ -1,0 +1,1697 @@
+:root {
+  --bg: #0f1620;
+  --panel-bg: rgba(18, 26, 36, 0.92);
+  --text: #cfe8ff;
+  --muted: #7e94aa;
+  --accent: rgb(118, 179, 255);
+  --perimeter: #4aa3ff;
+  --perimeter-inner: #2f74c9;
+  --infill: #ff8c26;
+  --support: #2ec4b6;
+  --support-outer-perimeter: #1f8f82;
+  --support-inner-perimeter: #14635a;
+  /* Shared widths so every Profile Manager label and control lines up. */
+  --pm-label-w: 150px;
+  --pm-control-w: 124px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Render native number-input spinner arrows in the dark theme everywhere, so
+   the up/down arrows appear as grey arrows on hover with no white background
+   block behind them. */
+input[type="number"] {
+  color-scheme: dark;
+}
+
+/* iOS Safari/Chrome auto-zoom (and stay zoomed) when a focused field's font-size is
+   under 16px. Bump every text-entry field to 16px on touch devices to prevent it,
+   without disabling pinch-zoom. */
+@media (pointer: coarse) {
+  input:not([type="range"]):not([type="checkbox"]):not([type="radio"]),
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none; /* no pull-to-refresh / bounce over the 3D view */
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Segoe UI", system-ui, sans-serif;
+}
+
+#scene {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.panel {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  width: 256px;
+  padding: 18px;
+  background: var(--panel-bg);
+  border: 1px solid rgba(118, 179, 255, 0.25);
+  border-radius: 10px;
+  backdrop-filter: blur(6px);
+}
+
+.panel-head {
+  margin-bottom: 18px;
+}
+
+.panel h1 {
+  margin: 0;
+  font-size: 18px;
+  letter-spacing: 0.04em;
+}
+
+.panel-head .muted {
+  margin: 4px 0 0;
+}
+
+/* Grouped subpanels: a quiet divider and a small uppercase caption keep the
+   sections legible without heavy framing. */
+.panel-section {
+  padding-top: 14px;
+  margin-top: 14px;
+  border-top: 1px solid rgba(118, 179, 255, 0.12);
+}
+
+.panel-section:first-of-type {
+  padding-top: 0;
+  margin-top: 0;
+  border-top: 0;
+}
+
+.section-title {
+  margin: 0 0 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 6px 0;
+  word-break: break-word;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.row:first-child {
+  margin-top: 0;
+}
+
+.row:last-child {
+  margin-bottom: 0;
+}
+
+.row label {
+  font-size: 13px;
+}
+
+/* Stack children vertically (e.g. the machine profile select + manager). */
+.row.stack {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+/* Two-up button grid; a lone trailing button keeps its column width. */
+.btn-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.btn-grid button {
+  margin: 0;
+}
+
+/* Three-up button grid (Simulate/Profile/Save). */
+.btn-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.btn-grid-3 button {
+  margin: 0;
+}
+
+/* Model actions: full-width Rotate + 2-up Move/Center on desktop (the dynamic
+   "Rotate to base" label is too long for a narrow 3-up); becomes 3-up on mobile. */
+.model-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.model-actions button { margin: 0; }
+.model-actions button:first-child { grid-column: 1 / -1; }
+
+/* Model tools as a single row of 4 icon buttons (To base / Move / Center / Rotate). */
+.model-actions--icons {
+  grid-template-columns: repeat(4, 1fr);
+}
+.model-actions--icons button:first-child {
+  grid-column: auto;
+}
+.model-tool-btn {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 5px;
+  padding: 10px 4px;
+  min-height: 66px;
+}
+.model-tool-btn svg {
+  width: 24px;
+  height: 24px;
+}
+.model-tool-btn span {
+  font-size: 12px;
+  line-height: 1;
+}
+.model-tool-btn.active {
+  border-color: var(--accent, #4aa3ff);
+  background: rgba(74, 163, 255, 0.18);
+  color: #fff;
+}
+
+.row input[type="number"] {
+  width: 70px;
+  padding: 4px 6px;
+  background: #0b121b;
+  color: var(--text);
+  border: 1px solid rgba(118, 179, 255, 0.3);
+  border-radius: 6px;
+}
+
+/* Unified control styling so selects match the buttons/inputs. */
+.control,
+.panel select {
+  width: 100%;
+  padding: 8px 10px;
+  background: #16202c;
+  color: var(--text);
+  border: 1px solid rgba(118, 179, 255, 0.4);
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.control:hover,
+.panel select:hover {
+  border-color: var(--accent);
+}
+
+
+.view-toggle {
+  justify-content: flex-start;
+  gap: 16px;
+  font-size: 13px;
+}
+
+/* Segmented two-up toggle (STL/Toolpath, Lines/Tubes) styled like a control. */
+.segmented {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  border: 1px solid rgba(118, 179, 255, 0.4);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.segmented.triple {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
+.segmented label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 8px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--muted);
+  background: #16202c;
+  transition: background 0.12s, color 0.12s;
+}
+
+.segmented label + label {
+  border-left: 1px solid rgba(118, 179, 255, 0.25);
+}
+
+.segmented input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.segmented label:has(input:checked) {
+  background: rgba(74, 163, 255, 0.18);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.segmented label:has(input:disabled) {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.orient-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent, #76b3ff);
+  cursor: pointer;
+}
+
+button {
+  flex: 1;
+  padding: 8px 8px;
+  background: #16202c;
+  color: var(--text);
+  border: 1px solid rgba(118, 179, 255, 0.4);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+button:hover {
+  border-color: var(--accent);
+}
+
+button.primary {
+  background: rgba(74, 163, 255, 0.18);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.sim-row {
+  margin-top: 4px;
+}
+
+/* Simulation controls: stacked rows, each a fixed-width lead control plus a
+   slider that grows to fill all remaining width. Every lead control shares
+   --sim-lead-w so the sliders line up flush down the left edge. */
+.sim-controls {
+  --sim-lead-w: 44px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0 8px;
+}
+
+.sim-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* `hidden` would otherwise be overridden by the .sim-line flex display, so the
+   layer row/readout stay collapsed until single-layer mode is selected. */
+.sim-controls [hidden] {
+  display: none;
+}
+
+.sim-line .slider {
+  flex: 1 1 auto;
+  width: 100%;
+  height: 22px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.sim-label {
+  flex: 0 0 var(--sim-lead-w);
+  width: var(--sim-lead-w);
+  font-size: 12px;
+}
+
+.icon-btn {
+  flex: 0 0 var(--sim-lead-w);
+  width: var(--sim-lead-w);
+  padding: 6px 0;
+  font-size: 12px;
+}
+
+/* Legend: its own small panel pinned to the upper-right corner. Each path type
+   is a toggle button; the stats block sits below it. */
+.legend-panel {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  min-width: 150px;
+  background: var(--panel-bg);
+  border: 1px solid rgba(118, 179, 255, 0.25);
+  border-radius: 10px;
+  backdrop-filter: blur(6px);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.legend-panel[hidden] {
+  display: none;
+}
+
+/* The kind list and heat scale swap by view; this collapses the hidden one
+   (their own display rules would otherwise beat the bare [hidden] attribute). */
+.legend-panel [hidden] {
+  display: none;
+}
+
+.legend-items {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Heat colour bar shown in place of the kind list in the thermal view. A
+   full-width horizontal gradient (cool -> hot) so the section follows the same
+   horizontal rhythm as the stats rows and the bottom time-chart. */
+.legend-scale {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 4px 6px;
+  width: 100%;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.legend-item:hover {
+  background: rgba(118, 179, 255, 0.08);
+  border-color: rgba(118, 179, 255, 0.2);
+}
+
+.legend-item.disabled {
+  color: var(--muted);
+  opacity: 0.45;
+}
+
+.legend-item.disabled .swatch {
+  background: var(--muted);
+}
+
+.legend-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(118, 179, 255, 0.18);
+}
+
+.legend-stats div {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.legend-stats b {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.swatch {
+  width: 14px;
+  height: 3px;
+  display: inline-block;
+  flex: 0 0 auto;
+  border-radius: 2px;
+}
+
+/* Thermal heat scale (lives inside the legend panel in the thermal view): a
+   vertical gradient bar from hot to cool, with hot/cool ticks and a movable
+   "avg" marker. */
+.thermal-scale-title {
+  color: var(--text);
+}
+
+/* The "avg N%" readout sits above the bar, horizontally tracking its marker
+   (its left is set from JS, clamped so it never clips the panel edge). */
+.thermal-scale-avglabel {
+  position: relative;
+  height: 14px;
+}
+
+.thermal-scale-avglabel span {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  /* Same size/style as the cool/hot end labels. */
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.thermal-scale-bar {
+  position: relative;
+  width: 100%;
+  height: 12px;
+  border-radius: 3px;
+  /* Matches the viewer colormap: score 0 = blue (hue ~237) at the cool/left
+     end, score 1 = red (hue 0) at the hot/right end. */
+  background: linear-gradient(
+    to right,
+    hsl(237, 90%, 50%),
+    hsl(160, 90%, 42%),
+    hsl(80, 90%, 45%),
+    hsl(40, 90%, 50%),
+    hsl(0, 90%, 50%)
+  );
+}
+
+/* Average-heat marker: a vertical line on the bar at the mean relative heat.
+   Its horizontal position is set from JS (left = 0 is cool, 100% is hot). */
+.thermal-scale-avg {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-1px);
+  background: #fff;
+  box-shadow: 0 0 3px rgba(0, 0, 0, 0.85);
+  pointer-events: none;
+}
+
+.thermal-scale-ends {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Thermal evolution chart: pinned bottom-centre, only shown in thermal view. */
+.thermal-chart {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 14px;
+  background: var(--panel-bg);
+  border: 1px solid rgba(118, 179, 255, 0.25);
+  border-radius: 10px;
+  backdrop-filter: blur(6px);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.thermal-chart[hidden] {
+  display: none;
+}
+
+/* The header doubles as the collapse/expand toggle: a borderless button
+   spanning the panel width so clicking anywhere on the label or arrow works. */
+.thermal-chart-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.thermal-chart-header:hover .thermal-chart-title {
+  color: var(--accent);
+}
+
+.thermal-chart-arrow {
+  margin-left: auto;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--muted);
+}
+
+.thermal-chart-header:hover .thermal-chart-arrow {
+  color: var(--accent);
+}
+
+.thermal-chart canvas {
+  display: block;
+  width: 840px;
+  max-width: 80vw;
+  height: 90px;
+}
+
+/* Collapsed: only the header (with the "Thermal Graph" label) stays visible,
+   shrunk to a small tab pinned at the bottom-centre. */
+.thermal-chart.collapsed {
+  padding: 8px 14px;
+}
+
+.thermal-chart.collapsed canvas {
+  display: none;
+}
+
+.swatch.perimeter,
+.swatch.outer-perimeter {
+  background: var(--perimeter);
+}
+
+.swatch.inner-perimeter {
+  background: var(--perimeter-inner);
+}
+
+.swatch.infill {
+  background: var(--infill);
+}
+
+.swatch.support {
+  background: var(--support);
+}
+
+.swatch.support-outer-perimeter {
+  background: var(--support-outer-perimeter);
+}
+
+.swatch.support-inner-perimeter {
+  background: var(--support-inner-perimeter);
+}
+
+.swatch.travel-short {
+  background: #6fcf97;
+}
+
+.swatch.travel-long {
+  background: #ff5d9e;
+}
+
+/* --- Slicer settings menu + overlay --------------------------------------- */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000; /* above the plat-header (1000) and the mobile rail/toggle */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Mobile rails (shown only in the mobile media query below). */
+.section-rail { display: none; }
+.view-rail { display: none; }
+.model-tools { display: none; }
+.thermal-tools { display: none; }
+.playback-bar { display: none; }
+.status-m { display: none; }
+
+.overlay[hidden] {
+  display: none;
+}
+
+.overlay-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(6, 10, 16, 0.6);
+  backdrop-filter: blur(2px);
+}
+
+.overlay-dialog {
+  position: relative;
+  width: 320px;
+  max-width: calc(100vw - 32px);
+  padding: 20px;
+  background: var(--panel-bg);
+  border: 1px solid rgba(118, 179, 255, 0.35);
+  border-radius: 12px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
+}
+
+/* Save dialog: wider on desktop with a full-width name field, so long slice
+   names have room. Mobile is capped by max-width above (near full screen). */
+.overlay-dialog.save-dialog {
+  width: 520px;
+}
+.save-dialog .field {
+  display: block;
+  margin: 6px 0 0;
+}
+.save-dialog .field label {
+  display: block;
+  margin-bottom: 6px;
+}
+.save-dialog .field .ctl {
+  width: 100%;
+}
+
+.overlay-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.overlay-header h2 {
+  margin: 0;
+  font-size: 16px;
+  letter-spacing: 0.03em;
+}
+
+.overlay-close {
+  flex: 0 0 auto;
+  width: 30px;
+  padding: 4px 0;
+  font-size: 14px;
+}
+
+/* Profile Manager fields: a fixed-width label + a fixed-width control so every
+   row lines up across sections (widths come from the shared CSS variables). */
+.field {
+  display: grid;
+  grid-template-columns: var(--pm-label-w) var(--pm-control-w);
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0;
+}
+
+.field label {
+  font-size: 13px;
+}
+
+/* A wide profile-name field. It spans both grid columns but its control is
+   sized so its right edge lines up with the right-column controls (e.g. the
+   Material inputs): control width = 50% of the grid + half the 28px column
+   gap (14px) + the standard control width. */
+.field-grow {
+  grid-column: 1 / -1;
+  grid-template-columns: var(--pm-label-w) calc(50% + 14px + var(--pm-control-w));
+}
+
+/* Profile combobox: an always-editable text input plus a dropdown that opens
+   across the FULL width of the field. The <select> spans the whole field (so
+   its native popup is full-width) but is non-interactive (pointer-events:none)
+   and visually hidden; the input stays editable everywhere. A small corner
+   button draws the arrow and opens the picker via select.showPicker(). */
+.name-combo {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+}
+
+.name-combo input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+  padding-right: 40px;
+}
+
+/* The full-width select drives the popup width but never intercepts clicks. */
+.name-combo-select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Clickable arrow corner that opens the dropdown. */
+.name-combo-trigger {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  bottom: 1px;
+  width: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--border);
+  border-top-right-radius: 5px;
+  border-bottom-right-radius: 5px;
+  background: rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+}
+
+.name-combo-trigger:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.name-combo-trigger::after {
+  content: "▾";
+  font-size: 17px;
+  line-height: 1;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.name-combo-trigger:hover::after {
+  color: var(--text);
+}
+
+/* On/Off toggle button (e.g. Generate support) sharing the .ctl look. */
+.toggle-btn {
+  text-align: center;
+  cursor: pointer;
+}
+
+.toggle-btn[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #06101c;
+  font-weight: 600;
+}
+
+/* One unified control look for every input/select/button group in a field. */
+.ctl,
+.field input,
+.field select {
+  width: 100%;
+  height: 30px;
+  padding: 4px 8px;
+  background: #0b121b;
+  color: var(--text);
+  border: 1px solid rgba(118, 179, 255, 0.3);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.field select.ctl {
+  cursor: pointer;
+}
+
+.field .ctl:hover {
+  border-color: var(--accent);
+}
+
+/* Profile actions (New / Duplicate / Delete): natural-width buttons in a row. */
+.btn-pair {
+  display: flex;
+  gap: 8px;
+  border: 0;
+  background: none;
+  padding: 0;
+  height: 30px;
+}
+
+.btn-pair button {
+  margin: 0;
+  height: 30px;
+  padding: 0;
+  flex: 1 1 0; /* equal-width buttons that fill the row */
+}
+
+.overlay-actions {
+  display: flex;
+  margin-top: 18px;
+}
+
+/* Read-only banner shown when a master (factory) profile is selected. */
+.pm-factory-notice {
+  margin: 12px 0 0;
+  padding: 8px 12px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text);
+  background: rgba(118, 179, 255, 0.12);
+  border: 1px solid rgba(118, 179, 255, 0.35);
+  border-radius: 6px;
+}
+
+.pm-factory-notice strong {
+  color: var(--accent);
+}
+
+/* Confirm dialog: a short message above right-aligned action buttons. */
+.confirm-message {
+  margin: 14px 0 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.confirm-actions {
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+button.danger {
+  background: rgba(255, 86, 86, 0.16);
+  border-color: rgba(255, 86, 86, 0.55);
+  color: #ff8a8a;
+  font-weight: 600;
+}
+
+button.danger:hover {
+  border-color: #ff5656;
+  color: #ffb0b0;
+}
+
+/* Wide Profile Manager dialog. */
+.overlay-dialog.wide {
+  width: 720px;
+  max-height: calc(var(--app-h, 100vh) - 48px);
+  display: flex;
+  flex-direction: column;
+}
+
+/* Only the settings body scrolls, so the header/footer stay put. */
+.pm-body {
+  overflow-y: auto;
+  padding-right: 6px;
+  margin-right: -6px;
+}
+
+.overlay-dialog.wide h3 {
+  margin: 18px 0 10px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted, #9bb0c9);
+  border-bottom: 1px solid rgba(118, 179, 255, 0.18);
+  padding-bottom: 4px;
+}
+
+.overlay-dialog.wide h3:first-child {
+  margin-top: 4px;
+}
+
+/* Profile Manager accordion: two collapsible groups (Print / Machine), one open
+   at a time. The six settings sub-sections stay in DOM order; CSS `order` slots
+   each under its group header, so no markup is reordered. */
+.pm-accordion {
+  display: flex;
+  flex-direction: column;
+  /* Clear separation from the (pinned) profile-management block above. */
+  margin-top: 18px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(118, 179, 255, 0.14);
+}
+
+/* The two group toggles: chevron + title as a clean full-width row that tints
+   when open/hovered. No box border or focus ring (resets the base button style). */
+.pm-group-head {
+  appearance: none;
+  flex: none;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  padding: 11px 10px;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  outline: none;
+}
+
+.pm-group-head:hover {
+  background: rgba(118, 179, 255, 0.07);
+  color: var(--accent);
+}
+
+.pm-group-head.active,
+.pm-group-head:focus-visible {
+  background: rgba(118, 179, 255, 0.1);
+  color: var(--accent);
+}
+
+.pm-group-head[data-group="print"] { order: 1; }
+.pm-group-head[data-group="machine"] { order: 6; }
+
+.pm-acc-chev {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  /* Pull the glyph's internal left padding back so its tip lines up with the
+     field labels below (e.g. "Layer height"). */
+  margin-left: -3px;
+  color: var(--muted, #9bb0c9);
+  transition: transform 0.15s ease;
+}
+
+.pm-group-head.active .pm-acc-chev {
+  transform: rotate(90deg);
+  color: var(--accent);
+}
+
+/* Sub-sections: shown only when their group is the active one. Indented to line
+   up with the group header's chevron (keeps the header tint full-width). */
+.pm-sub { padding: 0 0 4px 5px; }
+.pm-sub[hidden] { display: none; }
+.pm-sub[data-acc="basic"] { order: 2; }
+.pm-sub[data-acc="support"] { order: 3; }
+.pm-sub[data-acc="feature"] { order: 4; }
+.pm-sub[data-acc="material"] { order: 5; }
+.pm-sub[data-acc="machine"] { order: 7; }
+.pm-sub[data-acc="macros"] { order: 8; }
+
+/* Restore the sub-section headings to the standard section-label style, with a
+   little top spacing so stacked sub-sections separate clearly. */
+.overlay-dialog.wide .pm-sub > h3 {
+  margin-top: 16px;
+}
+
+/* Two-column grid of setting rows. */
+.pm-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 28px;
+}
+
+/* Macros: a two-column grid of multi-line G-code editors. */
+.pm-macro-help {
+  margin: 0 0 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted, #9bb0c9);
+}
+
+.pm-macro-help code {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: var(--text);
+  background: rgba(118, 179, 255, 0.14);
+  border: 1px solid rgba(118, 179, 255, 0.22);
+}
+
+.pm-macro-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 28px;
+}
+
+/* Each macro stacks its label above a full-width editor (overriding the default
+   side-by-side .field layout), and occupies a single grid cell. */
+.pm-macro-grid .field {
+  display: block;
+  grid-column: auto;
+  grid-template-columns: none;
+  margin: 0;
+}
+
+.pm-macro-grid .field label {
+  display: block;
+  margin: 0 0 5px;
+  color: var(--muted, #9bb0c9);
+}
+
+textarea.pm-macro {
+  height: auto;
+  min-height: 140px;
+  padding: 8px 10px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+  resize: none;
+  tab-size: 2;
+}
+
+/* Macro variables: a read-only reference table (built-ins + program-defined). */
+.pm-var-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin-bottom: 16px;
+}
+
+.pm-var-table th {
+  font-weight: 600;
+  text-align: left;
+  color: var(--muted, #9bb0c9);
+  padding: 0 8px 6px;
+  border-bottom: 1px solid rgba(118, 179, 255, 0.18);
+}
+
+.pm-var-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid rgba(118, 179, 255, 0.1);
+  vertical-align: middle;
+}
+
+.pm-var-table code {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--accent);
+}
+
+.pm-var-note {
+  color: var(--muted, #9bb0c9);
+}
+
+/* Per-feature settings table. */
+.feature-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.feature-table th,
+.feature-table td {
+  padding: 6px 6px;
+  text-align: center;
+  border-bottom: 1px solid rgba(118, 179, 255, 0.12);
+}
+
+.feature-table th:first-child,
+.feature-table td:first-child {
+  text-align: left;
+}
+
+.feature-table th {
+  font-weight: 600;
+  color: var(--muted, #9bb0c9);
+  vertical-align: bottom;
+}
+
+.feature-table input[type="number"],
+.feature-table select {
+  width: 72px;
+  padding: 4px 5px;
+  background: #0b121b;
+  color: var(--text);
+  border: 1px solid rgba(118, 179, 255, 0.3);
+  border-radius: 6px;
+}
+
+.feature-table tr.disabled {
+  opacity: 0.4;
+}
+
+.feature-table input:disabled,
+.feature-table select:disabled,
+.field input:disabled,
+.field select:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* A master profile's name is read-only (distinct, muted text) but the combo
+   stays fully interactive so the dropdown still reads as usable. */
+.name-combo input[readonly] {
+  color: var(--muted);
+  cursor: default;
+}
+
+/* Slim, themed scrollbars so the modal/body scroll has no white track. */
+.pm-body {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(118, 179, 255, 0.35) transparent;
+}
+
+.pm-body::-webkit-scrollbar {
+  width: 10px;
+}
+
+.pm-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.pm-body::-webkit-scrollbar-thumb {
+  background: rgba(118, 179, 255, 0.3);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.pm-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(118, 179, 255, 0.5);
+  background-clip: padding-box;
+}
+
+
+/* Pixel-streaming render mode (?render=1): show only the 3D canvas — the render
+   service drives the camera and captures frames. */
+/* Pixel-streaming (render mode) now streams the FULL mobile GUI — the render
+   service shows the real slicer (rails, bottom bar, playback, overlays) and relays
+   the client's taps as input. (Previously this hid everything but the canvas.) The
+   embed + mobile rules already give the right mobile chrome. */
+
+/* --- Shared platform header (PR12) --- */
+.plat-header {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 1rem;
+  background: #111a24;
+  border-bottom: 1px solid #243240;
+  z-index: 1000;
+  font-family: "Segoe UI", system-ui, sans-serif;
+}
+.plat-nav { display: flex; align-items: center; gap: 0.25rem; }
+.plat-brand { font-weight: 700; color: #e6eef7; margin-right: 0.9rem; }
+.plat-tab {
+  color: #8093a6; text-decoration: none; padding: 0.3rem 0.75rem;
+  border-radius: 7px; font-size: 0.88rem;
+}
+.plat-tab:hover { color: #e6eef7; background: #18222e; }
+.plat-tab.active { color: #e6eef7; background: #1d2a3a; }
+.plat-acct { color: #8093a6; font-size: 0.85rem; }
+
+/* Drop the slicer's top-anchored panels below the shared header. */
+.panel { top: 56px !important; }
+.legend-panel { top: 56px !important; }
+
+/* Embedded in the platform shell: the shell already shows the header, so hide
+   the slicer's own and lift the panels back to the top. */
+.embed .plat-header { display: none; }
+.embed .panel { top: 16px !important; }
+.embed .legend-panel { top: 16px !important; }
+
+/* Direct G-code download removed from the slicer — download from the database. */
+.row:has(#exportGcodeButton) { display: none; }
+
+/* --- Mobile: a right-side rail of expandable sub-menus; the selected one opens
+   as a near-full-width sheet at the bottom. Desktop uses the full side panel. --- */
+@media (max-width: 640px) {
+  /* App-style bottom bar: icon-only options, evenly spaced. The selected one
+     opens as a sheet above the bar. */
+  .section-rail {
+    display: flex; justify-content: space-around; align-items: stretch;
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 57;
+    gap: 4px; padding: 4px 6px 5px;
+    background: var(--panel-bg); border-top: 1px solid rgba(118, 179, 255, 0.18);
+    backdrop-filter: blur(8px);
+  }
+  .section-rail button {
+    flex: 1 1 0; min-height: 40px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 2px;
+    background: none; border: 0; border-radius: 10px;
+    color: var(--muted); cursor: pointer;
+  }
+  /* Smaller icon so a label fits below without making the bar any taller. */
+  .section-rail button svg { width: 20px; height: 20px; }
+  .section-rail .rail-label {
+    font-size: 9px; line-height: 1; font-weight: 600;
+    letter-spacing: 0.5px; text-transform: uppercase;
+  }
+  .section-rail button.active { color: var(--accent); background: var(--accent-soft); }
+  .section-rail button:disabled { opacity: 0.35; cursor: default; }
+
+  /* Top-left view-mode rail (STL/Toolpath/Thermal + Layer toggle). */
+  .view-rail {
+    display: flex; flex-direction: column; gap: 6px;
+    position: fixed; top: 10px; left: 8px; z-index: 56;
+  }
+  .view-rail button {
+    width: 40px; height: 40px; flex: none;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--panel-bg); color: var(--muted);
+    border: 1px solid rgba(118, 179, 255, 0.18); border-radius: 10px;
+    backdrop-filter: blur(8px); cursor: pointer;
+  }
+  .view-rail button svg { width: 22px; height: 22px; }
+  .view-rail button.active { color: var(--accent); border-color: var(--accent); background: #16202c; }
+  .view-rail button:disabled { opacity: 0.35; cursor: default; }
+
+  /* Model-prep tools: a small row next to the STL cube, only in the STL view. */
+  .model-tools {
+    display: flex; gap: 6px;
+    position: fixed; top: 10px; left: 56px; z-index: 56;
+  }
+  .model-tools[hidden] { display: none; }
+  .model-tools button {
+    width: 40px; height: 40px; flex: none;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--panel-bg); color: var(--muted);
+    border: 1px solid rgba(118, 179, 255, 0.18); border-radius: 10px;
+    backdrop-filter: blur(8px); cursor: pointer;
+  }
+  .model-tools button svg { width: 22px; height: 22px; }
+  /* Active = its placement mode is running (stays lit until move/select done). */
+  .model-tools button.active { color: var(--accent); border-color: var(--accent); background: #16202c; }
+  /* Off the STL view: visible but greyed and frameless (non-interactive). */
+  .model-tools button:disabled {
+    border-color: transparent; background: transparent;
+    opacity: 0.4; cursor: default; backdrop-filter: none;
+  }
+  .view-rail { align-items: center; }
+  .view-rail #layerToggle { margin-top: 8px; } /* separate the toggle from the modes */
+
+  /* Thermal-graph toggle: frameless icon to the RIGHT of the thermometer (the 3rd
+     view-rail button sits at ~102px), mirroring how the model tools sit right of the
+     cube. No outline; just the icon, lit when the graph is shown. */
+  .thermal-tools {
+    display: flex; position: fixed; top: 102px; left: 56px; z-index: 56;
+  }
+  .thermal-tools button {
+    width: 40px; height: 40px; flex: none;
+    display: flex; align-items: center; justify-content: center;
+    background: transparent; border: 0; color: var(--muted); cursor: pointer;
+  }
+  .thermal-tools button svg { width: 22px; height: 22px; }
+  .thermal-tools button.active { color: var(--accent); }
+  .thermal-tools button:disabled { opacity: 0.4; cursor: default; }
+
+  /* Light, simple vertical layer slider under the Layer toggle. Built from a
+     horizontal range rotated -90deg so the orientation is correct (bottom = first
+     layer) and consistent across browsers. The wrapper reserves the rotated box. */
+  .layer-slider-wrap {
+    height: 170px; width: 34px; margin: 8px auto 2px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  /* display:flex above would otherwise override the hidden attribute. */
+  .layer-slider-wrap[hidden] { display: none; }
+  .layer-slider-rail {
+    -webkit-appearance: none; appearance: none;
+    width: 170px; height: 34px; /* generous touch target (cross-axis) */
+    background: transparent; transform: rotate(-90deg);
+    touch-action: none; /* drag the slider without triggering pull-to-refresh */
+    cursor: pointer;
+  }
+  .layer-slider-rail::-webkit-slider-runnable-track {
+    height: 3px; border-radius: 2px; background: rgba(118, 179, 255, 0.3);
+  }
+  .layer-slider-rail::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none; margin-top: -7px;
+    width: 17px; height: 17px; border-radius: 50%;
+    background: var(--accent); border: 2px solid var(--panel-bg);
+  }
+  .layer-slider-rail::-moz-range-track {
+    height: 3px; border-radius: 2px; background: rgba(118, 179, 255, 0.3);
+  }
+  .layer-slider-rail::-moz-range-thumb {
+    width: 17px; height: 17px; border-radius: 50%;
+    background: var(--accent); border: 2px solid var(--panel-bg);
+  }
+
+  /* Persistent playback controls above the bottom menu (shown in toolpath/thermal).
+     No bar background — only the play + speed buttons carry their own panel; the
+     scrub slider floats between them in the minimal layer-slider style. */
+  .playback-bar {
+    display: flex; align-items: center; gap: 10px;
+    position: fixed; left: 12px; right: 12px; bottom: 70px; z-index: 56;
+  }
+  .playback-bar[hidden] { display: none; }
+  .playback-bar .pb-play,
+  .playback-bar .pb-speed {
+    flex: none; width: 40px; height: 40px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--panel-bg); color: var(--text);
+    border: 1px solid rgba(118, 179, 255, 0.18); border-radius: 10px;
+    backdrop-filter: blur(8px); cursor: pointer;
+  }
+  .playback-bar .pb-play { font-size: 15px; }
+  .playback-bar .pb-speed svg { width: 22px; height: 22px; }
+  .playback-bar .pb-speed.active { color: var(--accent); border-color: var(--accent); background: #16202c; }
+  /* Scrub slider: same minimal look as the layer slider, but horizontal + no panel. */
+  .playback-bar .pb-progress {
+    flex: 1 1 auto; min-width: 0; height: 34px;
+    -webkit-appearance: none; appearance: none; background: transparent;
+    touch-action: none; cursor: pointer;
+  }
+  .playback-bar .pb-progress::-webkit-slider-runnable-track {
+    height: 3px; border-radius: 2px; background: rgba(118, 179, 255, 0.3);
+  }
+  .playback-bar .pb-progress::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none; margin-top: -7px;
+    width: 17px; height: 17px; border-radius: 50%;
+    background: var(--accent); border: 2px solid var(--panel-bg);
+  }
+  .playback-bar .pb-progress::-moz-range-track {
+    height: 3px; border-radius: 2px; background: rgba(118, 179, 255, 0.3);
+  }
+  .playback-bar .pb-progress::-moz-range-thumb {
+    width: 17px; height: 17px; border-radius: 50%;
+    background: var(--accent); border: 2px solid var(--panel-bg);
+  }
+  .speed-wrap { position: relative; flex: none; }
+  /* The speed slider pops up above the symbol, inheriting the layer-slider look. */
+  .speed-slider-wrap {
+    position: absolute; bottom: 46px; left: 50%; transform: translateX(-50%);
+    height: 150px; width: 34px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--panel-bg); border: 1px solid rgba(118, 179, 255, 0.18);
+    border-radius: 12px; backdrop-filter: blur(8px);
+  }
+  .speed-slider-wrap[hidden] { display: none; }
+  .speed-slider-wrap .layer-slider-rail { width: 130px; height: 34px; }
+
+  /* The Preview sheet's controls now live in the always-on playback bar. */
+  #simRow { display: none !important; }
+
+  /* Profile + status text, bottom-left. Above the menu, or above the play bar when
+     it's visible (the playback bar precedes it in the DOM). */
+  .status-m {
+    display: block;
+    position: fixed; left: 14px; bottom: 72px; z-index: 55;
+    max-width: 62vw; font-size: 11px; line-height: 1.3; color: var(--muted);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7); pointer-events: none;
+  }
+  .playback-bar:not([hidden]) ~ .status-m { bottom: 120px; }
+
+  /* The view-mode + toolpath-style switchers move to the rail on mobile, and the
+     layer slider now lives in the rail (remove the duplicate from the Preview tab). */
+  #viewSection { display: none !important; }
+  #simRow .segmented { display: none; }
+  #layerLine { display: none !important; }
+  body[data-section="preview"] #simRow { border-top: 0; padding-top: 0; margin-top: 0; }
+
+  /* The selected option opens as a near-full-width sheet at the bottom; only the
+     active group's sections show. Tabs stay open while you use the 3D view (no
+     close-on-outside-click — that fought touch interaction). */
+  .panel {
+    top: auto !important; bottom: 64px; left: 8px; right: 8px; z-index: 56;
+    width: auto; max-width: none;
+    padding: 11px; font-size: 12px;
+    max-height: calc(var(--app-h, 100dvh) - 80px); overflow-y: auto;
+  }
+  /* Beat the more-specific desktop ".embed .panel { top: 16px }" so the sheet
+     sits above the bottom bar (and never runs past the bottom of the screen). */
+  .embed .panel { top: auto !important; bottom: 64px; }
+  /* The side panel is fully replaced on mobile (actions in the bottom bar, views in
+     the rails, profile in the overlay) — never show it as a pop-up sheet. Its
+     buttons stay in the DOM (hidden) so the bottom-bar proxies still drive them. */
+  .panel { display: none !important; }
+  .panel-head { display: none; }
+  .panel h1 { font-size: 15px; }
+  .panel .panel-section { display: none; padding-top: 0; margin-top: 0; border-top: 0; }
+  body[data-section="model"] .panel-section[data-group="model"],
+  body[data-section="slice"] .panel-section[data-group="slice"],
+  body[data-section="preview"] .panel-section[data-group="preview"]:not([hidden]) { display: block; }
+  /* Sections that share a tab get a divider between them (same group only, so a
+     hidden cross-group neighbour can't leave an orphan border). */
+  body[data-section="slice"] .panel-section[data-group="slice"] + .panel-section[data-group="slice"],
+  body[data-section="preview"] .panel-section[data-group="preview"] + .panel-section[data-group="preview"]:not([hidden]) {
+    padding-top: 9px; margin-top: 9px; border-top: 1px solid rgba(118, 179, 255, 0.12);
+  }
+
+  .panel-section { padding-top: 8px; margin-top: 8px; }
+  /* On mobile, load STLs via the database, not the slicer. */
+  .load-row { display: none; }
+  /* On mobile the machine + profile are switched via Profile Manager / the printer
+     tool (machine · profile shown in the status line). */
+  .profile-row { display: none; }
+  .machine-row { display: none; }
+  /* Model actions go 3-up on mobile (wider sheet fits "Rotate to base"). */
+  .model-actions { grid-template-columns: repeat(3, 1fr); }
+  .model-actions button:first-child { grid-column: auto; }
+  .section-title { font-size: 10px; margin-bottom: 6px; }
+  .row { margin: 7px 0; }
+  button { padding: 8px; font-size: 13px; }
+  /* Reserve the status line so the bottom-anchored sheet doesn't jump up when a
+     slice/sim progress message appears. */
+  #status { min-height: 1.1rem; margin: 5px 0 0; }
+  /* Text inputs need 16px to stop mobile browsers auto-zooming on focus. Native
+     <select> doesn't zoom, so keep selects sized like the buttons for a
+     consistent look (and a normal native dropdown). */
+  input, textarea, .name-combo input { font-size: 16px; }
+  select, .control, .panel select { font-size: 13px; padding: 6px 8px; }
+  .row input[type="number"] { width: 60px; }
+
+  /* Heat legend: compact, floating top-right (clear of the bottom bar). */
+  .legend-panel {
+    top: 10px !important; right: 8px; left: auto;
+    min-width: 0; max-width: 58vw; padding: 8px 10px; font-size: 11px;
+  }
+  .embed .legend-panel { top: 10px !important; }
+
+  /* Thermal graph: auto-shown in the thermal view, full width above the bottom bar
+     (reset the desktop centring transform). z below the sheet so an open sheet
+     covers it. */
+  .thermal-chart {
+    left: 8px; right: 8px; bottom: 144px; transform: none; z-index: 54;
+  }
+  /* Mobile shows/hides the graph via the view-rail graph icon — no collapse header. */
+  .thermal-chart-header { display: none; }
+  .thermal-chart canvas { width: 100%; max-width: 100%; height: 80px; }
+
+  /* Profile Manager: everything stacks full-width so there's no horizontal
+     scroll; the body scrolls within the dialog while the header and the Done
+     button stay pinned (so Done is always reachable). */
+  .overlay-dialog.wide {
+    width: 94vw; max-width: 94vw; padding: 16px;
+    display: flex; flex-direction: column; max-height: calc(var(--app-h, 100dvh) - 20px);
+  }
+  .pm-body { flex: 1 1 auto; min-height: 0; max-height: none; overflow-y: auto; }
+  .overlay-actions { flex: none; }
+  .pm-grid, .pm-macro-grid { grid-template-columns: 1fr; }
+  /* Macro editors sit a touch below the other field inputs (12px monospace) so
+     they look harmonious rather than oversized on mobile. */
+  textarea.pm-macro { font-size: 12px; }
+  .field, .field-grow { grid-template-columns: 1fr; gap: 4px; margin: 10px 0; }
+  .field label { font-size: 12px; }
+  .field .ctl, .name-combo { width: 100%; }
+  .pm-factory-notice { word-break: break-word; }
+  .btn-pair { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+
+  /* Feature settings: stack each feature into a labelled card (no wide table). */
+  .feature-table, .feature-table tbody, .feature-table tr, .feature-table td { display: block; width: 100%; }
+  .feature-table thead { display: none; }
+  .feature-table tr {
+    border: 1px solid var(--border); border-radius: 8px;
+    margin-bottom: 8px; padding: 6px 9px;
+  }
+  .feature-table td {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; padding: 4px 0; border: 0;
+  }
+  .feature-table td::before {
+    content: attr(data-label); color: var(--muted); font-size: 12px;
+  }
+  .feature-table td.pm-feat-name {
+    font-weight: 600; font-size: 13px; padding-bottom: 4px; color: var(--text);
+  }
+  .feature-table td.pm-feat-name::before { content: none; }
+  .feature-table input[type="number"] { width: 96px; font-size: 16px; }
+  .feature-table select { width: 96px; }
+}
+
+/* Remote-scene live-render indicator: a small pulsing broadcast icon left of the
+   status text, marking that the 3D is being streamed from the server. */
+.rs-live {
+  display: inline-flex; width: 14px; height: 14px; margin-right: 6px;
+  color: var(--accent); vertical-align: middle; flex: 0 0 auto;
+  animation: rs-live-pulse 2s ease-in-out infinite;
+}
+.rs-live svg { width: 100%; height: 100%; }
+@keyframes rs-live-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+
+/* Remote-scene loading / timeout note, centered where the model renders. */
+.rs-note {
+  position: fixed; inset: 0; z-index: 2000; display: flex; align-items: center;
+  justify-content: center; pointer-events: none; padding: 24px;
+}
+.rs-note[hidden] { display: none; }
+.rs-note-card {
+  padding: 10px 18px; border-radius: 10px; color: var(--fg); font-size: 14px;
+  background: rgba(8, 12, 18, 0.7);
+  -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+}
+
+/* ===== Embedded-viewer dock layout (?dock=1) =============================
+   A wide bottom control bar that mirrors the host avisualizer viewer's bottom
+   nav: evenly-spaced tabs, each opening its canonical .panel section as a sheet
+   above the bar. With no tab active the 3D view is full. Everything is scoped to
+   html.dock, so standalone desktop, standalone mobile, and the platform-shell
+   ?embed layouts are all untouched. Button metrics (74px tall, 4-col glassy bar,
+   22px icon + 12px label) intentionally match the viewer's .bottom-nav spec. */
+.dock-rail { display: none; }
+
+html.dock .plat-header { display: none; }
+/* The desktop side panel and mobile rails are fully replaced by the dock bar. */
+html.dock .section-rail,
+html.dock .view-rail,
+html.dock .model-tools,
+html.dock .thermal-tools,
+html.dock .playback-bar,
+html.dock .status-m { display: none !important; }
+
+/* Bottom control bar — same footprint/glass as the viewer's .bottom-nav. */
+html.dock .dock-rail {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 6px;
+  position: fixed;
+  left: 50%;
+  /* Sit clear of the Windows taskbar on the vertical HMI panel (matches the
+     viewer's .bottom-nav bottom:60px). Was 10px, which the taskbar clipped. */
+  bottom: 60px;
+  transform: translateX(-50%);
+  width: calc(100vw - 16px);
+  padding: 10px;
+  border-radius: 20px;
+  border: 1px solid rgba(203, 224, 255, 0.2);
+  background: linear-gradient(180deg, rgba(19, 24, 32, 0.86), rgba(13, 17, 25, 0.86));
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.34);
+  z-index: 58;
+}
+html.dock .dock-rail button {
+  min-height: 112px;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 8px;
+  padding: 14px 8px;
+  border-radius: 14px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: rgba(213, 223, 239, 0.86);
+  cursor: pointer;
+}
+html.dock .dock-rail button svg { width: 30px; height: 30px; }
+html.dock .dock-rail button span { font-size: 14px; letter-spacing: 0.01em; }
+html.dock .dock-rail button:hover {
+  border-color: rgba(203, 224, 255, 0.3);
+  background: rgba(255, 255, 255, 0.04);
+}
+html.dock .dock-rail button.active {
+  border-color: rgba(158, 255, 183, 0.34);
+  background: rgba(83, 160, 102, 0.18);
+  color: #d3ffde;
+  box-shadow: 0 0 24px rgba(122, 255, 148, 0.28), inset 0 0 0 1px rgba(180, 255, 199, 0.2);
+}
+html.dock .dock-rail button:disabled { opacity: 0.4; cursor: default; }
+
+/* Start print is the primary action — give it an accent fill so it reads as the
+   call-to-action within the bar (mirrors the viewer's blue Start-print button). */
+html.dock .dock-rail button.dock-print {
+  color: #fff;
+  background: var(--accent, #4aa3ff);
+  border-color: transparent;
+}
+html.dock .dock-rail button.dock-print:hover {
+  background: var(--accent, #4aa3ff);
+  border-color: transparent;
+  filter: brightness(1.08);
+}
+
+/* The canonical .panel becomes a sheet ABOVE the bar, shown only when a tab is
+   active; it aligns to the bar's width so the two read as one control cluster. */
+html.dock .panel {
+  position: fixed;
+  top: auto !important;
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
+  /* Clear the full-width dock bar (≈132px tall + 60px offset) so the sheet isn't
+     hidden behind it. 60 + 132 + 14px gap = 206px. */
+  bottom: 206px;
+  width: calc(100vw - 16px);
+  max-height: calc(100dvh - 240px);
+  overflow-y: auto;
+  z-index: 57;
+  display: none;
+}
+html.dock body[data-section] .panel { display: block; }
+html.dock .panel-head { display: none; }
+html.dock .panel .panel-section { display: none; padding-top: 0; margin-top: 0; border-top: 0; }
+html.dock body[data-section="model"] .panel-section[data-group="model"],
+html.dock body[data-section="slice"] .panel-section[data-group="slice"],
+html.dock body[data-section="preview"] .panel-section[data-group="preview"]:not([hidden]) { display: block; }
+/* Sections that share a tab get a divider between them (same group only). */
+html.dock body[data-section="slice"] .panel-section[data-group="slice"] + .panel-section[data-group="slice"],
+html.dock body[data-section="preview"] .panel-section[data-group="preview"] + .panel-section[data-group="preview"]:not([hidden]) {
+  padding-top: 10px; margin-top: 10px; border-top: 1px solid rgba(118, 179, 255, 0.12);
+}
+
+/* --- Top notification banner (slice / out-of-bounds prompts) -------------- */
+.slicer-banner {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  max-width: min(560px, calc(100vw - 24px));
+  padding: 10px 18px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  border: 1px solid transparent;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.4);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+.slicer-banner[hidden] { display: none; }
+.slicer-banner[data-type="warn"] {
+  color: #1a1200; background: #e2b04a; border-color: #f0c976;
+}
+.slicer-banner[data-type="error"] {
+  color: #fff; background: #d9534f; border-color: #ea8c89;
+}
+
+/* "Needs attention" pulse — draws the eye to the dock tab / Slice+Simulate
+   button the user must act on (banner text conveys warn vs error). */
+@keyframes slicer-attn-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(226, 176, 74, 0); }
+  50% { box-shadow: 0 0 0 4px rgba(226, 176, 74, 0.5); }
+}
+html.dock .dock-rail button.attn {
+  border-color: #e2b04a;
+  color: #ffe4ad;
+  animation: slicer-attn-pulse 1.2s ease-in-out infinite;
+}
+#sliceButton.attn {
+  border-color: #e2b04a;
+  animation: slicer-attn-pulse 1.2s ease-in-out infinite;
+}

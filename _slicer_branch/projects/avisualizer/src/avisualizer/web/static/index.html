@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sensor Point Cloud Viewer</title>
+  <link rel="stylesheet" href="/static/styles.css?v=62" />
+</head>
+<body>
+  <button id="openSettings" class="settings-button" type="button">Settings</button>
+
+  <div class="color-scale-panel" id="colorScalePanel" aria-label="Load cell color scale">
+    <div class="color-scale-wrap">
+      <div class="color-scale-bar" id="colorScaleBar"></div>
+      <div class="color-scale-labels">
+        <span id="colorScaleMax">max</span>
+        <span id="colorScaleAvg">avg</span>
+        <span id="colorScaleMin">min</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="color-scale-panel hidden" id="colorScalePanelSecondary" aria-label="Secondary color scale">
+    <div class="color-scale-wrap">
+      <div class="color-scale-bar" id="colorScaleBarSecondary"></div>
+      <div class="color-scale-labels">
+        <span id="colorScaleMaxSecondary">max</span>
+        <span id="colorScaleAvgSecondary">avg</span>
+        <span id="colorScaleMinSecondary">min</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="status-panel">
+    <h1>Meltio Orbit</h1>
+    <p id="systemStatus">loading...</p>
+    <p id="partStatus">loading...</p>
+    <p id="attributeStatus">loading...</p>
+  </div>
+
+  <div class="controls-panel">
+    <h2>Controls</h2>
+
+    <section class="control-subpanel">
+      <h3>File</h3>
+      <div class="control-row">
+        <label class="control-label" for="selectFolder">Source</label>
+        <button class="control-input" id="selectFolder" type="button">Load Folder</button>
+      </div>
+      <input id="folderPicker" type="file" webkitdirectory directory multiple hidden />
+      <p id="fileStatus" class="file-status">Default: small-torture-test_1-0-0</p>
+    </section>
+
+    <section class="control-subpanel">
+      <h3>View</h3>
+      <div class="control-row">
+        <label class="control-label" for="viewMode">View Mode</label>
+        <select class="control-input" id="viewMode">
+          <option value="point_sprite" selected>Point Cloud (Sprite)</option>
+          <option value="voxel_sprite">Voxel Sprite</option>
+          <option value="voxel_cube">Voxel (Cubes)</option>
+        </select>
+      </div>
+      <div class="control-row">
+        <label class="control-label" for="criteria">Criteria</label>
+        <select class="control-input" id="criteria">
+          <option value="loadCell" selected>loadCell</option>
+        </select>
+      </div>
+      <div class="control-row">
+        <label class="control-label" for="splitViewToggle">View Layout</label>
+        <button id="splitViewToggle" type="button" class="control-input split-toggle-btn" aria-pressed="false">Splitscreen</button>
+      </div>
+      <div class="control-row" id="secondaryCriteriaRow" hidden>
+        <label class="control-label" for="secondaryCriteria">Second Attribute</label>
+        <select class="control-input" id="secondaryCriteria">
+          <option value="ProcessControlPerSeconds">ProcessControlPerSeconds</option>
+        </select>
+      </div>
+    </section>
+
+    <section class="control-subpanel cut-subpanel">
+      <h3>Cut</h3>
+
+      <div class="control-row">
+        <label class="control-label" for="cutXMin">X Cut</label>
+        <div class="dual-range" aria-label="X cut range">
+          <input id="cutXMin" type="range" min="0" max="100" step="1" value="0" />
+          <input id="cutXMax" type="range" min="0" max="100" step="1" value="100" />
+        </div>
+      </div>
+
+      <div class="control-row">
+        <label class="control-label" for="cutYMin">Y Cut</label>
+        <div class="dual-range" aria-label="Y cut range">
+          <input id="cutYMin" type="range" min="0" max="100" step="1" value="0" />
+          <input id="cutYMax" type="range" min="0" max="100" step="1" value="100" />
+        </div>
+      </div>
+
+      <div class="control-row">
+        <label class="control-label" for="cutZMin">Z Cut</label>
+        <div class="dual-range" id="cutZRange" aria-label="Z cut range">
+          <input id="cutZMin" type="range" min="0" max="100" step="1" value="0" />
+          <input id="cutZMax" type="range" min="0" max="100" step="1" value="100" />
+        </div>
+      </div>
+
+      <div class="control-row">
+        <label class="control-label" for="lastLayerOnly">Layer View</label>
+        <button id="lastLayerOnly" class="layer-view-btn" type="button" aria-pressed="false">Show Single Layer</button>
+      </div>
+
+      <div class="control-row">
+        <label class="control-label" for="cutValueMin">Value Cut</label>
+        <div class="dual-range" aria-label="Value cut range">
+          <input id="cutValueMin" type="range" min="0" max="100" step="1" value="0" />
+          <input id="cutValueMax" type="range" min="0" max="100" step="1" value="100" />
+        </div>
+      </div>
+
+      <div class="control-row">
+        <label class="control-label" for="cutDisplayMode">Cut Style</label>
+        <button id="cutDisplayMode" class="layer-view-btn" type="button" aria-pressed="false">Hide</button>
+      </div>
+    </section>
+
+    <section class="control-subpanel timeline-subpanel">
+      <h3>Print Timeline</h3>
+
+      <div class="control-row">
+        <label class="control-label" for="cutLineMin">Range</label>
+        <div class="dual-range" aria-label="Print timeline range">
+          <input id="cutLineMin" type="range" min="0" max="100" step="any" value="0" />
+          <input id="cutLineMax" type="range" min="0" max="100" step="any" value="100" />
+        </div>
+      </div>
+
+      <div class="control-row">
+        <label class="control-label" for="timelinePlay">Playback</label>
+        <button id="timelinePlay" class="timeline-play-btn" type="button" aria-label="Play print timeline">▶ Play</button>
+      </div>
+
+      <div class="control-row">
+        <label class="control-label" for="timelineSpeed">Speed</label>
+        <input id="timelineSpeed" class="timeline-speed" type="range" min="0.03" max="0.75" step="0.01" value="0.2" aria-label="Playback speed" />
+      </div>
+    </section>
+
+    <section class="control-subpanel distribution-subpanel">
+      <h3>Distribution</h3>
+      <canvas id="distributionCanvas" width="240" height="96"></canvas>
+      <div class="dual-range dual-range-wide" aria-label="Percentile range">
+        <input id="percentileRangeMin" type="range" min="0" max="100" step="0.5" value="1" />
+        <input id="percentileRangeMax" type="range" min="0" max="100" step="0.5" value="99" />
+      </div>
+      <div class="distribution-caption">
+        <span>Percentile</span>
+        <span id="percentileReadout">1% – 99%</span>
+      </div>
+    </section>
+
+    <section class="control-subpanel distribution-subpanel hidden" id="distributionSubpanelSecondary">
+      <h3>Distribution (Split)</h3>
+      <canvas id="distributionCanvasSecondary" width="240" height="96"></canvas>
+      <div class="dual-range dual-range-wide" aria-label="Split percentile range">
+        <input id="percentileRangeSecondaryMin" type="range" min="0" max="100" step="0.5" value="1" />
+        <input id="percentileRangeSecondaryMax" type="range" min="0" max="100" step="0.5" value="99" />
+      </div>
+      <div class="distribution-caption">
+        <span>Percentile</span>
+        <span id="percentileReadoutSecondary">1% – 99%</span>
+      </div>
+    </section>
+  </div>
+
+  <div id="settingsPanel" class="settings-panel hidden">
+    <div class="settings-header">
+      <h2>Settings</h2>
+      <button id="closeSettings" type="button">Close</button>
+    </div>
+
+    <div class="tab-content">
+      <section class="settings-group">
+        <h3>Render Settings</h3>
+        <label for="voxelSize">Voxel Size XY (mm)</label>
+        <input id="voxelSize" type="number" min="0.1" max="20" step="0.1" value="2.0" />
+
+        <label for="voxelSizeZ">Voxel Size Z (mm)</label>
+        <input id="voxelSizeZ" type="number" min="0.1" max="20" step="0.1" value="1.2" />
+
+        <label for="spriteSize">Sprite Size</label>
+        <input id="spriteSize" type="number" min="0.5" max="8" step="0.1" value="4.25" />
+      </section>
+
+      <section class="settings-group">
+        <h3>Buildplate Settings</h3>
+
+        <label for="buildPlateSizeX">Build Plate Size X (mm)</label>
+        <input id="buildPlateSizeX" type="number" min="10" max="2000" step="1" value="300" />
+
+        <label for="buildPlateSizeY">Build Plate Size Y (mm)</label>
+        <input id="buildPlateSizeY" type="number" min="10" max="2000" step="1" value="400" />
+
+        <label for="showBaseGrid">Show Base Grid</label>
+        <input id="showBaseGrid" type="checkbox" checked />
+      </section>
+
+      <section class="settings-group">
+        <h3>Data Refinement</h3>
+
+        <label for="fillVoxelizedGaps">Fill Voxilized Gaps</label>
+        <input id="fillVoxelizedGaps" type="checkbox" />
+
+        <label for="minVoxelHoleArea">Min Voxel Hole Area (mm2)</label>
+        <input id="minVoxelHoleArea" type="number" min="0" max="200" step="0.5" value="5" />
+      </section>
+
+      <div class="settings-actions">
+        <button id="applySettings" type="button">Apply</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="trend-panel">
+    <div class="trend-subpanel" id="trendSubpanelPrimary">
+      <canvas id="trendCanvas" width="520" height="140"></canvas>
+    </div>
+    <div class="trend-subpanel hidden" id="trendSubpanelSecondary">
+      <canvas id="trendCanvasSecondary" width="520" height="120"></canvas>
+    </div>
+  </div>
+
+  <canvas id="scene"></canvas>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "/static/vendor/three.module.js",
+        "three/addons/": "/static/vendor/"
+      }
+    }
+  </script>
+  <script type="module" src="/static/app.js?v=127"></script>
+</body>
+</html>

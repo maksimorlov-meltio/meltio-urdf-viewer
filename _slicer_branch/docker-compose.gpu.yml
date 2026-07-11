@@ -1,0 +1,29 @@
+# GPU overlay for the pixel-streaming render service. Merge this AFTER the beta
+# files, and ONLY on a host that has an NVIDIA GPU + nvidia-container-toolkit:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+#     -f docker-compose.beta.yml -f docker-compose.gpu.yml \
+#     up -d --force-recreate render-beta
+#
+# It switches the renderer to hardware GL (RENDER_GPU=1) and gives the container the
+# GPU. Without a GPU present this overlay fails ("could not select device driver
+# 'nvidia'"), so it is deliberately NOT part of the default deploy. See
+# docs/PIXEL_STREAMING.md.
+name: meltio
+
+services:
+  render-beta:
+    environment:
+      - RENDER_GPU=1
+      # Vulkan/ANGLE is the backend that actually engages the NVIDIA GPU in headless
+      # Chromium (gl/egl fall back to SwiftShader). Verified on a T4. Tunable here.
+      - RENDER_CHROMIUM_GPU_ARGS=--use-gl=angle --use-angle=vulkan --enable-features=Vulkan --enable-gpu --ignore-gpu-blocklist
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

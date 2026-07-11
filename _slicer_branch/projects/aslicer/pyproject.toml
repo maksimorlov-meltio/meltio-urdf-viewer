@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aslicer"
+version = "0.1.0"
+description = "Experimental Python slicer for wire-arc / DED toolpath discovery"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.26.0,<3.0.0",
+  "trimesh>=4.4.0,<5.0.0",
+  "shapely>=2.0.0,<3.0.0",
+  "networkx>=3.0,<4.0",
+  "scipy>=1.11.0,<2.0.0",
+  "rtree>=1.1.0,<2.0.0",
+  "fastapi>=0.115.0,<1.0.0",
+  "uvicorn>=0.30.0,<1.0.0",
+  "python-multipart>=0.0.13,<1.0.0"
+]
+authors = [
+  { name = "Process Intelligence Team" }
+]
+
+[project.scripts]
+aslicer-web = "aslicer.web.app:run"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.package-data]
+"aslicer.web" = ["static/**/*"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>aslicer</title>
+  <link rel="stylesheet" href="static/styles.css?v=143" />
+  <script>
+    // When embedded in the platform shell (?embed=1), hide the slicer's own
+    // header so only the shell header shows. Set before paint to avoid a flash.
+    // ?render=1 is the server-side pixel-streaming mode: exposes window.__render
+    // hooks; the full mobile GUI is streamed and the client's taps are relayed.
+    try {
+      const q = new URLSearchParams(location.search);
+      if (q.get("embed") === "1") document.documentElement.classList.add("embed");
+      if (q.get("render") === "1") document.documentElement.classList.add("render");
+      // ?dock=1 (set by the avisualizer viewer's embed): a wide bottom control
+      // bar + pop-up section sheets, mirroring the host app's bottom nav.
+      if (q.get("dock") === "1") document.documentElement.classList.add("dock");
+    } catch (e) {}
+  </script>
+</head>
+<body>
+  <div class="plat-header">
+    <nav class="plat-nav">
+      <span class="plat-brand">Meltio</span>
+      <a class="plat-tab" href="/">Database</a>
+      <a class="plat-tab active" href="/slicer/">Slicer</a>
+    </nav>
+    <span class="plat-acct" id="platAcct"></span>
+  </div>
+
+  <canvas id="scene"></canvas>
+
+  <!-- Top notification banner: slice / out-of-bounds prompts (see app.js
+       showSlicerBanner). data-type = "error" | "warn" styles it. -->
+  <div id="slicerBanner" class="slicer-banner" role="status" aria-live="polite" hidden></div>
+
+  <!-- Heat legend (toolpath/thermal views): floats top-right on mobile, hidden
+       on desktop's side panel layout. -->
+  <aside class="legend-panel" id="legendPanel" aria-label="Legend" hidden>
+    <div class="legend-items" id="legendItems"></div>
+    <div class="legend-scale" id="legendScale" hidden>
+      <span class="thermal-scale-title">Relative heat</span>
+      <div class="thermal-scale-avglabel"><span id="thermalAvgLabel">avg</span></div>
+      <div class="thermal-scale-bar">
+        <div class="thermal-scale-avg" id="thermalAvg"></div>
+      </div>
+      <div class="thermal-scale-ends">
+        <span>cool</span>
+        <span>hot</span>
+      </div>
+    </div>
+    <div class="legend-stats" id="legendStats"></div>
+  </aside>
+
+  <!-- Mobile: an app-style bottom bar of icon-only options. The selected one
+       opens as a sheet above the bar. Hidden on desktop (full side panel). -->
+  <nav class="section-rail" id="sectionRail" aria-label="Actions">
+    <!-- Direct actions (no sheet): proxy to the canonical desktop buttons. Slice is
+         enabled only when the setup changed (see setSliceDirty); Save mirrors the
+         desktop Save's enabled state. -->
+    <button type="button" id="mSlice" data-act="slice" aria-label="Slice + Simulate" title="Slice + Simulate" disabled>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 9 4.5-9 4.5L3 7.5z"/><path d="m3 12 9 4.5 9-4.5"/><path d="m3 16.5 9 4.5 9-4.5"/></svg>
+      <span class="rail-label">Slice + Sim</span>
+    </button>
+    <button type="button" id="mProfile" data-act="profile" aria-label="Profile" title="Profile">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+      <span class="rail-label">Profile</span>
+    </button>
+    <button type="button" id="mSave" data-act="save" aria-label="Save" title="Save" disabled>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+      <span class="rail-label">Save</span>
+    </button>
+  </nav>
+
+  <!-- Embedded-in-viewer (?dock=1): a wide bottom button bar that mirrors the host
+       app's bottom nav. Each tab opens its section as a sheet above the bar; with
+       all closed the 3D view is full. Reuses the same data-section machinery + the
+       canonical .panel sections. Hidden unless the <html class="dock"> flag is set. -->
+  <nav class="dock-rail" id="dockRail" aria-label="Slicer controls">
+    <button type="button" data-section="model" aria-label="Model" title="Model">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+      <span>Model</span>
+    </button>
+    <button type="button" data-section="slice" aria-label="Slice" title="Slice">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 9 4.5-9 4.5L3 7.5z"/><path d="m3 12 9 4.5 9-4.5"/><path d="m3 16.5 9 4.5 9-4.5"/></svg>
+      <span>Slice</span>
+    </button>
+    <button type="button" data-section="preview" aria-label="View" title="View">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
+      <span>View</span>
+    </button>
+    <!-- Start print is a HOST action (the embedding viewer owns the print sim); this
+         button just asks the parent frame to start it (see app.js dock-rail wiring). -->
+    <button type="button" data-act="startprint" class="dock-print" aria-label="Start print" title="Start print">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="6 4 20 12 6 20 6 4"/></svg>
+      <span>Start print</span>
+    </button>
+  </nav>
+
+  <!-- Mobile: persistent playback bar above the bottom menu. Shown in the
+       toolpath/thermal view so play + scrub are always reachable without opening a
+       sheet. The speed symbol expands into a vertical slider (collapses on outside
+       tap). Mirrors the canonical #playButton/#progress/#speed controls. -->
+  <div class="playback-bar" id="playbackBar" hidden>
+    <button id="playButtonM" type="button" class="icon-btn pb-play" title="Play / pause" aria-label="Play / pause">▶</button>
+    <input id="progressM" class="slider pb-progress" type="range" min="0" max="1" value="1" step="1" aria-label="Playback position" />
+    <div class="speed-wrap" id="speedWrap">
+      <button id="speedToggle" type="button" class="icon-btn pb-speed" title="Playback speed" aria-label="Playback speed">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 19a9 9 0 1 1 14 0"/><circle cx="12" cy="14" r="1.6"/><path d="m13.2 12.4 3.3-3.3"/></svg>
+      </button>
+      <div class="speed-slider-wrap" id="speedSliderWrap" hidden>
+        <input id="speedRail" class="layer-slider-rail" type="range" min="0.01" max="2" value="1" step="0.01" aria-label="Playback speed" />
+      </div>
+    </div>
+  </div>
+
+  <!-- Mobile: profile + status text, bottom-left. Sits just above the menu, or above
+       the play bar when it's shown (it follows #playbackBar in the DOM so the
+       ".playback-bar:not([hidden]) ~ .status-m" rule can lift it). -->
+  <div class="status-m" id="statusM" aria-live="polite"></div>
+
+  <!-- Mobile: top-left view-mode rail (STL / Toolpath / Thermal) + a Layer/Full
+       toggle. Always visible; hidden on desktop (the side panel has the switcher). -->
+  <nav class="view-rail" id="viewRail" aria-label="View">
+    <button type="button" data-view="stl" class="active" aria-label="STL view" title="STL">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 7.5 12 3 3 7.5v9L12 21l9-4.5z"/><path d="m3 7.5 9 4.5 9-4.5"/><path d="M12 21v-9"/></svg>
+    </button>
+    <button type="button" data-view="toolpath" disabled aria-label="Toolpath view" title="Toolpath">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h12a2 2 0 0 1 0 4H6a2 2 0 0 0 0 4h12a2 2 0 0 1 0 4H4"/></svg>
+    </button>
+    <button type="button" data-view="thermal" disabled aria-label="Thermal view" title="Thermal">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 14.76V5a2 2 0 0 0-4 0v9.76a4 4 0 1 0 4 0z"/></svg>
+    </button>
+    <button type="button" id="layerToggle" disabled aria-label="Isolate layer" title="Layer / full part">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="10.5" width="18" height="3" rx="1"/><line x1="3" y1="6" x2="21" y2="6" opacity="0.45"/><line x1="3" y1="18" x2="21" y2="18" opacity="0.45"/></svg>
+    </button>
+    <div class="layer-slider-wrap" id="layerSliderWrap" hidden>
+      <input id="layerSliderRail" class="layer-slider-rail" type="range" min="0" max="0" value="0" aria-label="Layer" />
+    </div>
+  </nav>
+
+  <!-- Mobile: model-prep tools next to the STL cube, shown only in the STL view.
+       They proxy to the (desktop) Model section buttons. -->
+  <nav class="model-tools" id="modelTools" aria-label="Model tools">
+    <button type="button" data-action="rotate" aria-label="Rotate to base" title="Rotate to base">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+    </button>
+    <button type="button" data-action="move" aria-label="Move" title="Move">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/></svg>
+    </button>
+    <button type="button" data-action="center" aria-label="Center" title="Center">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><line x1="12" y1="3" x2="12" y2="7"/><line x1="12" y1="17" x2="12" y2="21"/><line x1="3" y1="12" x2="7" y2="12"/><line x1="17" y1="12" x2="21" y2="12"/></svg>
+    </button>
+  </nav>
+
+  <!-- Mobile: thermal-graph toggle to the RIGHT of the thermometer, frameless.
+       Always visible; enabled only in the thermal view (same logic as model tools). -->
+  <nav class="thermal-tools" id="thermalTools" aria-label="Thermal graph">
+    <button type="button" id="thermalGraphToggle" disabled aria-label="Thermal graph" title="Thermal graph">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="m19 9-4.5 4.5-3-3L8 17"/></svg>
+    </button>
+  </nav>
+
+  <div class="overlay" id="profileOverlay" hidden>
+    <div class="overlay-backdrop" id="profileBackdrop"></div>
+    <div class="overlay-dialog wide" role="dialog" aria-modal="true" aria-labelledby="profileTitle">
+      <div class="overlay-header">
+        <h2 id="profileTitle">Profile Manager</h2>
+        <button id="profileClose" type="button" class="overlay-close" title="Close">✕</button>
+      </div>
+
+      <div class="pm-body">
+        <h3>Profile</h3>
+        <div class="pm-grid">
+          <div class="field field-grow">
+            <label for="pmProfileName">Profile</label>
+            <div class="name-combo">
+              <input id="pmProfileName" class="ctl" type="text" autocomplete="off" />
+              <button id="pmProfileSwitchTrigger" type="button" class="name-combo-trigger" aria-label="Switch or create profile"></button>
+              <select id="pmProfileSwitch" class="name-combo-select" aria-label="Switch or create profile" tabindex="-1"></select>
+            </div>
+          </div>
+          <div class="field field-grow">
+            <label>Manage</label>
+            <div class="ctl btn-pair">
+              <button id="pmNewProfile" type="button">Duplicate</button>
+              <button id="pmDeleteProfile" type="button">Delete</button>
+            </div>
+          </div>
+        </div>
+
+        <p id="pmFactoryNotice" class="pm-factory-notice" hidden>
+          ★ Master profile — read-only. Use <strong>Duplicate</strong> to make an editable copy.
+        </p>
+
+        <div class="pm-accordion" id="pmAccordion">
+
+          <button type="button" class="pm-group-head active" data-group="print" aria-expanded="true">
+            <svg class="pm-acc-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>
+            Print Settings
+          </button>
+          <button type="button" class="pm-group-head" data-group="machine" aria-expanded="false">
+            <svg class="pm-acc-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>
+            Machine Settings
+          </button>
+
+        <section class="pm-sub" data-acc="machine" data-group="machine" hidden>
+        <h3>Machine</h3>
+        <p class="pm-macro-help">
+          Pick the machine you're slicing for — it fills the settings + macros below
+          (then editable, saved with the profile). The G-code is labelled with it.
+        </p>
+        <div class="pm-grid">
+          <div class="field field-grow">
+            <label for="pmMachineName">Machine model</label>
+            <div class="name-combo">
+              <input id="pmMachineName" class="ctl" type="text" autocomplete="off" />
+              <button id="pmMachineSwitchTrigger" type="button" class="name-combo-trigger" aria-label="Switch or create machine"></button>
+              <select id="pmMachineSwitch" class="name-combo-select" aria-label="Switch or create machine" tabindex="-1"></select>
+            </div>
+          </div>
+          <div class="field field-grow">
+            <label>Manage machine</label>
+            <div class="ctl btn-pair">
+              <button id="pmNewMachine" type="button">Duplicate</button>
+              <button id="pmDeleteMachine" type="button">Delete</button>
+            </div>
+          </div>
+        </div>
+        <div class="pm-grid">
+          <div class="field">
+            <label for="pmAxes">Axes</label>
+            <select id="pmAxes" class="ctl">
+              <option value="3-axis">3-axis</option>
+              <option value="5-axis">5-axis</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="pmMaterial">Material</label>
+            <select id="pmMaterial" class="ctl">
+              <option value="single">Single material</option>
+              <option value="dual">Dual material</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="pmBuildX">Build size X (mm)</label>
+            <input id="pmBuildX" class="ctl" type="number" min="1" max="100000" step="1" />
+          </div>
+          <div class="field">
+            <label for="pmBuildY">Build size Y (mm)</label>
+            <input id="pmBuildY" class="ctl" type="number" min="1" max="100000" step="1" />
+          </div>
+          <div class="field">
+            <label for="pmBuildZ">Build height Z (mm)</label>
+            <input id="pmBuildZ" class="ctl" type="number" min="1" max="100000" step="1" />
+          </div>
+          <div class="field">
+            <label for="pmOriginCorner">Origin</label>
+            <select id="pmOriginCorner" class="ctl">
+              <option value="top_left">Top left</option>
+              <option value="top_right">Top right</option>
+              <option value="bottom_left">Bottom left</option>
+              <option value="bottom_right">Bottom right</option>
+              <option value="center">Center</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="pmTravelSpeed">Travel speed (mm/s)</label>
+            <input id="pmTravelSpeed" class="ctl" type="number" min="0.1" max="1000" step="0.5" />
+          </div>
+          <div class="field">
+            <label for="pmZStart">First layer Z</label>
+            <select id="pmZStart" class="ctl">
+              <option value="zero">Start at Z0</option>
+              <option value="layer">Start at layer height</option>
+            </select>
+          </div>
+        </div>
+        </section>
+
+        <section class="pm-sub" data-acc="basic" data-group="print">
+        <h3>General</h3>
+        <div class="pm-grid">
+          <div class="field">
+            <label for="pmLayerHeight">Layer height (mm)</label>
+            <input id="pmLayerHeight" class="ctl" type="number" min="0.05" max="50" step="0.05" />
+          </div>
+          <div class="field">
+            <label for="pmPerimeterCount">Perimeters</label>
+            <input id="pmPerimeterCount" class="ctl" type="number" min="1" max="100" step="1" />
+          </div>
+          <div class="field">
+            <label for="pmInfillAngle">Infill angle (deg)</label>
+            <input id="pmInfillAngle" class="ctl" type="number" min="0" max="180" step="1" />
+          </div>
+          <div class="field">
+            <label for="pmInfillPattern">Infill pattern</label>
+            <select id="pmInfillPattern" class="ctl">
+              <option value="alternating">Alternating (90°)</option>
+              <option value="rotating">Rotating (45°)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="pmInfillOrder">Infill order</label>
+            <select id="pmInfillOrder" class="ctl">
+              <option value="sequential">Sequential</option>
+              <option value="shortest_travel">Shortest travel</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="pmOrient">Perimeter orientation</label>
+            <select id="pmOrient" class="ctl">
+              <option value="none">None (flat)</option>
+              <option value="all">All walls</option>
+              <option value="overhang">Overhangs only</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="pmPerimeterOrder">Perimeter order</label>
+            <select id="pmPerimeterOrder" class="ctl">
+              <option value="outside_in">Outside in</option>
+              <option value="inside_out">Inside out</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="pmRegionOrder">Print order</label>
+            <select id="pmRegionOrder" class="ctl">
+              <option value="perimeters_first">Perimeters first</option>
+              <option value="infill_first">Infill first</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="pmSeamAlignment">Seam alignment</label>
+            <select id="pmSeamAlignment" class="ctl">
+              <option value="nearest">Minimum travel</option>
+              <option value="rear">Aligned to back</option>
+              <option value="random">Random</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="pmMaxSegment">Max segment (mm)</label>
+            <input id="pmMaxSegment" class="ctl" type="number" min="0" max="1000" step="0.5" />
+          </div>
+          <div class="field">
+            <label for="pmMinInfillSegment">Min infill segment (mm)</label>
+            <input id="pmMinInfillSegment" class="ctl" type="number" min="0" max="1000" step="0.1" />
+          </div>
+          <div class="field">
+            <label for="pmMaxTravelNoRetract">Max travel w/o retract (mm)</label>
+            <input id="pmMaxTravelNoRetract" class="ctl" type="number" min="0" max="1000" step="0.5" />
+          </div>
+          <div class="field">
+            <label for="pmShieldGasFlow">Shield gas flow (L/min)</label>
+            <input id="pmShieldGasFlow" class="ctl" type="number" min="0" max="200" step="0.5" />
+          </div>
+          <div class="field">
+            <label for="pmDepLaserOnTime">Deposition start laser-on time (ms)</label>
+            <input id="pmDepLaserOnTime" class="ctl" type="number" min="0" max="100000" step="10" />
+          </div>
+          <div class="field">
+            <label for="pmDepStartExtrusion">Deposition start extrusion (mm)</label>
+            <input id="pmDepStartExtrusion" class="ctl" type="number" min="0" max="1000" step="0.1" />
+          </div>
+          <div class="field">
+            <label for="pmDepEndRetraction">Deposition end retraction (mm)</label>
+            <input id="pmDepEndRetraction" class="ctl" type="number" min="0" max="1000" step="0.1" />
+          </div>
+          <div class="field">
+            <label for="pmDepRetractionPower">Deposition retraction power (W)</label>
+            <input id="pmDepRetractionPower" class="ctl" type="number" min="0" max="100000" step="10" />
+          </div>
+        </div>
+        </section>
+
+        <section class="pm-sub" data-acc="support" data-group="print">
+        <h3>Support</h3>
+        <div class="pm-grid">
+          <div class="field">
+            <label for="pmSupportEnabled">Generate support</label>
+            <button id="pmSupportEnabled" type="button" class="ctl toggle-btn" aria-pressed="false">Off</button>
+          </div>
+          <div class="field">
+            <label for="pmSupportPerimeterCount">Support perimeters</label>
+            <input id="pmSupportPerimeterCount" class="ctl" type="number" min="0" max="50" step="1" />
+          </div>
+          <div class="field">
+            <label for="pmSupportAngle">Overhang angle (deg)</label>
+            <input id="pmSupportAngle" class="ctl" type="number" min="0" max="90" step="1" />
+          </div>
+          <div class="field">
+            <label for="pmSupportMinArea">Min support area (mm²)</label>
+            <input id="pmSupportMinArea" class="ctl" type="number" min="0" max="10000" step="0.5" />
+          </div>
+        </div>
+        </section>
+
+        <section class="pm-sub" data-acc="material" data-group="print">
+        <h3>Material</h3>
+        <div class="pm-grid">
+          <div class="field">
+            <label for="pmMaterialDiameter">Wire diameter (mm)</label>
+            <input id="pmMaterialDiameter" class="ctl" type="number" min="0.1" max="10" step="0.1" />
+          </div>
+          <div class="field">
+            <label for="pmMaterialDensity">Density (g/cm³)</label>
+            <input id="pmMaterialDensity" class="ctl" type="number" min="0.1" max="30" step="0.1" />
+          </div>
+          <div class="field">
+            <label for="pmThermalConductivity">Thermal conductivity (W/m·K)</label>
+            <input id="pmThermalConductivity" class="ctl" type="number" min="0.1" max="500" step="0.1" />
+          </div>
+          <div class="field">
+            <label for="pmSpecificHeat">Specific heat (J/kg·K)</label>
+            <input id="pmSpecificHeat" class="ctl" type="number" min="1" max="5000" step="1" />
+          </div>
+        </div>
+        </section>
+
+        <section class="pm-sub" data-acc="macros" data-group="machine" hidden>
+        <h3>Macros</h3>
+        <p class="pm-macro-help">
+          G-code emitted at each process boundary (part of the machine settings, filled
+          from the machine model and editable). Reference any variable below as
+          <code>#name</code>; its value is substituted on export.
+        </p>
+        <table class="pm-var-table">
+          <thead>
+            <tr>
+              <th>Variable</th>
+              <th>Value</th>
+            </tr>
+          </thead>
+          <tbody id="pmVarRows"></tbody>
+        </table>
+
+        <div class="pm-macro-grid">
+          <div class="field field-grow">
+            <label for="pmStartPrint">Start print</label>
+            <textarea id="pmStartPrint" class="ctl pm-macro" rows="6" spellcheck="false"
+              autocomplete="off" autocapitalize="off"></textarea>
+          </div>
+          <div class="field field-grow">
+            <label for="pmEndPrint">End print</label>
+            <textarea id="pmEndPrint" class="ctl pm-macro" rows="6" spellcheck="false"
+              autocomplete="off" autocapitalize="off"></textarea>
+          </div>
+          <div class="field field-grow">
+            <label for="pmStartDeposition">Start deposition</label>
+            <textarea id="pmStartDeposition" class="ctl pm-macro" rows="6" spellcheck="false"
+              autocomplete="off" autocapitalize="off"></textarea>
+          </div>
+          <div class="field field-grow">
+            <label for="pmStopDeposition">Stop deposition</label>
+            <textarea id="pmStopDeposition" class="ctl pm-macro" rows="6" spellcheck="false"
+              autocomplete="off" autocapitalize="off"></textarea>
+          </div>
+          <div class="field field-grow">
+            <label for="pmPreShortTravel">Pre short travel</label>
+            <textarea id="pmPreShortTravel" class="ctl pm-macro" rows="6" spellcheck="false"
+              autocomplete="off" autocapitalize="off" placeholder="(empty)"></textarea>
+          </div>
+          <div class="field field-grow">
+            <label for="pmShortTravelEnd">Short travel end</label>
+            <textarea id="pmShortTravelEnd" class="ctl pm-macro" rows="6" spellcheck="false"
+              autocomplete="off" autocapitalize="off" placeholder="(empty)"></textarea>
+          </div>
+        </div>
+        </section>
+
+        <section class="pm-sub" data-acc="feature" data-group="print">
+        <h3>Features</h3>
+        <table class="feature-table">
+          <thead>
+            <tr>
+              <th>Feature</th>
+              <th>Feeder</th>
+              <th>Feed rate<br />(mm/s)</th>
+              <th>Bead width<br />(mm)</th>
+              <th>Laser power</th>
+              <th>Infill density<br />(%)</th>
+            </tr>
+          </thead>
+          <tbody id="pmFeatureRows"></tbody>
+        </table>
+        </section>
+
+        </div>
+      </div>
+
+      <div class="overlay-actions">
+        <button id="profileDone" type="button" class="primary">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="confirmOverlay" hidden>
+    <div class="overlay-backdrop" id="confirmBackdrop"></div>
+    <div class="overlay-dialog" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+      <div class="overlay-header">
+        <h2 id="confirmTitle">Delete profile</h2>
+        <button id="confirmClose" type="button" class="overlay-close" title="Close">✕</button>
+      </div>
+      <p id="confirmMessage" class="confirm-message"></p>
+      <div class="overlay-actions confirm-actions">
+        <button id="confirmCancel" type="button">Cancel</button>
+        <button id="confirmAccept" type="button" class="danger">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Save-toolpath dialog: name the save (default pre-filled, editable) + OK/Cancel. -->
+  <div class="overlay" id="saveOverlay" hidden>
+    <div class="overlay-backdrop" id="saveBackdrop"></div>
+    <div class="overlay-dialog save-dialog" role="dialog" aria-modal="true" aria-labelledby="saveTitle">
+      <div class="overlay-header">
+        <h2 id="saveTitle">Save toolpath</h2>
+        <button id="saveCloseBtn" type="button" class="overlay-close" title="Close">✕</button>
+      </div>
+      <div class="field">
+        <label for="saveName">Name</label>
+        <!-- font-size:16px stops iOS Safari auto-zooming on focus (and staying zoomed). -->
+        <input id="saveName" class="ctl" type="text" autocomplete="off" style="font-size: 16px" />
+      </div>
+      <div class="overlay-actions">
+        <button id="saveAcceptBtn" type="button" class="primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <header class="panel-head">
+      <p id="fileName" class="muted">no file</p>
+    </header>
+
+    <section class="panel-section" data-group="model">
+      <h2 class="section-title">Model</h2>
+      <div class="row model-actions model-actions--icons">
+        <button id="rotateBaseButton" class="model-tool-btn" type="button" aria-label="Rotate to base" title="Rotate to base — click a face to seat it on the plate">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
+            <polygon points="12,11 20,6.5 20,15.5 12,20" fill="currentColor" fill-opacity="0.85" stroke="none"/>
+            <polygon points="12,2 20,6.5 20,15.5 12,20 4,15.5 4,6.5"/>
+            <path d="M4,6.5 12,11 20,6.5 M12,11 12,20"/>
+          </svg>
+          <span>To base</span>
+        </button>
+        <button id="translateButton" class="model-tool-btn" type="button" aria-label="Move" title="Move on the plate">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/>
+          </svg>
+          <span>Move</span>
+        </button>
+        <button id="centerButton" class="model-tool-btn" type="button" aria-label="Center" title="Center on the plate">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/>
+            <circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none"/>
+          </svg>
+          <span>Center</span>
+        </button>
+        <button id="rotateZButton" class="model-tool-btn" type="button" aria-label="Rotate 90 degrees" title="Rotate 90° about the vertical (Z) axis">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/>
+          </svg>
+          <span>Rotate</span>
+        </button>
+      </div>
+    </section>
+
+    <section class="panel-section" data-group="slice">
+      <h2 class="section-title">Slice</h2>
+      <!-- Desktop: an exposed profile dropdown. Mobile: hidden (switch via Profile
+           Manager); the machine · profile label shows in the status line. The machine
+           is chosen inside the profile's Machine settings. -->
+      <div class="row profile-row">
+        <select id="profileSelect" class="control"></select>
+      </div>
+      <div class="row">
+        <button id="sliceButton" type="button" class="primary">Slice + Simulate</button>
+      </div>
+      <!-- Simulate is folded into the Slice button; kept hidden for shared logic. -->
+      <button id="simulateButton" type="button" disabled hidden></button>
+      <div class="row btn-grid">
+        <button id="profileManagerButton" type="button" title="Profile Manager">Profile</button>
+        <button id="saveToPartButton" type="button" disabled>Save</button>
+      </div>
+      <div class="row">
+        <button id="exportGcodeButton" type="button" disabled>Export G-code</button>
+      </div>
+    </section>
+
+    <section class="panel-section" data-group="preview" id="viewSection">
+      <h2 class="section-title">View</h2>
+      <div class="segmented triple" role="group" aria-label="View">
+        <label><input type="radio" name="view" value="stl" checked /> <span>STL</span></label>
+        <label><input type="radio" name="view" value="toolpath" id="viewToolpath" disabled /> <span>Toolpath</span></label>
+        <label><input type="radio" name="view" value="thermal" id="viewThermal" disabled /> <span>Thermal</span></label>
+      </div>
+    </section>
+
+    <section class="sim-row panel-section" id="simRow" data-group="preview" hidden>
+      <h2 class="section-title">Toolpath preview</h2>
+      <div class="segmented triple" role="group" aria-label="Toolpath style">
+        <label><input type="radio" name="tpStyle" value="line" /> <span>Lines</span></label>
+        <label><input type="radio" name="tpStyle" value="tube" checked /> <span>Tubes</span></label>
+        <label><input type="radio" name="tpStyle" value="layer" id="tpStyleLayer" disabled /> <span>Layer</span></label>
+      </div>
+      <div class="sim-controls">
+        <div class="sim-line">
+          <button id="playButton" type="button" class="icon-btn" title="Play / pause">▶</button>
+          <input id="progress" class="slider" type="range" min="0" max="1" value="1" step="1" />
+        </div>
+        <div class="sim-line">
+          <span class="sim-label muted">Speed</span>
+          <input id="speed" class="slider" type="range" min="0.01" max="2" value="1" step="0.01" />
+        </div>
+        <div class="sim-line" id="layerLine" hidden>
+          <span class="sim-label muted">Layer</span>
+          <input id="layerSlider" class="slider" type="range" min="0" max="0" value="0" step="1" />
+        </div>
+      </div>
+    </section>
+
+    <p id="status" class="muted"></p>
+  </div>
+
+  <section class="thermal-chart" id="thermalChart" aria-label="Heat over time" hidden>
+    <button id="thermalChartToggle" type="button" class="thermal-chart-header" aria-expanded="true" title="Hide thermal graph">
+      <span class="thermal-chart-title">Thermal Graph</span>
+      <span class="thermal-chart-arrow">▾</span>
+    </button>
+    <canvas id="thermalChartCanvas" width="840" height="90"></canvas>
+  </section>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./static/vendor/three.module.js",
+        "three/addons/": "./static/vendor/"
+      }
+    }
+  </script>
+  <script>
+    // Show the signed-in user in the shared header (platform API, same origin).
+    fetch("/api/me")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((me) => {
+        if (me) document.getElementById("platAcct").textContent = me.email;
+      })
+      .catch(() => {});
+  </script>
+  <script type="module" src="static/app.js?v=179"></script>
+</body>
+</html>

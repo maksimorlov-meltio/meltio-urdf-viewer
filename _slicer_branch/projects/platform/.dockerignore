@@ -1,0 +1,16 @@
+# Keep caches, virtualenvs, build artifacts and tests out of the image.
+.venv/
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+**/.pytest_cache/
+tests/
+dist/
+build/
+*.egg-info/
+.git/
+# Frontend: ship source to the node build stage, but never node_modules / dist
+# (the image rebuilds the SPA itself).
+node_modules/
+**/node_modules/
+frontend/dist/

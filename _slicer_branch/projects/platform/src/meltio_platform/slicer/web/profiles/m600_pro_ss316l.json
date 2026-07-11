@@ -1,0 +1,92 @@
+{
+  "name": "M600 Pro SS316L",
+  "axes": "3-axis",
+  "material": "single",
+  "machine_key": "M600 Pro",
+  "factory": true,
+  "build_volume_x_mm": 300.0,
+  "build_volume_y_mm": 400.0,
+  "build_volume_z_mm": 600.0,
+  "origin_corner": "top_right",
+  "center_x_mm": null,
+  "center_y_mm": null,
+  "layer_height_mm": 1.0,
+  "travel_speed_mm_s": 60.0,
+  "material_diameter_mm": 1.0,
+  "material_density_g_cm3": 7.8,
+  "material_thermal_conductivity_w_mk": 15.0,
+  "material_specific_heat_j_kgk": 500.0,
+  "first_layer_offset_mm": null,
+  "perimeter_count": 2,
+  "perimeter_order": "inside_out",
+  "infill_before_perimeters": false,
+  "infill_angle_deg": 45.0,
+  "infill_pattern": "alternating",
+  "infill_order": "shortest_travel",
+  "seam_alignment": "nearest",
+  "min_infill_segment_length_mm": 1.0,
+  "max_segment_length_mm": 5.0,
+  "max_travel_no_retract_mm": 2.0,
+  "orient_perimeters": "none",
+  "support_enabled": false,
+  "support_overhang_angle_deg": 25.0,
+  "support_min_area_mm2": 5.0,
+  "support_perimeter_count": 0,
+  "start_print_macro": "; Start of PRINT_START macro\nG250 P1 N1 T0 M0 S0 F#shieldgas_flow H1 A1 Q0 W53 X150 Y200 Z1 G1\n; End of PRINT_START macro",
+  "end_print_macro": "; Start of PRINT_END macro\nG250 P5 Z10\n; End of PRINT_END macro",
+  "start_deposition_macro": "; Start of START_DEPOSITION macro\n; Feature: #feature_type\nG250 P2 W#laser_power T#laser_on_time E#start_extrusion\n; End of START_DEPOSITION macro",
+  "stop_deposition_macro": "; Start of STOP_DEPOSITION macro\nG250 P3 R#retraction W#retraction_power\n; End of STOP_DEPOSITION macro",
+  "pre_short_travel_macro": "; Start of PRE_SHORT_TRAVEL macro\n; End of PRE_SHORT_TRAVEL macro",
+  "short_travel_end_macro": "; Start of SHORT_TRAVEL_END macro\n; End of SHORT_TRAVEL_END macro",
+  "shieldgas_flow_l_min": 15.0,
+  "deposition_start_laser_on_time_ms": 100.0,
+  "deposition_start_extrusion_mm": 2.0,
+  "deposition_end_retraction_mm": 4.0,
+  "deposition_retraction_power_w": 1000.0,
+  "start_z_at_zero": true,
+  "macro_variables": {},
+  "features": {
+    "outer_perimeter": {
+      "feeder": "T0",
+      "feed_rate_mm_s": 6.0,
+      "bead_width_mm": 1.5,
+      "laser_power": 1000.0,
+      "infill_density": null
+    },
+    "inner_perimeter": {
+      "feeder": "T0",
+      "feed_rate_mm_s": 10.0,
+      "bead_width_mm": 1.0,
+      "laser_power": 1000.0,
+      "infill_density": null
+    },
+    "infill": {
+      "feeder": "T0",
+      "feed_rate_mm_s": 10.0,
+      "bead_width_mm": 1.0,
+      "laser_power": 1000.0,
+      "infill_density": 1.0
+    },
+    "support_outer_perimeter": {
+      "feeder": "T0",
+      "feed_rate_mm_s": 6.0,
+      "bead_width_mm": 1.5,
+      "laser_power": 1000.0,
+      "infill_density": null
+    },
+    "support_inner_perimeter": {
+      "feeder": "T0",
+      "feed_rate_mm_s": 10.0,
+      "bead_width_mm": 1.0,
+      "laser_power": 1000.0,
+      "infill_density": null
+    },
+    "support": {
+      "feeder": "T0",
+      "feed_rate_mm_s": 10.0,
+      "bead_width_mm": 1.0,
+      "laser_power": 900.0,
+      "infill_density": 1.0
+    }
+  }
+}

@@ -1,0 +1,5 @@
+-e ./projects/aslicer
+-e ./projects/avisualizer[pointcloud]
+-e ./projects/platform
+pytest==8.4.0
+httpx==0.27.2

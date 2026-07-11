@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+# Distribution name is "meltio-platform"; the import package is
+# "meltio_platform" (NOT "platform", which would shadow the stdlib module).
+name = "meltio-platform"
+version = "0.0.1"
+description = "Meltio platform shell — identity, file management, and the unified part pipeline"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115.0,<1.0.0",
+  "uvicorn>=0.30.0,<1.0.0",
+  "python-multipart>=0.0.13,<1.0.0",
+  "sqlalchemy>=2.0.0,<3.0.0",
+  "alembic>=1.13.0,<2.0.0",
+  "psycopg[binary]>=3.1.0,<4.0.0",
+  "pydantic-settings>=2.0.0,<3.0.0",
+  "boto3>=1.34.0,<2.0.0",
+  # Vendored slicing engine (meltio_platform.slicer) dependencies.
+  "numpy>=1.26.0,<3.0.0",
+  "trimesh>=4.4.0,<5.0.0",
+  "shapely>=2.0.0,<3.0.0",
+  "networkx>=3.0,<4.0",
+  "scipy>=1.11.0,<2.0.0",
+  "rtree>=1.1.0,<2.0.0"
+]
+authors = [
+  { name = "Process Intelligence Team" }
+]
+
+[project.scripts]
+meltio-platform = "meltio_platform.web.app:run"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.package-data]
+"meltio_platform.web" = ["static/**/*"]
+"meltio_platform.slicer.web" = ["static/**/*", "assets/**/*"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

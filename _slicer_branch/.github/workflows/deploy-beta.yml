@@ -1,0 +1,111 @@
+name: deploy-beta
+
+# Build ONLY the platform image and deploy it to the separate beta instance
+# (platform-beta at beta.meltio.cloud). Push to the `beta` branch to iterate on
+# the platform without releasing anything to prod (orbit/slicer/platform).
+
+on:
+  push:
+    branches: [beta]
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-beta
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - id: owner
+        run: echo "name=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+      - id: ver
+        run: echo "v=$(echo "${GITHUB_SHA}" | cut -c1-7)" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./projects/platform
+          push: true
+          build-args: |
+            PLATFORM_VERSION=beta-${{ steps.ver.outputs.v }}
+          tags: |
+            ghcr.io/${{ steps.owner.outputs.name }}/platform:beta
+            ghcr.io/${{ steps.owner.outputs.name }}/platform:beta-${{ github.sha }}
+          cache-from: type=gha,scope=platform
+          cache-to: type=gha,mode=max,scope=platform-beta
+      # Pixel-streaming render service (headless Chromium). Built so render-beta is
+      # ready to flip on; it stays dormant until PLATFORM_RENDER_URL + a Cloudflare
+      # route are set (see docs/PIXEL_STREAMING.md). Non-fatal: a render build
+      # failure must never block the platform-beta deploy.
+      - uses: docker/build-push-action@v6
+        continue-on-error: true
+        with:
+          context: ./projects/platform/render-service
+          push: true
+          tags: |
+            ghcr.io/${{ steps.owner.outputs.name }}/platform-render:beta
+            ghcr.io/${{ steps.owner.outputs.name }}/platform-render:beta-${{ github.sha }}
+          cache-from: type=gha,scope=platform-render
+          cache-to: type=gha,mode=max,scope=platform-render-beta
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Set up SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+      - name: Sync compose files
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          scp -i ~/.ssh/deploy_key \
+            docker-compose.yml docker-compose.prod.yml docker-compose.beta.yml docker-compose.gpu.yml \
+            "$SSH_USER@$SSH_HOST:~/meltio/"
+      - name: Deploy the beta platform only
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          ssh -i ~/.ssh/deploy_key "$SSH_USER@$SSH_HOST" '
+            cd ~/meltio &&
+            C="docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.beta.yml" &&
+            CG="$C -f docker-compose.gpu.yml" &&
+            n=0 &&
+            until $C pull platform-beta db-beta minio-beta; do
+              n=$((n+1));
+              if [ "$n" -ge 5 ]; then echo "pull failed after $n attempts" >&2; exit 1; fi;
+              echo "pull attempt $n failed; retrying in 15s" >&2; sleep 15;
+            done &&
+            $C up -d db-beta minio-beta &&
+            # --force-recreate so the freshly-pulled image actually replaces the
+            # running container (plain up -d did not always recreate on a new image).
+            $C up -d --force-recreate platform-beta &&
+            # Refresh render-beta best-effort with the GPU overlay (uses the T4 via
+            # the nvidia runtime). Never blocks the platform deploy; idle/internal
+            # until PLATFORM_RENDER_URL is set. On a non-GPU box this up just fails
+            # harmlessly (caught below).
+            ( $CG pull render-beta && $CG up -d --force-recreate render-beta ) || echo "render-beta refresh skipped" &&
+            # TURN server for WebRTC media (host networking). Best-effort; needs SG
+            # UDP 3478 + 49160-49200 + TURN_PASSWORD/RENDER_ICE_SERVERS in .env.
+            ( $C up -d coturn-beta ) || echo "coturn-beta skipped" &&
+            $C ps platform-beta render-beta coturn-beta &&
+            docker image prune -f
+          '

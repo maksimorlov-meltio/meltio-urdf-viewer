@@ -1,0 +1,81 @@
+# Production overrides for the server. NOT auto-loaded — merge explicitly:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# No host ports are published. cloudflared dials OUT to Cloudflare and routes
+# the public hostnames straight to the app containers over the internal Docker
+# network. Cloudflare terminates TLS and enforces the SSO login (Access), so the
+# EC2 security group can stay fully closed except for SSH.
+services:
+  orbit:
+    restart: unless-stopped
+    # No dataset volume: the built-in small-torture-test sample ships in the
+    # image, and user uploads are processed transiently (never persisted).
+    # Large CSVs upload direct-to-S3 (presigned); boto3 uses the EC2 instance
+    # role, so no keys here. Override these (and set AV_S3_ENDPOINT_URL) for
+    # on-prem MinIO.
+    environment:
+      - AV_S3_BUCKET=${AV_S3_BUCKET:-meltio-orbit-uploads}
+      - AV_S3_REGION=${AV_S3_REGION:-eu-north-1}
+    deploy:
+      resources:
+        limits:
+          cpus: "3"
+          memory: 8g
+
+  slicer:
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "3"
+          memory: 6g
+
+  platform:
+    restart: unless-stopped
+    environment:
+      # Pixel streaming (off unless both are set + the render service is routed).
+      # PLATFORM_RENDER_URL is the public WS the browser hits, e.g.
+      # wss://render.meltio.cloud ; PLATFORM_RENDER_SECRET is shared with render.
+      - PLATFORM_RENDER_URL=${PLATFORM_RENDER_URL:-}
+      - PLATFORM_RENDER_SECRET=${PLATFORM_RENDER_SECRET:-}
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2g
+
+  # Pixel-streaming render service (headless Chromium). Heavy; enable only when
+  # streaming is wanted. Routed publicly via a Cloudflare Tunnel ingress rule
+  # (render.<domain> -> http://render:8092) + an Access policy — see
+  # docs/PIXEL_STREAMING.md. Not pulled by the default deploy yet.
+  render:
+    restart: unless-stopped
+    environment:
+      - PLATFORM_URL=http://platform:8090
+      - PLATFORM_RENDER_SECRET=${PLATFORM_RENDER_SECRET:-}
+      - RENDER_ALLOW_DEBUG_FRAME=0
+      - RENDER_MAX_SESSIONS=${RENDER_MAX_SESSIONS:-6}
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 3g
+
+  db:
+    restart: unless-stopped
+
+  minio:
+    restart: unless-stopped
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN}
+    depends_on:
+      - orbit
+      - slicer
+      - platform

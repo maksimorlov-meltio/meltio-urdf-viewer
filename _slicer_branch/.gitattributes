@@ -1,0 +1,17 @@
+# Large mesh assets should be stored in Git LFS, not regular Git objects.
+*.obj filter=lfs diff=lfs merge=lfs -text
+*.glb filter=lfs diff=lfs merge=lfs -text
+*.gltf filter=lfs diff=lfs merge=lfs -text
+projects/avisualizer/database/**/PrintInfo.db filter=lfs diff=lfs merge=lfs -text
+projects/avisualizer/database/**/Sensors.csv filter=lfs diff=lfs merge=lfs -text
+projects/avisualizer/database/**/*.mp4 filter=lfs diff=lfs merge=lfs -text
+projects/avisualizer/assets/**/*.glb filter=lfs diff=lfs merge=lfs -text
+
+# Keep files that run on Linux / in containers as LF regardless of host OS,
+# so they don't break with carriage-return errors. Windows scripts stay CRLF.
+Dockerfile      text eol=lf
+.dockerignore   text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+*.sh            text eol=lf
+*.ps1           text eol=crlf
