@@ -5,7 +5,7 @@ import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
 import { fetchSensorData } from "./modules/api.js";
 import { buildSpriteObject, buildVoxelCubeObject } from "./modules/render.js";
-import { createPrintSimulation } from "./sim/printSimulation.js?v=9";
+import { createPrintSimulation } from "./sim/printSimulation.js?v=10";
 import { createSlicerClient } from "./sim/slicerClient.js";
 
 // Print-simulation controller. Created at boot once the scene exists; declared
@@ -40,6 +40,15 @@ const printStopSummaryCloseEl = document.getElementById("printStopSummaryClose")
 const printStopSummaryPrintedEl = document.getElementById("printStopSummaryPrinted");
 const printStopSummaryMaterialEl = document.getElementById("printStopSummaryMaterial");
 const printStopSummaryOverprintEl = document.getElementById("printStopSummaryOverprint");
+const printCompleteModalEl = document.getElementById("printCompleteModal");
+const printCompleteAcceptEl = document.getElementById("printCompleteAccept");
+const printCompleteMaterialEl = document.getElementById("printCompleteMaterial");
+const printCompleteSpoolEl = document.getElementById("printCompleteSpool");
+const printCompleteTimeEl = document.getElementById("printCompleteTime");
+const printCompleteLayersEl = document.getElementById("printCompleteLayers");
+const printCompleteThermalEl = document.getElementById("printCompleteThermal");
+const printCompleteAtmosphereEl = document.getElementById("printCompleteAtmosphere");
+const printCompleteAtmosphereNoteEl = document.getElementById("printCompleteAtmosphereNote");
 const printPauseNoticeEl = document.getElementById("printPauseNotice");
 const printPauseResumeEl = document.getElementById("printPauseResume");
 const printPauseDismissEl = document.getElementById("printPauseDismiss");
@@ -249,6 +258,7 @@ const materialsMenuPopupHeaderEl = materialsMenuPopupEl
   ? materialsMenuPopupEl.querySelector(".materials-menu-popup-header")
   : null;
 const materialsMenuCloseEl = document.getElementById("materialsMenuClose");
+const materialsReturnToSlicerEl = document.getElementById("materialsReturnToSlicer");
 const materialsHistoryToggleEl = document.getElementById("materialsHistoryToggle");
 const materialsMenuBodyEl = document.getElementById("materialsMenuBody");
 const materialInfoNameEl = document.getElementById("materialInfoName");
@@ -590,7 +600,7 @@ const CLOUD_STL_TOP_CLEARANCE_M = BUILD_PLATE_THICKNESS_MM / 1000;
 // Deposition standoff: the vertical gap the nozzle tip holds above the line it is
 // currently laying (the head's working distance). The freshly-deposited top is
 // pinned this far BELOW the bronze nozzle tip during the print simulation.
-const PRINT_NOZZLE_STANDOFF_MM = 8;
+const PRINT_NOZZLE_STANDOFF_MM = 18;
 const CLOUD_STL_PLACEMENT_SIDES = Object.freeze({
   top: { zDeg: 0, label: "Top (+Z)" },
   front: { zDeg: 0, label: "Front (+Y)" },
@@ -617,9 +627,12 @@ const PRINT_POSITION_Y_MM = 2;
 // Pre-print homing/probe routine (played before every print): Z rises to a fixed
 // "touch" height and drops PRINT_PROBE_RETRACT_MM, repeated PRINT_PROBE_CYCLES times.
 const PRINT_PROBE_TOUCH_Z_MM = 530;
-const PRINT_PROBE_RETRACT_MM = 2.5;
+const PRINT_PROBE_RETRACT_MM = 5;
 const PRINT_PROBE_CYCLES = 3;
 const PRINT_PROBE_MOVE_DURATION_SEC = 0.5;
+// The palpador returns to its left/home position SLOWLY (deliberate, not a fast
+// snap) after probing — longer than the outward PALPADOR_SWEEP_DURATION_SEC.
+const PALPADOR_RETURN_DURATION_SEC = 2.2;
 const PRE_PRINT_STEP_GAP_MS = 120;
 const ANNOTATION_FOCUS_DURATION_MS = 850;
 const FRONT_DOOR_BUTTON_CAMERA_DURATION_MS = 920;
@@ -707,10 +720,10 @@ const SPOOL_ASSEMBLY_PICK_AREAS = Object.freeze([
   }),
 ]);
 const SPOOL_HIGHLIGHT_DURATION_MS = 5600;
-const SPOOL_HIGHLIGHT_RING_COLOR = new THREE.Color(0x39d8ff);
-const SPOOL_HIGHLIGHT_RING_BASE_OPACITY = 0.46;
-const SPOOL_HIGHLIGHT_RING_PULSE_OPACITY = 0.2;
-const SPOOL_HIGHLIGHT_RING_TUBE_RADIUS = 0.06;
+const SPOOL_HIGHLIGHT_RING_COLOR = new THREE.Color(0x3b82ff);
+const SPOOL_HIGHLIGHT_RING_BASE_OPACITY = 0.72;
+const SPOOL_HIGHLIGHT_RING_PULSE_OPACITY = 0.3;
+const SPOOL_HIGHLIGHT_RING_TUBE_RADIUS = 0.075;
 const SPOOL_HIGHLIGHT_RING_RADIUS_SCALE = 1.03;
 const SPOOL_HIGHLIGHT_RING_FACE_OFFSET_SCALE = 0.92;
 const MELTIO_MATERIAL_LIBRARY = Object.freeze([
@@ -1024,6 +1037,13 @@ let isCloudModelMenuOpen = false;
 let isMaterialsMenuOpen = false;
 let isMaterialsMenuPopupRelocationEnabled = false;
 let materialsMenuPopupDragState = null;
+// Materials-menu model lift: the Materials popup docks over the lower part of the
+// screen and can hide the bottom spool. While it is open, raise the whole machine
+// a touch (world +Z is camera-up) so both spools clear the popup, then settle it
+// back down on close. Tweened toward the target in the animate loop.
+const MATERIALS_MENU_MODEL_LIFT_M = 0.20; // 200 mm.
+let materialsModelLiftTargetM = 0;
+let materialsModelLiftCurrentM = 0;
 let cloudFileSourceFilter = "cloud";
 let cloudFileSearchQuery = "";
 let cloudFileLibraryEntries = [];
@@ -1046,6 +1066,7 @@ let isTopbarChillerEnabled = topbarChillerToggleEl
 let isTopbarFanEnabled = topbarFanToggleEl
   ? topbarFanToggleEl.getAttribute("aria-pressed") === "true"
   : true;
+
 let isAdvancedModeEnabled = false;
 let advancedModePinAttempts = 0;
 let advancedModeLockUntilMs = 0;
@@ -1063,6 +1084,9 @@ let calendarEventIdCounter = 1;
 const calendarEvents = [];
 let numericKeypadRootEl = null;
 let numericKeypadInputEl = null;
+// Last position the operator dragged the numeric keypad to ({left,top} px), so it
+// reopens where they left it. Null → the default center-slightly-right spot (CSS).
+let numericKeypadPos = null;
 const cloudFileThumbPreviewCache = new Map();
 const cloudFileThumbPreviewPending = new Map();
 let cloudFileThumbPreviewRenderer = null;
@@ -4782,11 +4806,44 @@ function hidePrintMaterialWarning() {
 }
 
 // Open the Materials menu (the "redirect" target for the warning).
+// When a print is blocked for material, route the operator to Materials. If the
+// block came from the fullscreen slicer, LEAVE the slicer first (otherwise the
+// Materials popup stacks on top of the still-fullscreen slicer — the "incorrect
+// view") and remember the part so a "Return to slicer" button can take them
+// back to the same model for reslicing / more edits once material is sorted.
+let materialsReturnSlicerFile = null;
+
+function updateMaterialsReturnToSlicerButton() {
+  if (!materialsReturnToSlicerEl) {
+    return;
+  }
+  materialsReturnToSlicerEl.hidden = !materialsReturnSlicerFile;
+}
+
 function openMaterialsForBlockedPrint() {
+  if (isSlicerFullscreen) {
+    materialsReturnSlicerFile = selectedCloudLibraryFileName || null;
+    setSlicerFullscreen(false);
+  }
   if (typeof setMaterialsMenuOpen === "function") {
     setMaterialsMenuOpen(true);
     updateBottomNavState();
   }
+  updateMaterialsReturnToSlicerButton();
+}
+
+// "Return to slicer": close Materials and reopen the fullscreen slicer on the
+// same part the operator was slicing when the material gate stopped them.
+function returnToSlicerFromMaterials() {
+  const file = materialsReturnSlicerFile;
+  materialsReturnSlicerFile = null;
+  setMaterialsMenuOpen(false);
+  if (file) {
+    setSelectedCloudLibraryFile(file, { updateSelect: true, syncDataset: true });
+    setSlicerFullscreen(true);
+    loadSlicerIframeForFile(file);
+  }
+  updateBottomNavState();
 }
 
 let pendingMaterialReassignCheck = null;
@@ -6951,6 +7008,7 @@ function ensureNumericKeypadElement() {
   root.hidden = true;
   root.setAttribute("aria-hidden", "true");
   root.innerHTML = `
+    <div class="numeric-keypad-drag" aria-label="Drag keypad" title="Drag to move"></div>
     <div class="numeric-keypad-grid" role="group" aria-label="Numeric keypad">
       <button type="button" class="numeric-keypad-key" data-key="7">7</button>
       <button type="button" class="numeric-keypad-key" data-key="8">8</button>
@@ -7033,6 +7091,51 @@ function ensureNumericKeypadElement() {
     }
   });
 
+  // Drag-to-move via the top handle. Switches the keypad from its CSS anchor to
+  // absolute left/top on first grab, clamps to the viewport, and remembers the
+  // spot (numericKeypadPos) so it reopens where the operator left it.
+  const dragHandle = root.querySelector(".numeric-keypad-drag");
+  if (dragHandle) {
+    let dragging = false;
+    let startX = 0, startY = 0, originLeft = 0, originTop = 0;
+    dragHandle.addEventListener("pointerdown", (event) => {
+      dragging = true;
+      const rect = root.getBoundingClientRect();
+      root.style.left = `${rect.left}px`;
+      root.style.top = `${rect.top}px`;
+      root.style.right = "auto";
+      root.style.bottom = "auto";
+      root.style.transform = "none";
+      startX = event.clientX;
+      startY = event.clientY;
+      originLeft = rect.left;
+      originTop = rect.top;
+      try { dragHandle.setPointerCapture(event.pointerId); } catch (_) {}
+      event.preventDefault();
+      event.stopPropagation();
+    });
+    dragHandle.addEventListener("pointermove", (event) => {
+      if (!dragging) {
+        return;
+      }
+      const rect = root.getBoundingClientRect();
+      let left = originLeft + (event.clientX - startX);
+      let top = originTop + (event.clientY - startY);
+      left = Math.max(4, Math.min(left, window.innerWidth - rect.width - 4));
+      top = Math.max(4, Math.min(top, window.innerHeight - rect.height - 4));
+      root.style.left = `${Math.round(left)}px`;
+      root.style.top = `${Math.round(top)}px`;
+      numericKeypadPos = { left: Math.round(left), top: Math.round(top) };
+      event.preventDefault();
+    });
+    const endDrag = (event) => {
+      dragging = false;
+      try { dragHandle.releasePointerCapture(event.pointerId); } catch (_) {}
+    };
+    dragHandle.addEventListener("pointerup", endDrag);
+    dragHandle.addEventListener("pointercancel", endDrag);
+  }
+
   document.body.appendChild(root);
   numericKeypadRootEl = root;
   return root;
@@ -7054,6 +7157,22 @@ function showNumericKeypadForInput(inputElement) {
   numericKeypadInputEl = inputElement;
   keypadElement.hidden = false;
   keypadElement.setAttribute("aria-hidden", "false");
+
+  // Reopen at the operator's dragged spot, or the default center-slightly-right
+  // position (from CSS) when it has never been moved.
+  if (numericKeypadPos) {
+    keypadElement.style.left = `${numericKeypadPos.left}px`;
+    keypadElement.style.top = `${numericKeypadPos.top}px`;
+    keypadElement.style.right = "auto";
+    keypadElement.style.bottom = "auto";
+    keypadElement.style.transform = "none";
+  } else {
+    keypadElement.style.left = "";
+    keypadElement.style.top = "";
+    keypadElement.style.right = "";
+    keypadElement.style.bottom = "";
+    keypadElement.style.transform = "";
+  }
 }
 
 function hideNumericKeypad() {
@@ -7122,6 +7241,10 @@ function setMaterialsMenuOpen(isOpen, options = {}) {
   const { skipBottomNavUpdate = false, closeFilesOnOpen = true } = options;
   isMaterialsMenuOpen = Boolean(isOpen);
 
+  // Raise the machine while the popup covers the lower screen so the bottom spool
+  // stays visible; settle back when it closes.
+  materialsModelLiftTargetM = isMaterialsMenuOpen ? MATERIALS_MENU_MODEL_LIFT_M : 0;
+
   document.body.classList.toggle("materials-menu-open", isMaterialsMenuOpen);
 
   if (materialsMenuPopupEl) {
@@ -7148,10 +7271,14 @@ function setMaterialsMenuOpen(isOpen, options = {}) {
     stopMaterialsMenuPopupDrag();
     setMaterialsMenuAmountValidationMessage("");
     setMaterialsMenuConfirmMessage("");
+    // Dismissing Materials drops any pending "return to slicer" context.
+    materialsReturnSlicerFile = null;
     if (numericKeypadInputEl && materialsMenuPopupEl && materialsMenuPopupEl.contains(numericKeypadInputEl)) {
       hideNumericKeypad();
     }
   }
+
+  updateMaterialsReturnToSlicerButton();
 
   if (!skipBottomNavUpdate) {
     updateBottomNavState();
@@ -7322,6 +7449,15 @@ window.addEventListener("message", (event) => {
       && bridgedSliceData.toolpath.moves.length > 0) {
     bridgedToolpathFresh = true;
   }
+  // Live-match the preview to where the operator just placed the part on the
+  // slicer plate (only while a preview is shown, not during a docked print —
+  // that flow positions the gantry itself).
+  if (cloudStlObject && !isDockedPrintActive) {
+    const placement = getSlicerPlacementWorldOffset();
+    if (placement) {
+      alignCloudStlUnderHeadViaXY(0.6, placement);
+    }
+  }
 });
 
 function hasBridgedToolpath() {
@@ -7331,6 +7467,24 @@ function hasBridgedToolpath() {
       Array.isArray(bridgedSliceData.toolpath.moves) &&
       bridgedSliceData.toolpath.moves.length > 0,
   );
+}
+
+// World-space XY offset (metres) that reproduces where the operator placed the
+// part on the slicer build plate: (part-centre − plate-centre) in plate mm, laid
+// in the horizontal plane. Null when no bridged slice carries a plate + bounds.
+// Fed to alignCloudStlUnderHeadViaXY so the preview matches the slicer layout.
+function getSlicerPlacementWorldOffset() {
+  const plate = bridgedSliceData && bridgedSliceData.plate;
+  const bounds = bridgedSliceData && bridgedSliceData.mesh && bridgedSliceData.mesh.bounds;
+  if (!plate || !bounds || !Array.isArray(bounds.min) || !Array.isArray(bounds.max)) {
+    return null;
+  }
+  if (!Number.isFinite(plate.centerXmm) || !Number.isFinite(plate.centerYmm)) {
+    return null;
+  }
+  const offXmm = (bounds.min[0] + bounds.max[0]) / 2 - plate.centerXmm;
+  const offYmm = (bounds.min[1] + bounds.max[1]) / 2 - plate.centerYmm;
+  return new THREE.Vector3(offXmm / 1000, offYmm / 1000, 0);
 }
 
 function updateSlicerChosenFileLabel() {
@@ -7708,8 +7862,8 @@ function runPrePrintHomingSequence(onComplete) {
     steps.push([probeDur, () => moveJointToValue(z, mm(PRINT_PROBE_TOUCH_Z_MM), probeDur)]);
     steps.push([probeDur, () => moveJointToValue(z, mm(PRINT_PROBE_TOUCH_Z_MM - PRINT_PROBE_RETRACT_MM), probeDur)]);
   }
-  // 5. Palpador sweeps left (retract to main position).
-  steps.push([PALPADOR_SWEEP_DURATION_SEC, () => moveJointToValue(palpador, palpadorLeft, PALPADOR_SWEEP_DURATION_SEC)]);
+  // 5. Palpador sweeps left (retract to main position) SLOWLY.
+  steps.push([PALPADOR_RETURN_DURATION_SEC, () => moveJointToValue(palpador, palpadorLeft, PALPADOR_RETURN_DURATION_SEC)]);
   // 6. Gantry glides smoothly to the CENTRED print-start pose (plate centre under
   //    the nozzle), so playback starts already centred and in position.
   steps.push([bigDur, () => moveGantryToPrintStart(bigDur)]);
@@ -7732,6 +7886,31 @@ function runPrePrintHomingSequence(onComplete) {
   runNext();
 }
 
+// TEMP diagnostic (remove once the clip-mode hand-off is fixed): a fixed top
+// banner that surfaces, at Start-print, whether the print got a REAL toolpath
+// (bead tracing) or fell back to clip mode (vertical-only, no bead under nozzle),
+// and where the toolpath came from. Green = tracing, red = clip.
+function showPrintDiagToast(message, ok) {
+  try {
+    let el = document.getElementById("printDiagToast");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "printDiagToast";
+      el.style.cssText =
+        "position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:9999;"
+        + "max-width:calc(100vw - 24px);padding:12px 18px;border-radius:10px;"
+        + "font:600 14px system-ui,sans-serif;text-align:center;white-space:pre-wrap;"
+        + "box-shadow:0 10px 26px rgba(0,0,0,.45);pointer-events:none;color:#fff;";
+      document.body.appendChild(el);
+    }
+    el.textContent = message;
+    el.style.background = ok ? "#1f7a3d" : "#d9534f";
+    el.style.display = "block";
+    window.clearTimeout(showPrintDiagToast._t);
+    showPrintDiagToast._t = window.setTimeout(() => { el.style.display = "none"; }, 12000);
+  } catch (e) { /* best-effort */ }
+}
+
 async function startDockedPrint() {
   if (!printSim || slicerLoadToViewerEl?.disabled) {
     return;
@@ -7743,6 +7922,7 @@ async function startDockedPrint() {
   // Suppress the STL→head preview alignment for the whole print (set before
   // prepare(), which loads the model and would otherwise trigger it).
   isDockedPrintActive = true;
+  printCompletionHandled = false; // re-arm the post-print completion flow
   try {
     // Selecting/loading a file already kicks off a background "warm" slice
     // (autoPreparePrintSimulationForSelection). Firing another prepare() here
@@ -7772,6 +7952,19 @@ async function startDockedPrint() {
       isDockedPrintActive = false;
       return;
     }
+    // TEMP diagnostic: report whether this print will bead-trace a real toolpath
+    // or fall to clip mode (only up/down). See showPrintDiagToast.
+    try {
+      const finalSource = typeof printSim.getSource === "function" ? printSim.getSource() : "?";
+      const tracing = finalSource === "toolpath";
+      const diag = tracing
+        ? "PRINT: real toolpath — bead tracing "
+          + `(bridged=${hasBridgedToolpath()}, warm=${warmSource || "none"}/${warmState})`
+        : `PRINT: NO TOOLPATH -> clip mode (only up/down, no bead).\n`
+          + `bridged=${hasBridgedToolpath()}  warmSource=${warmSource || "none"}  warmState=${warmState}  source=${finalSource}`;
+      console.log("[print-diag] " + diag.replace(/\n/g, " "));
+      showPrintDiagToast(diag, tracing);
+    } catch (e) { /* best-effort */ }
     applyPrintModelSubstitution(); // show the sliced model, hide the STL
     printSim.reset();              // begin empty, at progress 0
     setSlicerFullscreen(false);    // leave full view for the 3D scene
@@ -8613,7 +8806,12 @@ function getLinearJointWorldAxis(state) {
   return axisWorld.normalize();
 }
 
-function alignCloudStlUnderHeadViaXY(durationSeconds = CLOUD_STL_DROP_ALIGN_DURATION_SEC) {
+// Centre the part under the nozzle in X/Y (no z move). Pass extraWorldOffset (a
+// THREE.Vector3, metres, world) to instead place the part at that offset from
+// the nozzle — used to mirror the operator's placement on the slicer plate so
+// the preview matches the slicer. The offset is projected onto the eje_x/eje_y
+// world axes, so axis identity + sign are handled automatically.
+function alignCloudStlUnderHeadViaXY(durationSeconds = CLOUD_STL_DROP_ALIGN_DURATION_SEC, extraWorldOffset = null) {
   if (!cloudStlObject || !robotRoot) {
     return false;
   }
@@ -8640,6 +8838,9 @@ function alignCloudStlUnderHeadViaXY(durationSeconds = CLOUD_STL_DROP_ALIGN_DURA
   }
 
   const deltaToHead = headLowestPoint.clone().sub(stlTopPoint);
+  if (extraWorldOffset) {
+    deltaToHead.add(extraWorldOffset);
+  }
   const requiredXDelta = deltaToHead.dot(ejeXAxisWorld);
   const requiredYDelta = deltaToHead.dot(ejeYAxisWorld);
 
@@ -9763,7 +9964,11 @@ async function loadCloudStlFromUrl(url, sourceLabel) {
     const parentLocalBounds = computeCloudStlParentLocalBounds(parentObject);
     attachCloudStlToParent();
     placeCloudStlAboveParentMesh(parentObject, parentLocalBounds);
-    alignCloudStlToHeadContactViaEjeX();
+    // Rest the part on the build plate and place it under the nozzle in BOTH
+    // horizontal axes (eje_x + eje_y), WITHOUT dropping z to pin the part's top
+    // to the head. When a bridged slice exists, honour the operator's placement
+    // on the slicer plate so the preview matches the slicer; otherwise centre it.
+    alignCloudStlUnderHeadViaXY(CLOUD_STL_DROP_ALIGN_DURATION_SEC, getSlicerPlacementWorldOffset());
     applyCloudStlDisplayState();
     alignCloudPointToCloudStlTransform();
 
@@ -13625,7 +13830,7 @@ async function loadUrdf(urdfUrl) {
       attachCloudStlToParent();
       applyCloudStlSideRotation();
       placeCloudStlAboveParentMesh(parentObject, parentLocalBounds);
-      alignCloudStlToHeadContactViaEjeX(0.6);
+      alignCloudStlUnderHeadViaXY(0.6, getSlicerPlacementWorldOffset());
       applyCloudStlDisplayState();
     }
     if (cloudPointObject) {
@@ -13963,6 +14168,193 @@ const PRINT_OVERDEPOSITION_SIM_PCT = 4.2;
 // Snapshot of what was laid down when a print is stopped mid-way. Must be built
 // from the live progress + selected-job material figures BEFORE the sim is reset
 // and the STL selection cleared (both zero out their sources).
+// ── Chamber atmosphere (prepared for the real M600 sensor feed) ────────────
+// The M600 runs a fully inert argon chamber (O2 as low as ~10 ppm). A future
+// sensor bridge pushes readings — either a postMessage {source:"meltio-m600",
+// type:"chamber-atmosphere", o2Ppm, argonFlowLpm, chamberTempC} or a direct call
+// to window.meltioApplyChamberAtmosphere(...). We store the latest reading,
+// surface it in the print-complete summary, and raise a safe/wait/danger
+// notification from the O2 level. Thresholds are placeholders — tune to spec.
+const CHAMBER_O2_SAFE_PPM = 50;
+const CHAMBER_O2_WARN_PPM = 500;
+let chamberAtmosphere = { o2Ppm: null, argonFlowLpm: null, chamberTempC: null, ts: null };
+
+function applyChamberAtmosphere(data) {
+  if (!data || typeof data !== "object") {
+    return;
+  }
+  const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
+  chamberAtmosphere = {
+    o2Ppm: num(data.o2Ppm),
+    argonFlowLpm: num(data.argonFlowLpm),
+    chamberTempC: num(data.chamberTempC),
+    ts: Date.now(),
+  };
+  if (printCompleteModalEl && !printCompleteModalEl.hidden) {
+    renderChamberAtmosphere();
+  }
+}
+window.meltioApplyChamberAtmosphere = applyChamberAtmosphere;
+window.addEventListener("message", (event) => {
+  const d = event && event.data;
+  if (d && d.source === "meltio-m600" && d.type === "chamber-atmosphere") {
+    applyChamberAtmosphere(d);
+  }
+});
+
+function chamberAtmosphereStatus() {
+  const o2 = chamberAtmosphere.o2Ppm;
+  if (!Number.isFinite(o2)) {
+    return "unknown";
+  }
+  if (o2 <= CHAMBER_O2_SAFE_PPM) {
+    return "safe";
+  }
+  if (o2 <= CHAMBER_O2_WARN_PPM) {
+    return "warn";
+  }
+  return "danger";
+}
+
+function renderChamberAtmosphere() {
+  if (!printCompleteAtmosphereEl) {
+    return;
+  }
+  const { o2Ppm, argonFlowLpm, chamberTempC } = chamberAtmosphere;
+  const status = chamberAtmosphereStatus();
+  if (status === "unknown") {
+    printCompleteAtmosphereEl.textContent = "Awaiting M600 sensor…";
+  } else {
+    const parts = [];
+    if (Number.isFinite(o2Ppm)) parts.push(`O₂ ${Math.round(o2Ppm)} ppm`);
+    if (Number.isFinite(argonFlowLpm)) parts.push(`Ar ${argonFlowLpm} L/min`);
+    if (Number.isFinite(chamberTempC)) parts.push(`${Math.round(chamberTempC)} °C`);
+    printCompleteAtmosphereEl.textContent = parts.join(" · ") || "—";
+  }
+  printCompleteAtmosphereEl.dataset.status = status;
+  if (printCompleteAtmosphereNoteEl) {
+    let msg = "";
+    if (status === "danger") msg = "⚠ Chamber O₂ high — atmosphere not inert. Do NOT open; keep purging argon.";
+    else if (status === "warn") msg = "Chamber still purging — wait for O₂ to drop before opening.";
+    else if (status === "safe") msg = "✓ Atmosphere inert — safe to open once cooled.";
+    printCompleteAtmosphereNoteEl.textContent = msg;
+    printCompleteAtmosphereNoteEl.hidden = !msg;
+    printCompleteAtmosphereNoteEl.dataset.status = status;
+  }
+}
+
+function formatPrintDuration(seconds) {
+  const s = Number(seconds);
+  if (!Number.isFinite(s) || s <= 0) {
+    return "—";
+  }
+  const totalMin = Math.floor(s / 60);
+  const sec = Math.round(s % 60);
+  if (totalMin >= 60) {
+    return `${Math.floor(totalMin / 60)}h ${totalMin % 60}m`;
+  }
+  return totalMin > 0 ? `${totalMin}m ${sec}s` : `${sec}s`;
+}
+
+// ── Print-complete summary + accept/reset ──────────────────────────────────
+let printCompletionHandled = false;
+
+function buildPrintCompleteSummary() {
+  const focusKey = normalizeSpoolKey(hotspotMaterialsFocusSpoolKey) || "spool1";
+  const usedThis = Number(lastPrintUsedGramsBySpool[focusKey]);
+  const materialUsedGrams = Number.isFinite(usedThis) && usedThis > 0
+    ? usedThis
+    : buildPrintStopSummary(1).materialUsedGrams;
+  const remainingGrams = Number(spoolRemainingAmountGramsByKey[focusKey]) || 0;
+  const printsLeft = materialUsedGrams > 0 ? Math.floor(remainingGrams / materialUsedGrams) : null;
+  const stats = printSim && typeof printSim.getStats === "function" ? printSim.getStats() : null;
+  return { spoolKey: focusKey, materialUsedGrams, remainingGrams, printsLeft, stats };
+}
+
+function openPrintCompleteModal(summary) {
+  if (!printCompleteModalEl || !summary) {
+    return;
+  }
+  if (printCompleteMaterialEl) {
+    printCompleteMaterialEl.textContent = formatGramsText(summary.materialUsedGrams);
+  }
+  if (printCompleteSpoolEl) {
+    let txt = `${formatGramsText(summary.remainingGrams)} left (${getSpoolDisplayLabel(summary.spoolKey)})`;
+    if (Number.isFinite(summary.printsLeft)) {
+      txt += ` · ~${summary.printsLeft} more print(s)`;
+    }
+    printCompleteSpoolEl.textContent = txt;
+  }
+  const st = summary.stats;
+  if (printCompleteTimeEl) {
+    printCompleteTimeEl.textContent = st ? formatPrintDuration(st.printSeconds) : "—";
+  }
+  if (printCompleteLayersEl) {
+    const layers = st && Number.isFinite(st.layerCount) ? `${st.layerCount} layers` : "—";
+    const height = st && Number.isFinite(st.heightMm) ? ` · ${st.heightMm.toFixed(1)} mm` : "";
+    printCompleteLayersEl.textContent = layers + height;
+  }
+  if (printCompleteThermalEl) {
+    const t = st && st.thermal ? st.thermal : null;
+    printCompleteThermalEl.textContent = t
+      ? `peak ${Math.round(t.peak * 100)}% · avg ${Math.round(t.avg * 100)}% · hottest layer ${t.hottestLayer}`
+      : "no thermal data";
+  }
+  renderChamberAtmosphere();
+  printCompleteModalEl.hidden = false;
+  printCompleteModalEl.setAttribute("aria-hidden", "false");
+}
+
+function closePrintCompleteModal() {
+  if (!printCompleteModalEl) {
+    return;
+  }
+  printCompleteModalEl.hidden = true;
+  printCompleteModalEl.setAttribute("aria-hidden", "true");
+}
+
+// Fired once when a docked print reaches 100%. Accounts for the material drawn,
+// moves the machine to the maintenance position CARRYING the part (it rides
+// eje_y_link), and opens the summary for the operator to review.
+function handlePrintComplete() {
+  if (printCompletionHandled) {
+    return;
+  }
+  printCompletionHandled = true;
+  consumeMaterialForCompletedPrint();
+  const summary = buildPrintCompleteSummary();
+  runMaintenancePositionAction();
+  openPrintCompleteModal(summary);
+}
+
+// Accept: clear the part off the gantry and reset to the Files browser so a new
+// print/file-selection cycle can begin (mirrors confirmStopPrint's teardown).
+function confirmPrintComplete() {
+  closePrintCompleteModal();
+  printCompletionHandled = false;
+  cancelPrePrintSequence();
+  setSlicerMenuOpen(false);
+  if (printSim && printSim.getState() !== "idle") {
+    printSim.reset();
+  }
+  clearCloudStlObject();       // the part disappears from eje_x / eje_y
+  expandFilesListForPrint();
+  isDockedPrintActive = false; // re-enable normal preview behaviour
+  if (slicerLoadToViewerEl) {
+    slicerLoadToViewerEl.disabled = false;
+  }
+  const ejeX = getJointStateByName(EJE_X_JOINT);
+  const ejeY = getJointStateByName(EJE_Y_JOINT);
+  if (ejeX && ejeX.kind === "linear") {
+    moveJointToValue(ejeX, millimetersToMeters(PRINT_POSITION_X_MM));
+  }
+  if (ejeY && ejeY.kind === "linear") {
+    moveJointToValue(ejeY, millimetersToMeters(PRINT_POSITION_Y_MM));
+  }
+  updateBottomNavState();
+  applyFilesMenuOpenDoorAndCameraBehavior();
+}
+
 function buildPrintStopSummary(progress) {
   const fraction = clamp(Number(progress) || 0, 0, 1);
   const estimatedTotal = Number(selectedPrintJobEstimatedGrams);
@@ -14356,6 +14748,27 @@ window.__perf = () => ({
   triangles: renderer.info.render.triangles,
 });
 
+// Ease the whole-machine lift toward its current target (set by the Materials
+// popup). robotRoot.position is otherwise untouched, so it is safe to own it here.
+function updateMaterialsModelLift(deltaSeconds) {
+  if (!robotRoot) {
+    return;
+  }
+  const target = materialsModelLiftTargetM;
+  if (Math.abs(materialsModelLiftCurrentM - target) > 1e-5) {
+    const smoothing = 1 - Math.exp(-Math.max(deltaSeconds, 0) / 0.12);
+    materialsModelLiftCurrentM = THREE.MathUtils.lerp(
+      materialsModelLiftCurrentM,
+      target,
+      smoothing,
+    );
+    if (Math.abs(materialsModelLiftCurrentM - target) <= 1e-5) {
+      materialsModelLiftCurrentM = target;
+    }
+  }
+  robotRoot.position.z = materialsModelLiftCurrentM;
+}
+
 function animate(nowMs = performance.now()) {
   requestAnimationFrame(animate);
   const rawDeltaSeconds = Math.min(Math.max((nowMs - previousAnimationMs) / 1000, 0), 0.1);
@@ -14365,6 +14778,7 @@ function animate(nowMs = performance.now()) {
   animateFeederWheels(deltaSeconds);
   animateWireDrumAppearance(deltaSeconds);
   updateJointControlTransitions(deltaSeconds);
+  updateMaterialsModelLift(deltaSeconds);
   updateCameraTransition(nowMs);
   updateIdleReset(nowMs);
   updateAdvancedModeIdleTimeout(nowMs);
@@ -14385,6 +14799,7 @@ function animate(nowMs = performance.now()) {
     isInteractionQualityActive ||
     cameraTransitionState !== null ||
     jointControlTransitions.size > 0 ||
+    Math.abs(materialsModelLiftCurrentM - materialsModelLiftTargetM) > 1e-5 ||
     (printSim ? printSim.getState() === "playing" : false);
   if (sceneActive || (nowMs - lastMainRenderMs) >= IDLE_RENDER_INTERVAL_MS) {
     renderer.render(scene, camera);
@@ -15197,6 +15612,13 @@ if (materialsMenuCloseEl) {
   });
 }
 
+if (materialsReturnToSlicerEl) {
+  materialsReturnToSlicerEl.addEventListener("click", () => {
+    markUserActivity();
+    returnToSlicerFromMaterials();
+  });
+}
+
 if (materialsHistoryToggleEl) {
   materialsHistoryToggleEl.addEventListener("click", () => {
     markUserActivity();
@@ -15380,7 +15802,7 @@ if (cloudStlPlacementSideEl) {
     const parentLocalBounds = computeCloudStlParentLocalBounds(parentObject);
     applyCloudStlSideRotation();
     placeCloudStlAboveParentMesh(parentObject, parentLocalBounds);
-    alignCloudStlToHeadContactViaEjeX(0.6);
+    alignCloudStlUnderHeadViaXY(0.6, getSlicerPlacementWorldOffset());
     alignCloudPointToCloudStlTransform();
     applyCloudStlDisplayState();
   });
@@ -15808,6 +16230,15 @@ if (printStopSummaryModalEl) {
     if (event.target === printStopSummaryModalEl) {
       closePrintStopSummary();
     }
+  });
+}
+
+// Print-complete summary: Accept is a REQUIRED acknowledgement (clears the part
+// and resets), so it only responds to the button — no scrim-dismiss.
+if (printCompleteAcceptEl) {
+  printCompleteAcceptEl.addEventListener("click", () => {
+    markUserActivity();
+    confirmPrintComplete();
   });
 }
 
@@ -16301,6 +16732,11 @@ function initializePrintSimulation() {
     // the sim state, so it appears exactly when a slice becomes ready and
     // reflects play/pause alongside the flyout control.
     updateBottomNavState();
+    // A docked print reaching 100% → run the post-print completion flow once
+    // (material accounting, move to maintenance with the part, summary modal).
+    if (resolved === "completed" && isDockedPrintActive && filesListCollapsedForPrint) {
+      handlePrintComplete();
+    }
   }
 
   printSim = createPrintSimulation({

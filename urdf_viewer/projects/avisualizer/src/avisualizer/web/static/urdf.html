@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>URDF Viewer</title>
-  <link rel="stylesheet" href="/static/urdf_viewer.css?v=142" />
+  <link rel="stylesheet" href="/static/urdf_viewer.css?v=151" />
 </head>
 <body class="controls-panel-collapsed">
   <div class="status-panel app-topbar">
@@ -770,6 +770,7 @@
     <div class="materials-menu-popup-header">
       <h3>Materials</h3>
       <div class="cloud-model-popup-header-actions">
+        <button id="materialsReturnToSlicer" class="materials-return-slicer" type="button" hidden>&#8592; Return to slicer</button>
         <button id="materialsHistoryToggle" class="btn-quiet" type="button" aria-pressed="false">Usage history</button>
         <button id="materialsMenuClose" class="cloud-header-icon-button" type="button" aria-label="Close materials menu">
           <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -1029,6 +1030,53 @@
     </div>
   </div>
 
+  <!-- Print-complete summary: shown when a print finishes. The machine is in the
+       maintenance position holding the part; the operator reviews the summary and
+       presses Accept to clear the part and reset for a new job. -->
+  <div id="printCompleteModal" class="print-stop-modal" aria-hidden="true" hidden>
+    <div class="print-stop-modal-card print-complete-card" role="dialog" aria-modal="true" aria-labelledby="printCompleteTitle">
+      <h3 id="printCompleteTitle">Print complete</h3>
+      <p class="control-note">
+        The part is in the maintenance position. Review the summary, then Accept to
+        clear the part and start a new job.
+      </p>
+      <dl class="print-stop-summary-list">
+        <div class="print-stop-summary-row">
+          <dt>Material used (this print)</dt>
+          <dd id="printCompleteMaterial">-</dd>
+        </div>
+        <div class="print-stop-summary-row">
+          <dt>Spool remaining</dt>
+          <dd id="printCompleteSpool">-</dd>
+        </div>
+        <div class="print-stop-summary-row">
+          <dt>Print time</dt>
+          <dd id="printCompleteTime">-</dd>
+        </div>
+        <div class="print-stop-summary-row">
+          <dt>Layers / height</dt>
+          <dd id="printCompleteLayers">-</dd>
+        </div>
+        <div class="print-stop-summary-row">
+          <dt>Thermal (simulated)</dt>
+          <dd id="printCompleteThermal">-</dd>
+        </div>
+        <div class="print-stop-summary-row">
+          <dt>Chamber atmosphere</dt>
+          <dd id="printCompleteAtmosphere">-</dd>
+        </div>
+      </dl>
+      <p id="printCompleteCooldownNote" class="print-complete-note">
+        ⚠ Let the part cool under argon before opening the chamber — freshly
+        deposited metal is very hot and oxidises in air.
+      </p>
+      <p id="printCompleteAtmosphereNote" class="print-complete-note" hidden></p>
+      <div class="advanced-pin-actions">
+        <button id="printCompleteAccept" class="btn-primary" type="button">Accept &amp; reset</button>
+      </div>
+    </div>
+  </div>
+
   <div id="printMaterialReassignModal" class="print-stop-modal" aria-hidden="true" hidden>
     <div class="print-stop-modal-card" role="dialog" aria-modal="true" aria-labelledby="printMaterialReassignTitle">
       <h3 id="printMaterialReassignTitle">Reassign material spool?</h3>
@@ -1202,6 +1250,6 @@
       }
     }
   </script>
-  <script type="module" src="/static/urdf_viewer.js?v=348"></script>
+  <script type="module" src="/static/urdf_viewer.js?v=373"></script>
 </body>
 </html>

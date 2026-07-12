@@ -895,6 +895,26 @@ body.controls-panel-open .controls-sidebar-toggle {
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.42);
 }
 
+/* "Return to slicer" — shown in the Materials header only when the operator was
+   sent here by the print material gate from the slicer. Green "go back" accent
+   matching the active-state treatment used across the bottom bars. */
+.materials-return-slicer {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(151, 248, 203, 0.5);
+  background: rgba(83, 160, 102, 0.18);
+  color: #d3ffde;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.materials-return-slicer:hover { background: rgba(83, 160, 102, 0.28); }
+.materials-return-slicer[hidden] { display: none; }
+
 /* Wide layout: spool controls beside the material-info panel. */
 .materials-menu-body {
   display: flex;
@@ -1138,8 +1158,11 @@ body.controls-panel-open .controls-sidebar-toggle {
 
 .numeric-keypad {
   position: fixed;
-  right: 24px;
-  bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+  /* Default: centred vertically, a little right of centre. Draggable from the
+     top handle (see .numeric-keypad-drag); JS then switches to left/top. */
+  left: 56%;
+  top: 50%;
+  transform: translate(-50%, -50%);
   z-index: 30;
   width: min(248px, calc(100vw - 24px));
   padding: 10px;
@@ -1149,6 +1172,28 @@ body.controls-panel-open .controls-sidebar-toggle {
   box-shadow: 0 18px 30px rgba(0, 0, 0, 0.38);
   backdrop-filter: blur(10px);
 }
+
+/* Drag handle: a grip bar across the top of the keypad. touch-action:none so a
+   touch drag on the panel moves the keypad instead of scrolling. */
+.numeric-keypad-drag {
+  height: 20px;
+  margin: -2px 0 8px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.05);
+  cursor: grab;
+  touch-action: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.numeric-keypad-drag::before {
+  content: "";
+  width: 34px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(180, 206, 236, 0.55);
+}
+.numeric-keypad-drag:active { cursor: grabbing; }
 
 .numeric-keypad[hidden] {
   display: none !important;
@@ -2777,6 +2822,33 @@ body.materials-menu-open .advanced-mode-indicator {
   font-size: 14px;
   font-weight: var(--ui-font-weight-bold);
   color: var(--ui-text-primary);
+}
+
+/* Print-complete modal: notes + chamber-atmosphere status colouring. */
+.print-complete-note {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: rgba(232, 216, 168, 0.95);
+  background: rgba(226, 176, 74, 0.12);
+  border: 1px solid rgba(226, 176, 74, 0.32);
+}
+.print-complete-note[hidden] { display: none; }
+#printCompleteAtmosphere[data-status="safe"] { color: #7ee0a0; }
+#printCompleteAtmosphere[data-status="warn"] { color: #e2b04a; }
+#printCompleteAtmosphere[data-status="danger"] { color: #ff7a7a; }
+#printCompleteAtmosphere[data-status="unknown"] { color: var(--ui-text-secondary); font-weight: 500; }
+.print-complete-note[data-status="safe"] {
+  color: #bff3d0;
+  background: rgba(83, 160, 102, 0.14);
+  border-color: rgba(122, 255, 148, 0.3);
+}
+.print-complete-note[data-status="danger"] {
+  color: #ffd0d0;
+  background: rgba(208, 64, 58, 0.16);
+  border-color: rgba(255, 120, 120, 0.4);
 }
 
 button.btn-danger {
@@ -6471,6 +6543,79 @@ body.files-collapsed-for-print .cloud-slicer-menu {
   bottom: 110px;
   transform: translateX(-50%);
   max-height: calc(100vh - 260px);
+  /* Full-width glassy dock matching the Files-menu slicer dock / the bottom nav
+     (per request). JS (positionSlicerMenuDocked) sets bottom/left/transform live;
+     width + chrome come from here. */
+  width: calc(100vw - 16px);
+  max-width: calc(100vw - 16px);
+  padding: 12px;
+  gap: 8px;
+  border-radius: 20px;
+  border: 1px solid rgba(203, 224, 255, 0.2);
+  background: linear-gradient(180deg, rgba(19, 24, 32, 0.92), rgba(13, 17, 25, 0.92));
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.42);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+}
+/* Inner panel blends into the dock (no nested card), control groups stack as
+   full-width tile rows. */
+body.files-collapsed-for-print .print-sim-panel {
+  padding: 0;
+  border: 0;
+  background: none;
+  gap: 8px;
+}
+/* All control buttons become consistent glassy tiles like the slicer dock. */
+body.files-collapsed-for-print .print-sim-controls button,
+body.files-collapsed-for-print .print-sim-view-mode,
+body.files-collapsed-for-print .print-sim-style-mode,
+body.files-collapsed-for-print .print-sim-speed-preset {
+  min-height: 56px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(203, 224, 255, 0.2);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(213, 223, 239, 0.9);
+  font-size: 13px;
+  font-weight: 600;
+}
+body.files-collapsed-for-print .print-sim-controls button:hover:not(:disabled),
+body.files-collapsed-for-print .print-sim-view-mode:hover:not(:disabled),
+body.files-collapsed-for-print .print-sim-style-mode:hover:not(:disabled),
+body.files-collapsed-for-print .print-sim-speed-preset:hover {
+  border-color: rgba(203, 224, 255, 0.32);
+  background: rgba(255, 255, 255, 0.07);
+  color: #eaf2ff;
+}
+/* Active tile: green glow, identical to the bottom nav / slicer dock active tab. */
+body.files-collapsed-for-print .print-sim-view-mode.is-active,
+body.files-collapsed-for-print .print-sim-style-mode.is-active,
+body.files-collapsed-for-print .print-sim-speed-preset.is-active,
+body.files-collapsed-for-print .print-sim-panel button[aria-pressed="true"] {
+  border-color: rgba(158, 255, 183, 0.34);
+  background: rgba(83, 160, 102, 0.18);
+  color: #d3ffde;
+  box-shadow: 0 0 24px rgba(122, 255, 148, 0.28), inset 0 0 0 1px rgba(180, 255, 199, 0.2);
+}
+/* The Slice CTA keeps an accent fill so it reads as primary within the dock. */
+body.files-collapsed-for-print .print-sim-panel button.btn-primary {
+  min-height: 56px;
+  border-radius: 12px;
+}
+/* Field labels sit above their tile row so the tiles get the full dock width. */
+body.files-collapsed-for-print .print-sim-field {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+body.files-collapsed-for-print .print-sim-field-label {
+  width: auto;
+}
+/* Progress row stays horizontal (label + slider + %). */
+body.files-collapsed-for-print #printSimProgressField {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
 }
 
 /* Plain file browsing (menu open, but not the docked print and not the
