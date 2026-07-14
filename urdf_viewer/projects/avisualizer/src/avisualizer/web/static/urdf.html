@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>URDF Viewer</title>
-  <link rel="stylesheet" href="/static/urdf_viewer.css?v=151" />
+  <link rel="stylesheet" href="/static/urdf_viewer.css?v=166" />
 </head>
 <body class="controls-panel-collapsed">
   <div class="status-panel app-topbar">
@@ -125,6 +125,8 @@
             aria-haspopup="true"
             aria-controls="settingsAdvancedMenu"
             aria-expanded="false"
+            data-requires-permission="setup.network"
+            data-perm-hide
           >
             Advanced Settings
           </button>
@@ -133,7 +135,7 @@
         <section class="topbar-settings-section" aria-label="Setup section">
           <p class="topbar-settings-section-title">Setup</p>
           <div class="topbar-settings-setup-actions" role="group" aria-label="Setup actions">
-            <button id="settingsSetupFirmwareButton" type="button">Firmware Update</button>
+            <button id="settingsSetupFirmwareButton" type="button" data-requires-permission="setup.firmware">Firmware Update</button>
             <button id="settingsSetupChangelogButton" type="button">Changelog</button>
             <button id="settingsSetupTimelapseButton" type="button">Timelapse</button>
             <button id="settingsSetupBedMaintenanceButton" type="button">Bed Maintenance</button>
@@ -152,7 +154,7 @@
             <h4>Advanced Settings</h4>
             <button id="settingsAdvancedClose" type="button" aria-label="Close advanced settings">Close</button>
           </header>
-          <div class="topbar-settings-advanced-actions" role="group" aria-label="Advanced settings actions">
+          <div class="topbar-settings-advanced-actions" role="group" aria-label="Advanced settings actions" data-requires-permission="setup.network" data-perm-hide>
             <button id="settingsFixturesButton" type="button" data-advanced-required="true" disabled>Fixtures</button>
             <button id="settingsSensorsButton" type="button" data-advanced-required="true" disabled>Sensors</button>
             <button id="settingsSetupApiKeyButton" type="button" data-advanced-required="true" disabled>API Key</button>
@@ -174,7 +176,7 @@
             <h4>Calibrate Tools</h4>
             <button id="settingsCalibrateClose" type="button" aria-label="Close calibrate tools">Close</button>
           </header>
-          <div class="topbar-settings-calibrate-actions" role="group" aria-label="Calibrate actions">
+          <div class="topbar-settings-calibrate-actions" role="group" aria-label="Calibrate actions" data-requires-permission="setup.calibration" data-perm-hide>
             <button id="settingsCalibrateFeederButton" type="button">Feeder Calibration</button>
             <button id="settingsCalibrateWorkingDistanceButton" type="button">Working Distance Calibration</button>
             <button id="settingsCalibrateLoadCellButton" type="button">Load Cell Calibration</button>
@@ -258,7 +260,7 @@
       </div>
     </section>
 
-    <section id="feederDriveSection" class="control-subpanel">
+    <section id="feederDriveSection" class="control-subpanel" data-requires-permission="machine.motion" data-perm-hide>
       <h3>Feeder Drive</h3>
       <div class="control-row">
         <label class="control-label" for="feederDriveStop">Direction</label>
@@ -293,7 +295,7 @@
       <p id="cloudStlStatus" class="control-note">Cloud: idle</p>
     </section>
 
-    <section class="control-subpanel">
+    <section class="control-subpanel" data-requires-permission="machine.motion" data-perm-hide>
       <h3>Motion Presets</h3>
       <div class="control-row actions-row">
         <button id="maintenancePositionButton" type="button">Maintenance Position</button>
@@ -313,7 +315,7 @@
       </div>
     </section>
 
-    <section class="control-subpanel">
+    <section class="control-subpanel" data-requires-permission="machine.motion" data-perm-hide>
       <h3>Joints</h3>
       <div id="jointControls" class="joint-controls">
         <p class="empty-state">No controllable joints detected.</p>
@@ -486,6 +488,14 @@
               <div id="hotspotFeederCameraPreview" class="feeder-camera-preview" role="img" aria-label="Feeder camera preview">
                 <div id="hotspotFeederCameraViewport" class="feeder-camera-viewport">
                   <div class="feeder-camera-placeholder">Feeder Camera</div>
+                </div>
+              </div>
+
+              <div class="control-row files-feeder-wheel-row">
+                <label class="control-label">Feeder wheel</label>
+                <div class="drive-toggle-group files-feeder-wheel-toggle" role="group" aria-label="Select feeder wheel">
+                  <button id="filesFeederWheelLeft" type="button" class="active" aria-pressed="true" data-spool-key="spool1">Left</button>
+                  <button id="filesFeederWheelRight" type="button" aria-pressed="false" data-spool-key="spool2">Right</button>
                 </div>
               </div>
 
@@ -690,7 +700,7 @@
     <div id="printSimPanel" class="print-sim-panel" data-sim-state="idle" aria-label="Print simulation">
       <label class="print-sim-field" id="printSimProfileField" hidden>
         <span class="print-sim-field-label">Profile</span>
-        <select id="printSimProfile" class="print-sim-select" aria-label="Slicer profile"></select>
+        <select id="printSimProfile" class="print-sim-select" aria-label="Slicer profile" data-requires-permission="slice.profileSelect"></select>
       </label>
       <div class="print-sim-controls" role="group" aria-label="Print simulation controls">
         <button id="printSimPrepare" class="btn-primary" type="button">Slice</button>
@@ -713,7 +723,7 @@
         </div>
       </div>
       <div class="print-sim-field print-sim-speed-field" id="printSimSpeedField">
-        <span class="print-sim-field-label">Speed (× real)</span>
+        <span class="print-sim-field-label">Speed</span>
         <div class="print-sim-speed-presets" role="group" aria-label="Playback speed multiplier">
           <button type="button" class="print-sim-speed-preset" data-speed="0.5">0.5x</button>
           <button type="button" class="print-sim-speed-preset is-active" data-speed="1">1x</button>
@@ -833,6 +843,42 @@
             <span id="materialsSpool2Status" class="spool-select-status status-unassigned">Not assigned</span>
           </span>
         </button>
+
+        <button id="materialsSpoolCardWireDrum" class="spool-select-card spool-select-card-wide" type="button" aria-pressed="false" data-spool-key="wiredrum">
+          <span class="spool-select-card-header">
+            <span class="spool-select-icon" aria-hidden="true"></span>
+            <span class="spool-select-name">Wire Drum</span>
+          </span>
+          <span id="materialsWireDrumMaterial" class="spool-select-material">Not assigned</span>
+          <span class="spool-select-data-row">
+            <span class="spool-select-data-label">Initial</span>
+            <span id="materialsWireDrumInitialAmount">15000g</span>
+          </span>
+          <span class="spool-select-data-row">
+            <span class="spool-select-data-label">Used</span>
+            <span id="materialsWireDrumUsedAmount">0g</span>
+          </span>
+          <span class="spool-select-data-row">
+            <span class="spool-select-data-label">Left</span>
+            <span id="materialsWireDrumAmount">15000g</span>
+          </span>
+          <span class="spool-select-data-row spool-select-data-row-status">
+            <span class="spool-select-data-label">Status</span>
+            <span id="materialsWireDrumStatus" class="spool-select-status status-unassigned">Not assigned</span>
+          </span>
+        </button>
+      </div>
+
+      <div class="control-row materials-feedstock-row">
+        <span class="control-label">Wire drum</span>
+        <button
+          id="materialsWireDrumToggle"
+          class="materials-wire-drum-toggle"
+          type="button"
+          aria-pressed="false"
+          aria-label="Connect or disconnect the wire drum assembly"
+          disabled
+        >Connect</button>
       </div>
 
       <div class="control-row">
@@ -900,6 +946,16 @@
 
   <div id="annotationLayer" class="annotation-layer" aria-hidden="true"></div>
 
+  <!-- Persistent banner while any critical fault is active (safety visibility). -->
+  <div id="criticalNotificationBanner" class="critical-notif-banner" role="alert" aria-hidden="true" hidden>
+    <span class="critical-notif-banner-icon" aria-hidden="true">!</span>
+    <span id="criticalNotificationBannerText" class="critical-notif-banner-text">Critical fault active</span>
+    <button id="criticalNotificationBannerView" class="critical-notif-banner-view" type="button">View</button>
+  </div>
+
+  <!-- Transient arrival toasts for new critical/warning notifications. -->
+  <div id="notificationToastLayer" class="notification-toast-layer" aria-live="polite" aria-atomic="false"></div>
+
   <nav class="bottom-nav" aria-label="Primary actions">
     <button id="navDoorToggle" class="bottom-nav-item" type="button" aria-pressed="false">
       <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -943,7 +999,7 @@
       </div>
       <div class="calendar-screen-actions">
         <button id="calendarReturnViewer" type="button">Return To 3D Viewer</button>
-        <button id="calendarAddEvent" type="button">Add Event</button>
+        <button id="calendarAddEvent" type="button" data-requires-permission="calendar.edit">Add Event</button>
       </div>
     </div>
 
@@ -975,6 +1031,28 @@
       </aside>
     </div>
   </section>
+
+  <!-- Floating "Reset view" during a docked print: appears when the operator
+       moves/zooms the camera off the print framing; click (or a 50s idle
+       auto-reset) glides back to the printing view. -->
+  <button id="printResetViewButton" class="print-reset-view-button" type="button" aria-hidden="true" hidden>
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M3 9V5a2 2 0 0 1 2-2h4" />
+      <path d="M21 9V5a2 2 0 0 0-2-2h-4" />
+      <path d="M3 15v4a2 2 0 0 0 2 2h4" />
+      <path d="M21 15v4a2 2 0 0 1-2 2h-4" />
+      <circle cx="12" cy="12" r="2.4" />
+    </svg>
+    <span>Reset view</span>
+  </button>
+
+  <div id="startPrintPreviewBar" class="start-print-preview-bar" role="dialog" aria-modal="false" aria-hidden="true" hidden>
+    <span class="start-print-preview-text">Start the print with the part at this position?</span>
+    <div class="start-print-preview-actions">
+      <button id="startPrintPreviewCancel" class="btn-quiet" type="button">Cancel</button>
+      <button id="startPrintPreviewConfirm" class="btn-primary" type="button">Start print &#9654;</button>
+    </div>
+  </div>
 
   <div id="printStopConfirmModal" class="print-stop-modal" aria-hidden="true" hidden>
     <div class="print-stop-modal-card" role="dialog" aria-modal="true" aria-labelledby="printStopConfirmTitle">
@@ -1250,6 +1328,8 @@
       }
     }
   </script>
-  <script type="module" src="/static/urdf_viewer.js?v=373"></script>
+  <script src="/static/permissions.js?v=2"></script>
+  <script src="/static/error_codes.js?v=1"></script>
+  <script type="module" src="/static/urdf_viewer.js?v=389"></script>
 </body>
 </html>

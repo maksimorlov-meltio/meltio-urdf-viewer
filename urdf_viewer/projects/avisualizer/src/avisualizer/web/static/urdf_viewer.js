@@ -5,7 +5,7 @@ import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
 import { fetchSensorData } from "./modules/api.js";
 import { buildSpriteObject, buildVoxelCubeObject } from "./modules/render.js";
-import { createPrintSimulation } from "./sim/printSimulation.js?v=10";
+import { createPrintSimulation } from "./sim/printSimulation.js?v=11";
 import { createSlicerClient } from "./sim/slicerClient.js";
 
 // Print-simulation controller. Created at boot once the scene exists; declared
@@ -56,6 +56,7 @@ const printPauseDismissEl = document.getElementById("printPauseDismiss");
 // reassign-to-another-spool confirmation dialog.
 const printMaterialWarningEl = document.getElementById("printMaterialWarning");
 const printMaterialWarningTextEl = document.getElementById("printMaterialWarningText");
+const printResetViewButtonEl = document.getElementById("printResetViewButton");
 const printMaterialReassignModalEl = document.getElementById("printMaterialReassignModal");
 const printMaterialReassignTextEl = document.getElementById("printMaterialReassignText");
 const printMaterialReassignCancelEl = document.getElementById("printMaterialReassignCancel");
@@ -219,10 +220,13 @@ const filesMaterialAssignmentStatusEl = document.getElementById("filesMaterialAs
 const filesFeederDriveUpEl = document.getElementById("filesFeederDriveUp");
 const filesFeederDriveStopEl = document.getElementById("filesFeederDriveStop");
 const filesFeederDriveDownEl = document.getElementById("filesFeederDriveDown");
+const filesFeederWheelLeftEl = document.getElementById("filesFeederWheelLeft");
+const filesFeederWheelRightEl = document.getElementById("filesFeederWheelRight");
 const viewCubeOverlayEl = document.getElementById("viewCubeOverlay");
 const viewCubeCanvasEl = document.getElementById("viewCubeCanvas");
 const viewCubeHomeButtonEl = document.getElementById("viewCubeHomeButton");
 const wireDrumAppearButtonEl = document.getElementById("wireDrumAppearButton");
+const materialsWireDrumToggleEl = document.getElementById("materialsWireDrumToggle");
 const cloudStlDatasetEl = document.getElementById("cloudStlDataset");
 const cloudStlLoadDatasetEl = document.getElementById("cloudStlLoadDataset");
 const cloudSourceUsbEl = document.getElementById("cloudSourceUsb");
@@ -280,6 +284,12 @@ const materialsSpool1AmountEl = document.getElementById("materialsSpool1Amount")
 const materialsSpool2AmountEl = document.getElementById("materialsSpool2Amount");
 const materialsSpool1StatusEl = document.getElementById("materialsSpool1Status");
 const materialsSpool2StatusEl = document.getElementById("materialsSpool2Status");
+const materialsSpoolCardWireDrumEl = document.getElementById("materialsSpoolCardWireDrum");
+const materialsWireDrumMaterialEl = document.getElementById("materialsWireDrumMaterial");
+const materialsWireDrumInitialAmountEl = document.getElementById("materialsWireDrumInitialAmount");
+const materialsWireDrumUsedAmountEl = document.getElementById("materialsWireDrumUsedAmount");
+const materialsWireDrumAmountEl = document.getElementById("materialsWireDrumAmount");
+const materialsWireDrumStatusEl = document.getElementById("materialsWireDrumStatus");
 const materialsMaterialSelectEl = document.getElementById("materialsMaterialSelect");
 const materialsSpoolAmountInputEl = document.getElementById("materialsSpoolAmountInput");
 const materialsSpoolAmountValidationEl = document.getElementById("materialsSpoolAmountValidation");
@@ -741,7 +751,12 @@ function getMaterialSpecById(materialId) {
 const DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY = Object.freeze({
   spool1: 800,
   spool2: 450,
+  // Wire drum is a bulk feedstock — holds far more than the small spools.
+  wiredrum: 15000,
 });
+// Feedstock keys that participate in material assignment / accounting / the print
+// gate. The wire drum is a first-class feedstock alongside the two spools.
+const MATERIAL_FEEDSTOCK_KEYS = Object.freeze(["spool1", "spool2", "wiredrum"]);
 const SPOOL_LOW_THRESHOLD_GRAMS = 500;
 const SPOOL_LOW_REQUIRED_MARGIN_RATIO = 1.2;
 const DEFAULT_PRINT_JOB_USAGE_GRAMS = 120;
@@ -1068,6 +1083,10 @@ let isTopbarFanEnabled = topbarFanToggleEl
   : true;
 
 let isAdvancedModeEnabled = false;
+// Advanced Mode is no longer a user-facing toggle: the role/mode system owns it
+// (Meltio Support & God Mode enable advanced controls). When role-driven, the
+// inactivity auto-lock is suppressed — the mode, not idle time, governs access.
+let advancedRoleDriven = false;
 let advancedModePinAttempts = 0;
 let advancedModeLockUntilMs = 0;
 let advancedModeLastActivityMs = performance.now();
@@ -1305,8 +1324,13 @@ function openNotificationDetailsModal(notificationId) {
 
   if (notificationDetailsAcknowledgeEl) {
     notificationDetailsAcknowledgeEl.disabled = !notification.canAcknowledge || notification.status === "resolved";
+    notificationDetailsAcknowledgeEl.title = "Mark as seen (keeps the issue in the list)";
   }
   if (notificationDetailsResolveEl) {
+    // Auto-resolving (signal-driven) notifications clear themselves — hide the
+    // manual Resolve so the operator isn't offered a no-op action.
+    notificationDetailsResolveEl.hidden = !notification.canResolveManually;
+    notificationDetailsResolveEl.title = "Mark as fixed (removes it once resolved)";
     const canResolve = notification.canResolveManually && !(notification.persistWhileSignalActive && notification.status !== "resolved");
     notificationDetailsResolveEl.disabled = !canResolve;
   }
@@ -1356,25 +1380,156 @@ function updateNotificationBellState() {
 
   const notifications = [...notificationsById.values()];
   const activeNotifications = notifications.filter((item) => item.status !== "resolved");
+  // "Needs attention" = unacknowledged AND unresolved. The badge reflects this so
+  // acknowledging (marking seen) clears the count even while the issue persists.
+  const unacknowledged = notifications.filter((item) => item.status === "active");
   const criticalCount = getNotificationSeverityCount(activeNotifications, "critical");
+  const warningCount = getNotificationSeverityCount(activeNotifications, "warning");
 
   topbarNotificationsToggleEl.classList.toggle("has-active-notifications", activeNotifications.length > 0);
   topbarNotificationsToggleEl.classList.toggle("has-critical-notifications", criticalCount > 0);
+  // Amber bell only when the top active severity is a warning (critical dominates).
+  topbarNotificationsToggleEl.classList.toggle("has-warning-notifications", criticalCount === 0 && warningCount > 0);
+
+  updateCriticalBanner(activeNotifications, criticalCount);
 
   if (!topbarNotificationBadgeEl) {
     return;
   }
 
-  if (!activeNotifications.length) {
+  if (!unacknowledged.length) {
     topbarNotificationBadgeEl.hidden = true;
     topbarNotificationBadgeEl.textContent = "";
+    topbarNotificationBadgeEl.classList.remove("badge-critical", "badge-warning");
     return;
   }
 
   topbarNotificationBadgeEl.hidden = false;
-  const showCount = activeNotifications.length <= NOTIFICATION_MAX_BADGE_COUNT;
+  const showCount = unacknowledged.length <= NOTIFICATION_MAX_BADGE_COUNT;
   topbarNotificationBadgeEl.classList.toggle("is-dot", !showCount);
-  topbarNotificationBadgeEl.textContent = showCount ? String(activeNotifications.length) : "";
+  topbarNotificationBadgeEl.textContent = showCount ? String(unacknowledged.length) : "";
+  // Colour the badge by the highest unacknowledged severity.
+  const hasCritU = unacknowledged.some((n) => n.severity === "critical");
+  const hasWarnU = unacknowledged.some((n) => n.severity === "warning");
+  topbarNotificationBadgeEl.classList.toggle("badge-critical", hasCritU);
+  topbarNotificationBadgeEl.classList.toggle("badge-warning", !hasCritU && hasWarnU);
+}
+
+// --- Critical banner + arrival toasts (UX pass) ----------------------------
+// A persistent top banner whenever any critical is active, and transient toasts
+// when new critical/warning notifications arrive (so an operator watching the
+// 3D scene can't miss them). Both read the same notificationsById state.
+function updateCriticalBanner(activeNotifications, criticalCount) {
+  const bannerEl = document.getElementById("criticalNotificationBanner");
+  if (!bannerEl) return;
+  const show = criticalCount > 0;
+  bannerEl.hidden = !show;
+  bannerEl.setAttribute("aria-hidden", show ? "false" : "true");
+  if (show) {
+    const textEl = document.getElementById("criticalNotificationBannerText");
+    if (textEl) {
+      const top = getNotificationListSorted(activeNotifications).find((n) => n.severity === "critical");
+      const extra = criticalCount > 1 ? ` (+${criticalCount - 1} more)` : "";
+      textEl.textContent = top ? `${top.title}${extra}` : `${criticalCount} critical fault(s) active`;
+    }
+  }
+}
+
+const notificationToastedIds = new Set();
+let notificationToastInitialized = false;
+
+// Toast any newly-active critical/warning notification once. On first run we seed
+// the "already seen" set so the initial batch on load doesn't all pop at once.
+function syncNotificationToasts() {
+  const layer = document.getElementById("notificationToastLayer");
+  if (!layer) return;
+  const active = [...notificationsById.values()].filter(
+    (n) => n.status === "active" && (n.severity === "critical" || n.severity === "warning"),
+  );
+  if (!notificationToastInitialized) {
+    active.forEach((n) => notificationToastedIds.add(n.id));
+    notificationToastInitialized = true;
+    return;
+  }
+  for (const n of active) {
+    if (notificationToastedIds.has(n.id)) continue;
+    notificationToastedIds.add(n.id);
+    showNotificationToast(n);
+  }
+}
+
+function showNotificationToast(notification) {
+  const layer = document.getElementById("notificationToastLayer");
+  if (!layer) return;
+  const isCritical = notification.severity === "critical";
+
+  const toast = document.createElement("div");
+  toast.className = `notification-toast severity-${notification.severity}`;
+  toast.setAttribute("role", isCritical ? "alert" : "status");
+
+  const dismiss = () => {
+    toast.classList.add("is-leaving");
+    window.setTimeout(() => toast.remove(), 220);
+  };
+
+  const icon = document.createElement("span");
+  icon.className = "notification-toast-icon";
+  icon.innerHTML = buildNotificationIconSvg(notification.icon);
+
+  const body = document.createElement("div");
+  body.className = "notification-toast-body";
+  const title = document.createElement("p");
+  title.className = "notification-toast-title";
+  title.textContent = notification.title;
+  const desc = document.createElement("p");
+  desc.className = "notification-toast-desc";
+  desc.textContent = notification.description;
+  body.append(title, desc);
+
+  const actions = document.createElement("div");
+  actions.className = "notification-toast-actions";
+  const viewBtn = document.createElement("button");
+  viewBtn.type = "button";
+  viewBtn.className = "notification-toast-view";
+  viewBtn.textContent = "View";
+  viewBtn.addEventListener("click", () => {
+    markUserActivity();
+    dismiss();
+    setNotificationCenterOpen(true);
+    openNotificationDetailsModal(notification.id);
+  });
+  actions.appendChild(viewBtn);
+  if (notification.canAcknowledge) {
+    const ackBtn = document.createElement("button");
+    ackBtn.type = "button";
+    ackBtn.className = "notification-toast-ack";
+    ackBtn.textContent = "Acknowledge";
+    ackBtn.addEventListener("click", () => {
+      markUserActivity();
+      acknowledgeNotification(notification.id);
+      dismiss();
+    });
+    actions.appendChild(ackBtn);
+  }
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "notification-toast-close";
+  closeBtn.setAttribute("aria-label", "Dismiss");
+  closeBtn.textContent = "✕";
+  closeBtn.addEventListener("click", dismiss);
+
+  toast.append(icon, body, actions, closeBtn);
+  layer.appendChild(toast);
+
+  // Cap the stack; drop the oldest.
+  while (layer.children.length > 3) {
+    layer.firstElementChild.remove();
+  }
+
+  // Warnings auto-dismiss; criticals stay until acted on.
+  if (!isCritical) {
+    window.setTimeout(dismiss, 7000);
+  }
 }
 
 function getNotificationSignalsSnapshot() {
@@ -1561,10 +1716,10 @@ function renderNotificationCard(notification) {
       <p class="notification-recommended-action"><strong>Action required:</strong> ${escapeHtml(notification.recommendedAction)}</p>
 
       <div class="notification-card-actions">
-        <button type="button" data-notification-action="acknowledge" data-notification-id="${escapeHtml(notification.id)}"${acknowledgeDisabled ? " disabled" : ""}>Acknowledge</button>
+        <button type="button" title="Mark as seen (keeps the issue in the list)" data-notification-action="acknowledge" data-notification-id="${escapeHtml(notification.id)}"${acknowledgeDisabled ? " disabled" : ""}>Acknowledge</button>
         <button type="button" data-notification-action="goto" data-notification-id="${escapeHtml(notification.id)}">Go to issue</button>
         <button type="button" data-notification-action="details" data-notification-id="${escapeHtml(notification.id)}">View details</button>
-        <button type="button" data-notification-action="resolve" data-notification-id="${escapeHtml(notification.id)}"${resolveDisabled ? " disabled" : ""}>Resolve</button>
+        ${notification.canResolveManually ? `<button type="button" title="Mark as fixed (removes it once resolved)" data-notification-action="resolve" data-notification-id="${escapeHtml(notification.id)}"${resolveDisabled ? " disabled" : ""}>Resolve</button>` : ""}
       </div>
     </article>
   `;
@@ -1590,7 +1745,27 @@ function renderNotificationCenter() {
     notificationEmptyStateEl.hidden = filteredNotifications.length !== 0;
   }
 
+  updateNotificationFilterCounts(activeNotifications);
   updateNotificationBellState();
+  syncNotificationToasts();
+}
+
+// Show a per-severity count on each filter chip (All / Critical / Warning / Info)
+// so the operator sees the mix at a glance without opening each filter.
+function updateNotificationFilterCounts(activeNotifications) {
+  const counts = {
+    all: activeNotifications.length,
+    critical: getNotificationSeverityCount(activeNotifications, "critical"),
+    warning: getNotificationSeverityCount(activeNotifications, "warning"),
+    info: getNotificationSeverityCount(activeNotifications, "info"),
+  };
+  const labels = { all: "All", critical: "Critical", warning: "Warning", info: "Info" };
+  for (const buttonEl of getNotificationFilterButtons()) {
+    const key = buttonEl.dataset.filter;
+    const base = labels[key] || buttonEl.textContent;
+    const n = counts[key] ?? 0;
+    buttonEl.innerHTML = `${base}<span class="notification-chip-count">${n}</span>`;
+  }
 }
 
 function acknowledgeNotification(notificationId) {
@@ -1748,24 +1923,29 @@ const spoolHighlightRingQuaternion = new THREE.Quaternion();
 const hotspotMaterialAssignments = {
   spool1: null,
   spool2: null,
+  wiredrum: null,
 };
 const spoolManualAmountGramsByKey = {
   spool1: DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY.spool1,
   spool2: DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY.spool2,
+  wiredrum: DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY.wiredrum,
 };
 const spoolUsedAmountGramsByKey = {
   spool1: 0,
   spool2: 0,
+  wiredrum: 0,
 };
 const spoolRemainingAmountGramsByKey = {
   spool1: DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY.spool1,
   spool2: DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY.spool2,
+  wiredrum: DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY.wiredrum,
 };
 let selectedPrintJobEstimatedGrams = DEFAULT_PRINT_JOB_USAGE_GRAMS;
 let selectedPrintJobActualGrams = null;
 let lastPrintUsedGramsBySpool = {
   spool1: 0,
   spool2: 0,
+  wiredrum: 0,
 };
 // Per-print material-usage history (newest first): { ts, spoolKey, materialId,
 // grams, kind: "print" | "stopped" }. Persisted with the materials state; shown
@@ -1776,6 +1956,7 @@ let printSimulationConsumptionPending = false;
 const hotspotMaterialActionLoadingBySpool = {
   spool1: false,
   spool2: false,
+  wiredrum: false,
 };
 const feederWheelEnabled = {
   central: true,
@@ -2785,7 +2966,8 @@ function tryUnlockAdvancedMode() {
 }
 
 function updateAdvancedModeIdleTimeout(nowMs = performance.now()) {
-  if (!isAdvancedModeEnabled) {
+  // Role-driven advanced access never times out — the active mode governs it.
+  if (!isAdvancedModeEnabled || advancedRoleDriven) {
     if (isAdvancedModeTimeoutWarningOpen) {
       setAdvancedTimeoutWarningOpen(false);
     }
@@ -4076,6 +4258,12 @@ function updateFilesSelectedSpoolFeederButtons() {
   setToggleButtonState(filesFeederDriveUpEl, selectedSideDriving && feederDriveVertical === "up", !hasSelectedSideWheel);
   setToggleButtonState(filesFeederDriveStopEl, !selectedSideDriving, !hasSelectedSideWheel);
   setToggleButtonState(filesFeederDriveDownEl, selectedSideDriving && feederDriveVertical === "down", !hasSelectedSideWheel);
+
+  // Feeder-wheel toggle mirrors the active feeder side (left = Spool 1 = left +
+  // central wheels; right = Spool 2 = right + central). Disabled if that wheel
+  // is absent from the model.
+  setToggleButtonState(filesFeederWheelLeftEl, selectedSide === "left", !leftFeederWheelState);
+  setToggleButtonState(filesFeederWheelRightEl, selectedSide === "right", !rightFeederWheelState);
 }
 
 function runFilesSelectedSpoolFeederCommand(command) {
@@ -4154,12 +4342,13 @@ function getMaterialLabelById(materialId) {
 }
 
 function normalizeSpoolKey(spoolKey) {
-  return spoolKey === "spool1" || spoolKey === "spool2"
-    ? spoolKey
-    : null;
+  return MATERIAL_FEEDSTOCK_KEYS.includes(spoolKey) ? spoolKey : null;
 }
 
 function getSpoolDisplayLabel(spoolKey) {
+  if (spoolKey === "wiredrum") {
+    return "Wire Drum";
+  }
   return spoolKey === "spool2" ? "Spool 2" : "Spool 1";
 }
 
@@ -4237,22 +4426,27 @@ function buildPersistedMaterialsState() {
     materialAssignments: {
       spool1: hotspotMaterialAssignments.spool1 || null,
       spool2: hotspotMaterialAssignments.spool2 || null,
+      wiredrum: hotspotMaterialAssignments.wiredrum || null,
     },
     manualAmounts: {
       spool1: normalizeStoredGrams(spoolManualAmountGramsByKey.spool1, DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY.spool1),
       spool2: normalizeStoredGrams(spoolManualAmountGramsByKey.spool2, DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY.spool2),
+      wiredrum: normalizeStoredGrams(spoolManualAmountGramsByKey.wiredrum, DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY.wiredrum),
     },
     usedAmounts: {
       spool1: normalizeStoredGrams(spoolUsedAmountGramsByKey.spool1, 0),
       spool2: normalizeStoredGrams(spoolUsedAmountGramsByKey.spool2, 0),
+      wiredrum: normalizeStoredGrams(spoolUsedAmountGramsByKey.wiredrum, 0),
     },
     remainingAmounts: {
       spool1: normalizeStoredGrams(spoolRemainingAmountGramsByKey.spool1, 0),
       spool2: normalizeStoredGrams(spoolRemainingAmountGramsByKey.spool2, 0),
+      wiredrum: normalizeStoredGrams(spoolRemainingAmountGramsByKey.wiredrum, 0),
     },
     lastPrintUsedBySpool: {
       spool1: normalizeStoredGrams(lastPrintUsedGramsBySpool.spool1, 0),
       spool2: normalizeStoredGrams(lastPrintUsedGramsBySpool.spool2, 0),
+      wiredrum: normalizeStoredGrams(lastPrintUsedGramsBySpool.wiredrum, 0),
     },
     usageLog: materialUsageLog.slice(0, MATERIAL_USAGE_LOG_MAX),
   };
@@ -4297,7 +4491,7 @@ function restorePersistedMaterialsState() {
     return false;
   }
 
-  for (const spoolKey of ["spool1", "spool2"]) {
+  for (const spoolKey of MATERIAL_FEEDSTOCK_KEYS) {
     const assignmentCandidate = parsed.materialAssignments?.[spoolKey];
     hotspotMaterialAssignments[spoolKey] = isKnownMaterialId(assignmentCandidate) ? assignmentCandidate : null;
 
@@ -4449,6 +4643,7 @@ function updateSpoolSelectionCards() {
   setSpoolCardState(filesSpoolCard2El, "spool2", focusedSpoolKey === "spool2");
   setSpoolCardState(materialsSpoolCard1El, "spool1", focusedSpoolKey === "spool1");
   setSpoolCardState(materialsSpoolCard2El, "spool2", focusedSpoolKey === "spool2");
+  setSpoolCardState(materialsSpoolCardWireDrumEl, "wiredrum", focusedSpoolKey === "wiredrum");
 
   if (hotspotSpool1MaterialEl) {
     hotspotSpool1MaterialEl.textContent = getMaterialLabelById(hotspotMaterialAssignments.spool1);
@@ -4467,6 +4662,9 @@ function updateSpoolSelectionCards() {
   }
   if (materialsSpool2MaterialEl) {
     materialsSpool2MaterialEl.textContent = getMaterialLabelById(hotspotMaterialAssignments.spool2);
+  }
+  if (materialsWireDrumMaterialEl) {
+    materialsWireDrumMaterialEl.textContent = getMaterialLabelById(hotspotMaterialAssignments.wiredrum);
   }
 
   if (hotspotSpool1AmountEl) {
@@ -4505,6 +4703,15 @@ function updateSpoolSelectionCards() {
   if (materialsSpool2AmountEl) {
     materialsSpool2AmountEl.textContent = getSpoolRemainingAmountText("spool2");
   }
+  if (materialsWireDrumInitialAmountEl) {
+    materialsWireDrumInitialAmountEl.textContent = getSpoolInitialAmountText("wiredrum");
+  }
+  if (materialsWireDrumUsedAmountEl) {
+    materialsWireDrumUsedAmountEl.textContent = getSpoolUsedAmountText("wiredrum");
+  }
+  if (materialsWireDrumAmountEl) {
+    materialsWireDrumAmountEl.textContent = getSpoolRemainingAmountText("wiredrum");
+  }
   if (filesSpool1AmountEl) {
     filesSpool1AmountEl.textContent = getSpoolRemainingAmountText("spool1");
   }
@@ -4518,6 +4725,7 @@ function updateSpoolSelectionCards() {
   setSpoolStatusElement(filesSpool2StatusEl, "spool2");
   setSpoolStatusElement(materialsSpool1StatusEl, "spool1");
   setSpoolStatusElement(materialsSpool2StatusEl, "spool2");
+  setSpoolStatusElement(materialsWireDrumStatusEl, "wiredrum");
 
   updateMaterialInfoPanel();
 }
@@ -4581,6 +4789,8 @@ function setHotspotMaterialsFocusSpool(spoolKey) {
       hotspotContextTitleEl.textContent = "Spool 1";
     } else if (hotspotMaterialsFocusSpoolKey === "spool2") {
       hotspotContextTitleEl.textContent = "Spool 2";
+    } else if (hotspotMaterialsFocusSpoolKey === "wiredrum") {
+      hotspotContextTitleEl.textContent = "Wire Drum";
     } else {
       hotspotContextTitleEl.textContent = "Materials";
     }
@@ -4769,7 +4979,7 @@ function validatePrintMaterial() {
   }
 
   const altSpoolKey =
-    ["spool1", "spool2"].find((key) => key !== activeSpoolKey && canPrintFrom(key)) || null;
+    MATERIAL_FEEDSTOCK_KEYS.find((key) => key !== activeSpoolKey && canPrintFrom(key)) || null;
   return {
     ok: false,
     reason: hotspotMaterialAssignments[activeSpoolKey] ? "insufficient" : "unassigned",
@@ -4823,7 +5033,9 @@ function updateMaterialsReturnToSlicerButton() {
 function openMaterialsForBlockedPrint() {
   if (isSlicerFullscreen) {
     materialsReturnSlicerFile = selectedCloudLibraryFileName || null;
-    setSlicerFullscreen(false);
+    // Keep the sliced iframe alive so "Return to slicer" restores the exact
+    // print-ready view without re-slicing (see setSlicerFullscreen preserveIframe).
+    setSlicerFullscreen(false, { preserveIframe: true });
   }
   if (typeof setMaterialsMenuOpen === "function") {
     setMaterialsMenuOpen(true);
@@ -4841,7 +5053,15 @@ function returnToSlicerFromMaterials() {
   if (file) {
     setSelectedCloudLibraryFile(file, { updateSelect: true, syncDataset: true });
     setSlicerFullscreen(true);
-    loadSlicerIframeForFile(file);
+    // The iframe was preserved across the Materials detour, so the part is still
+    // sliced and print-ready — do NOT reload it (that re-slices from scratch and
+    // clears the row's "ready" status). Only reload as a fallback if the frame
+    // was somehow blanked (defensive: e.g. an intervening default close).
+    const src = slicerFrameEl ? String(slicerFrameEl.src || "") : "";
+    const framePreserved = src && !src.endsWith("about:blank");
+    if (!framePreserved) {
+      loadSlicerIframeForFile(file);
+    }
   }
   updateBottomNavState();
 }
@@ -5408,46 +5628,20 @@ function setFeederCameraPreviewContent(contentElement) {
   updateFeederDriveDirectionIndicator();
 }
 
+// The animated up/down arrow overlay on the feeder-camera preview was removed —
+// feeder direction is conveyed by the spinning wheels alone. These are kept as
+// no-ops (still called from the feeder-state updates) and strip any stale
+// indicator element left in the DOM.
 function ensureFeederDriveDirectionIndicator() {
-  if (!hotspotFeederCameraViewportEl) {
-    return null;
-  }
-
-  let indicatorEl = hotspotFeederCameraViewportEl.querySelector(".feeder-drive-direction-indicator");
-  if (indicatorEl) {
-    return indicatorEl;
-  }
-
-  indicatorEl = document.createElement("div");
-  indicatorEl.className = "feeder-drive-direction-indicator";
-  indicatorEl.hidden = true;
-  indicatorEl.setAttribute("aria-hidden", "true");
-
-  const arrowEl = document.createElement("span");
-  arrowEl.className = "feeder-drive-arrow";
-
-  indicatorEl.appendChild(arrowEl);
-  hotspotFeederCameraViewportEl.appendChild(indicatorEl);
-  return indicatorEl;
+  return null;
 }
 
 function updateFeederDriveDirectionIndicator() {
-  const indicatorEl = ensureFeederDriveDirectionIndicator();
-  if (!indicatorEl) {
-    return;
+  const indicatorEl = hotspotFeederCameraViewportEl
+    && hotspotFeederCameraViewportEl.querySelector(".feeder-drive-direction-indicator");
+  if (indicatorEl) {
+    indicatorEl.remove();
   }
-
-  const focusedSpoolKey = normalizeSpoolKey(hotspotMaterialsFocusSpoolKey) || "spool1";
-  const focusedFeederSide = getFeederSideForSpoolKey(focusedSpoolKey);
-  const hasDirection = feederDriveVertical === "up" || feederDriveVertical === "down";
-  const shouldShow = activeHotspotPanelId === HOTSPOT_PANEL_MATERIALS_ID
-    && feederDriveSide === focusedFeederSide
-    && hasDirection;
-
-  indicatorEl.hidden = !shouldShow;
-  indicatorEl.setAttribute("aria-hidden", shouldShow ? "false" : "true");
-  indicatorEl.classList.toggle("is-up", shouldShow && feederDriveVertical === "up");
-  indicatorEl.classList.toggle("is-down", shouldShow && feederDriveVertical === "down");
 }
 
 function setHotspotTriggerRailVisible(isVisible) {
@@ -5636,6 +5830,14 @@ function commitMaterialsMenuSelection() {
   updateCloudPrintSimulationControls();
   setSpoolAssemblyHighlight(focusedSpoolKey);
   persistMaterialsState();
+
+  // Confirming a material for the wire drum "connects" it: reveal the drum
+  // assembly (same animation as the Appearance button / feedstock toggle). This
+  // is only the visual + the feedstock is now usable for prints via the shared
+  // material gate/consumption; it does not otherwise alter the print cycle.
+  if (focusedSpoolKey === "wiredrum") {
+    setWireDrumConnected(true);
+  }
   return true;
 }
 
@@ -5687,6 +5889,10 @@ function applyWireDrumAppearance() {
     setMaterialOpacity(material, easedProgress);
   }
 
+  // Keep the Materials-menu "Connect wire drum" toggle in sync (it drives the
+  // same reveal). Done before the early returns below so it always updates.
+  updateMaterialsWireDrumToggle(clampedProgress);
+
   if (!wireDrumAppearButtonEl) {
     return;
   }
@@ -5720,6 +5926,37 @@ function applyWireDrumAppearance() {
 
   wireDrumAppearButtonEl.textContent = "Wire Drum";
   wireDrumAppearButtonEl.setAttribute("aria-pressed", "false");
+}
+
+// Reflect the wire-drum reveal state on the Materials-menu toggle. Disabled until
+// the drum meshes exist (URDF loaded). Shows a transient "Connecting…/…" label
+// while the reveal animates, mirroring the Appearance button but framed as a
+// feedstock connection. Cosmetic only — never gates or affects a print.
+function updateMaterialsWireDrumToggle(clampedProgress) {
+  if (!materialsWireDrumToggleEl) {
+    return;
+  }
+  const progress =
+    typeof clampedProgress === "number" ? clampedProgress : clamp(wireDrumRevealProgress, 0, 1);
+  const hasWireDrum = wireDrumMaterials.length > 0;
+  materialsWireDrumToggleEl.disabled = !hasWireDrum;
+
+  let label = "Connect";
+  let pressed = false;
+  if (!hasWireDrum) {
+    // keep defaults
+  } else if (wireDrumRevealTarget > progress + 1e-6) {
+    label = "Connecting…";
+    pressed = true;
+  } else if (wireDrumRevealTarget < progress - 1e-6) {
+    label = "Disconnecting…";
+    pressed = false;
+  } else if (progress >= 0.999) {
+    label = "Connected — tap to disconnect";
+    pressed = true;
+  }
+  materialsWireDrumToggleEl.textContent = label;
+  materialsWireDrumToggleEl.setAttribute("aria-pressed", pressed ? "true" : "false");
 }
 
 function registerWireDrumMaterials(object3d) {
@@ -6089,11 +6326,23 @@ function handleSpoolAssemblyCanvasClick(event) {
   return true;
 }
 
-function triggerWireDrumAppearance() {
-  const isCurrentlyShown = wireDrumRevealProgress > 0.5 || wireDrumRevealTarget > 0.5;
-  wireDrumRevealTarget = isCurrentlyShown ? 0 : 1;
+function isWireDrumConnected() {
+  return wireDrumRevealProgress > 0.5 || wireDrumRevealTarget > 0.5;
+}
+
+// Show ("connect") or hide the wire drum assembly. Purely cosmetic: it drives the
+// reveal animation + the wire-spool door only, and touches no material accounting
+// or print state, so it is safe to call at any time (including mid-print). Both
+// the Appearance "Wire Drum" button and the Materials "Connect wire drum" toggle
+// route through here so their states stay in sync.
+function setWireDrumConnected(connected) {
+  wireDrumRevealTarget = connected ? 1 : 0;
   markUserActivity();
   applyWireDrumAppearance();
+}
+
+function triggerWireDrumAppearance() {
+  setWireDrumConnected(!isWireDrumConnected());
 }
 
 function animateWireDrumAppearance(deltaSeconds) {
@@ -7271,6 +7520,19 @@ function setMaterialsMenuOpen(isOpen, options = {}) {
     stopMaterialsMenuPopupDrag();
     setMaterialsMenuAmountValidationMessage("");
     setMaterialsMenuConfirmMessage("");
+    // If a blocked print preserved the slicer iframe for "Return to slicer" but
+    // the operator dismissed Materials instead of returning, stop the parked
+    // iframe so it isn't left polling in the background. (returnToSlicerFromMaterials
+    // clears materialsReturnSlicerFile before closing, so this skips that path.)
+    if (
+      materialsReturnSlicerFile
+      && !isSlicerFullscreen
+      && slicerFrameEl
+      && !String(slicerFrameEl.src || "").endsWith("about:blank")
+    ) {
+      slicerFrameEl.src = "about:blank";
+      slicerFrameEl.hidden = true;
+    }
     // Dismissing Materials drops any pending "return to slicer" context.
     materialsReturnSlicerFile = null;
     if (numericKeypadInputEl && materialsMenuPopupEl && materialsMenuPopupEl.contains(numericKeypadInputEl)) {
@@ -7444,10 +7706,48 @@ window.addEventListener("message", (event) => {
     // Real deposition movement speed (mm/s) for true-1x print playback.
     speedMmPerSec: Number.isFinite(data.speedMmPerSec) ? data.speedMmPerSec : null,
   };
-  // A newer slice than whatever printSim last prepared — don't reuse the old one.
-  if (bridgedSliceData.toolpath && Array.isArray(bridgedSliceData.toolpath.moves)
-      && bridgedSliceData.toolpath.moves.length > 0) {
+  const hasMoves = Boolean(
+    bridgedSliceData.toolpath
+    && Array.isArray(bridgedSliceData.toolpath.moves)
+    && bridgedSliceData.toolpath.moves.length > 0,
+  );
+  if (hasMoves) {
+    // A newer slice than whatever printSim last prepared — don't reuse the old one.
     bridgedToolpathFresh = true;
+    // The part now has a real toolpath — mark its Files row print-ready so the
+    // per-row "Start print" (with placement preview) appears without needing to
+    // return to the full slicer. There is only ONE bridged slice at a time, so
+    // clear any other row's stale "ready" first — otherwise an older row's Start
+    // print would run this newer part's toolpath.
+    if (selectedCloudLibraryFileName) {
+      for (const [name, status] of Array.from(cloudFileSliceStatusByName.entries())) {
+        if (status === "ready" && name !== selectedCloudLibraryFileName) {
+          setCloudFileRowSliceStatus(name, "");
+        }
+      }
+      setCloudFileRowSliceStatus(selectedCloudLibraryFileName, "ready");
+    }
+    // Reflect the slicer's exact orientation + placement in the main model:
+    // prepare from this fresh slice and show the placed slicer solid as the
+    // preview (the cloud STL keeps its loaded orientation, so we swap to the
+    // slicer geometry, which carries the reorientation the operator applied).
+    if (!isDockedPrintActive && !filesListCollapsedForPrint && printSim && !printSimAutoRunInProgress) {
+      printSimAutoRunInProgress = true;
+      Promise.resolve(printSim.prepare())
+        .then(() => updateSlicerModelPreview())
+        .catch(() => {})
+        .finally(() => { printSimAutoRunInProgress = false; });
+    }
+  } else {
+    // Mesh-only update (e.g. a reorient/move in the slicer): the toolpath is now
+    // stale, so the part is no longer print-ready. Clear its "Start print" and
+    // drop back to the cloud STL until the operator re-slices.
+    if (selectedCloudLibraryFileName) {
+      setCloudFileRowSliceStatus(selectedCloudLibraryFileName, "");
+    }
+    if (!isDockedPrintActive && !filesListCollapsedForPrint) {
+      updateSlicerModelPreview();
+    }
   }
   // Live-match the preview to where the operator just placed the part on the
   // slicer plate (only while a preview is shown, not during a docked print —
@@ -7459,6 +7759,26 @@ window.addEventListener("message", (event) => {
     }
   }
 });
+
+// Reflect the sliced part's exact orientation/placement in the "main model": when
+// a real toolpath is prepared and no print is running, show the placed slicer
+// solid (which carries the slicer's orientation) and hide the cloud STL; else
+// show the cloud STL. During a docked print, applyPrintModelSubstitution owns the
+// STL hide/show, so this no-ops then.
+function updateSlicerModelPreview() {
+  if (!printSim || typeof printSim.setSolidPreview !== "function") {
+    return;
+  }
+  if (isDockedPrintActive || filesListCollapsedForPrint) {
+    return;
+  }
+  const showSlicerSolid =
+    typeof printSim.getSource === "function" && printSim.getSource() === "toolpath"
+    && typeof printSim.hasStlView === "function" && printSim.hasStlView();
+  printSim.setSolidPreview(showSlicerSolid);
+  printHideStl = showSlicerSolid;
+  applyCloudStlDisplayState();
+}
 
 function hasBridgedToolpath() {
   return Boolean(
@@ -7495,7 +7815,15 @@ function updateSlicerChosenFileLabel() {
   slicerChosenFileEl.textContent = name ? `File: ${name}` : "No file selected";
 }
 
-function setSlicerFullscreen(open) {
+function setSlicerFullscreen(open, options = {}) {
+  // preserveIframe: leave the (already-loaded, possibly-sliced) slicer iframe
+  // intact instead of blanking it. Used for the material-block detour to
+  // Materials so "Return to slicer" restores the same sliced, print-ready view
+  // WITHOUT a reload — a reload re-slices from scratch and the fresh slicer
+  // emits a mesh-only update that clears the row's "ready" status (the reported
+  // "lost slice" bug). The .slicer-fullscreen class removal hides the iframe via
+  // CSS while Materials is open, so the preserved frame simply stays parked.
+  const { preserveIframe = false } = options;
   isSlicerFullscreen = Boolean(open);
   document.body.classList.toggle("slicer-fullscreen", isSlicerFullscreen);
   if (isSlicerFullscreen) {
@@ -7514,12 +7842,20 @@ function setSlicerFullscreen(open) {
       slicerEmbedWrapEl.hidden = false;
     }
   } else if (slicerFrameEl) {
-    // Leaving full view: stop the slicer iframe so it isn't polling in the
-    // background, and hide its area.
-    slicerFrameEl.src = "about:blank";
-    slicerFrameEl.hidden = true;
-    if (slicerEmbedWrapEl) {
-      slicerEmbedWrapEl.hidden = true;
+    if (preserveIframe) {
+      // Keep the loaded slicer alive and its wrap visible; the CSS-hidden
+      // embed section keeps it off-screen until we reopen full view.
+      if (slicerEmbedWrapEl) {
+        slicerEmbedWrapEl.hidden = false;
+      }
+    } else {
+      // Leaving full view: stop the slicer iframe so it isn't polling in the
+      // background, and hide its area.
+      slicerFrameEl.src = "about:blank";
+      slicerFrameEl.hidden = true;
+      if (slicerEmbedWrapEl) {
+        slicerEmbedWrapEl.hidden = true;
+      }
     }
   }
 }
@@ -7751,6 +8087,101 @@ let isDockedPrintActive = false;
 const _printCurrentPoint = new THREE.Vector3();
 const _printPinDelta = new THREE.Vector3();
 
+// --- Print-view camera reset ------------------------------------------------
+// During a docked print the camera is framed on the printing area. If the
+// operator orbits/zooms/pans away, a floating "Reset view" button appears; that
+// button, OR 50s of no camera interaction, glides the camera back to the print
+// framing captured when the print began. Nothing here runs unless a print is
+// active AND a print-view snapshot exists (so the homing window is excluded).
+const PRINT_VIEW_RESET_DELAY_MS = 50000;
+let printViewCameraState = null;
+let printViewResetTimerId = null;
+
+function clearPrintViewResetTimer() {
+  if (printViewResetTimerId !== null) {
+    window.clearTimeout(printViewResetTimerId);
+    printViewResetTimerId = null;
+  }
+}
+
+function showPrintResetViewButton() {
+  if (printResetViewButtonEl) {
+    printResetViewButtonEl.hidden = false;
+    printResetViewButtonEl.setAttribute("aria-hidden", "false");
+  }
+}
+
+function hidePrintResetViewButton() {
+  if (printResetViewButtonEl) {
+    printResetViewButtonEl.hidden = true;
+    printResetViewButtonEl.setAttribute("aria-hidden", "true");
+  }
+}
+
+function schedulePrintViewAutoReset() {
+  clearPrintViewResetTimer();
+  printViewResetTimerId = window.setTimeout(() => {
+    printViewResetTimerId = null;
+    performPrintViewReset();
+  }, PRINT_VIEW_RESET_DELAY_MS);
+}
+
+// Glide back to the captured print framing and dismiss the button/timer.
+function performPrintViewReset() {
+  clearPrintViewResetTimer();
+  hidePrintResetViewButton();
+  if (printViewCameraState) {
+    beginCameraTransition(printViewCameraState, RESET_VIEW_TRANSITION_MS, { distanceLock: null });
+  }
+}
+
+// Called when the print begins playing: remember the framing to return to.
+function capturePrintViewCameraState() {
+  printViewCameraState = captureCameraState();
+  clearPrintViewResetTimer();
+  hidePrintResetViewButton();
+}
+
+// Print ended (stop / complete / part cleared): drop the button, timer, snapshot.
+function teardownPrintViewReset() {
+  clearPrintViewResetTimer();
+  hidePrintResetViewButton();
+  printViewCameraState = null;
+}
+
+// User camera interaction (drag/zoom/pan) is bracketed by OrbitControls
+// "start"/"end" events (the vendored build dispatches both on wheel too). Our
+// own programmatic moves go through beginCameraTransition, which never fires
+// these — so these only trigger on genuine user input. Pause the auto-reset
+// while interacting; on release, show the button + arm the 50s idle timer only
+// if the camera actually moved off the print framing.
+controls.addEventListener("start", () => {
+  if (!isDockedPrintActive || !printViewCameraState) {
+    return;
+  }
+  clearPrintViewResetTimer();
+});
+
+controls.addEventListener("end", () => {
+  if (!isDockedPrintActive || !printViewCameraState) {
+    return;
+  }
+  if (isCameraCloseToState(printViewCameraState)) {
+    hidePrintResetViewButton();
+    clearPrintViewResetTimer();
+  } else {
+    showPrintResetViewButton();
+    schedulePrintViewAutoReset();
+  }
+});
+
+if (printResetViewButtonEl) {
+  printResetViewButtonEl.addEventListener("click", () => {
+    markUserActivity();
+    performPrintViewReset();
+  });
+}
+
 // World translation that brings the CURRENT deposition point to a standoff below
 // the nozzle tip. Projected onto the part-carrying joints, this carries each
 // freshly-deposited point under the fixed nozzle — so the nozzle appears to lay
@@ -7886,28 +8317,28 @@ function runPrePrintHomingSequence(onComplete) {
   runNext();
 }
 
-// TEMP diagnostic (remove once the clip-mode hand-off is fixed): a fixed top
-// banner that surfaces, at Start-print, whether the print got a REAL toolpath
-// (bead tracing) or fell back to clip mode (vertical-only, no bead under nozzle),
-// and where the toolpath came from. Green = tracing, red = clip.
-function showPrintDiagToast(message, ok) {
+// A brief top banner for print-flow feedback (e.g. "slice the part first").
+// Transient + non-blocking; auto-hides. Used when a docked print can't start
+// because there is no real toolpath yet, so the operator gets a clear reason
+// instead of the print silently doing the wrong thing (or nothing).
+function showPrintNotice(message) {
   try {
-    let el = document.getElementById("printDiagToast");
+    let el = document.getElementById("printNotice");
     if (!el) {
       el = document.createElement("div");
-      el.id = "printDiagToast";
+      el.id = "printNotice";
       el.style.cssText =
         "position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:9999;"
         + "max-width:calc(100vw - 24px);padding:12px 18px;border-radius:10px;"
         + "font:600 14px system-ui,sans-serif;text-align:center;white-space:pre-wrap;"
-        + "box-shadow:0 10px 26px rgba(0,0,0,.45);pointer-events:none;color:#fff;";
+        + "box-shadow:0 10px 26px rgba(0,0,0,.45);pointer-events:none;color:#fff;"
+        + "background:#d9534f;";
       document.body.appendChild(el);
     }
     el.textContent = message;
-    el.style.background = ok ? "#1f7a3d" : "#d9534f";
     el.style.display = "block";
-    window.clearTimeout(showPrintDiagToast._t);
-    showPrintDiagToast._t = window.setTimeout(() => { el.style.display = "none"; }, 12000);
+    window.clearTimeout(showPrintNotice._t);
+    showPrintNotice._t = window.setTimeout(() => { el.style.display = "none"; }, 6000);
   } catch (e) { /* best-effort */ }
 }
 
@@ -7924,47 +8355,63 @@ async function startDockedPrint() {
   isDockedPrintActive = true;
   printCompletionHandled = false; // re-arm the post-print completion flow
   try {
-    // Selecting/loading a file already kicks off a background "warm" slice
-    // (autoPreparePrintSimulationForSelection). Firing another prepare() here
-    // would run a SECOND slice concurrently with it; on the single-worker slicer
-    // backend the two contend on the shared (cookie-less) session, time out, and
-    // the print silently falls back to the clip-plane reveal — which only lowers
-    // the vertical joint (no toolpath, so eje_x/eje_y don't trace the bead and no
-    // line sits under the nozzle). So: wait for any in-flight warm slice, then
-    // REUSE its prepared toolpath if it's ready; only slice ourselves if it isn't.
-    while (printSimAutoRunInProgress) {
-      await new Promise((resolve) => window.setTimeout(resolve, 150));
-    }
+    // A docked print MUST bead-trace a real toolpath. Decide where that toolpath
+    // comes from WITHOUT blocking on the slow single-worker slicer backend
+    // (waiting on it used to hang Start-print for minutes with no feedback) and
+    // WITHOUT ever silently starting the clip-plane reveal fallback (which only
+    // lowers the vertical joint — no eje_x/eje_y trace, no bead under the nozzle;
+    // that's the "prints only up/down" bug). Selecting a file kicks off a
+    // background "warm" slice (autoPreparePrintSimulationForSelection); its result
+    // (or a freshly bridged slice) is what we consume here.
     const warmState = printSim.getState();
     const warmSource = typeof printSim.getSource === "function" ? printSim.getSource() : null;
-    // Reuse the warm slice UNLESS the embedded slicer just pushed a newer one
-    // (reorient/re-slice) — then re-prepare so the fresh bridged toolpath wins.
-    let ready =
-      Boolean(warmSource)
-      && (warmState === "ready" || warmState === "completed" || warmState === "paused")
-      && !bridgedToolpathFresh;
-    if (!ready) {
+    const warmToolpathReady =
+      warmSource === "toolpath"
+      && (warmState === "ready" || warmState === "completed" || warmState === "paused");
+
+    let ready;
+    if (bridgedToolpathFresh) {
+      // Normal Slice+Simulate flow. Let any in-flight warm auto-prepare settle
+      // first so it can't stomp the source mid-print, then prepare() — which
+      // consumes the freshly bridged toolpath. (Normally already settled, so this
+      // wait is instant; it is bounded by the backend slice timeout.)
+      while (printSimAutoRunInProgress) {
+        await new Promise((resolve) => window.setTimeout(resolve, 150));
+      }
       ready = await printSim.prepare();
-    }
-    bridgedToolpathFresh = false; // consumed (reused or freshly prepared)
-    if (!ready) {
-      // prepare() already surfaced the reason (e.g. "select a model first").
+    } else if (warmToolpathReady) {
+      // A background warm slice already produced a real toolpath — reuse it.
+      ready = true;
+    } else {
+      // Nothing to bead-trace: not sliced, or the background slice is still
+      // running / fell back to a clip reveal. Don't block on the backend and
+      // don't clip — tell the operator, and abort cleanly.
+      showPrintNotice(
+        printSimAutoRunInProgress
+          ? "Still slicing — wait for the slice to finish, then press Start print."
+          : "No sliced toolpath to print — slice the part first, then press Start print.",
+      );
+      if (typeof printSim.stop === "function") {
+        printSim.stop(); // drop any warm clip source that was set up
+      }
       isDockedPrintActive = false;
       return;
     }
-    // TEMP diagnostic: report whether this print will bead-trace a real toolpath
-    // or fall to clip mode (only up/down). See showPrintDiagToast.
-    try {
-      const finalSource = typeof printSim.getSource === "function" ? printSim.getSource() : "?";
-      const tracing = finalSource === "toolpath";
-      const diag = tracing
-        ? "PRINT: real toolpath — bead tracing "
-          + `(bridged=${hasBridgedToolpath()}, warm=${warmSource || "none"}/${warmState})`
-        : `PRINT: NO TOOLPATH -> clip mode (only up/down, no bead).\n`
-          + `bridged=${hasBridgedToolpath()}  warmSource=${warmSource || "none"}  warmState=${warmState}  source=${finalSource}`;
-      console.log("[print-diag] " + diag.replace(/\n/g, " "));
-      showPrintDiagToast(diag, tracing);
-    } catch (e) { /* best-effort */ }
+    bridgedToolpathFresh = false; // consumed (reused or freshly prepared)
+    // Final guard: prepare() can still fall back to the clip reveal (e.g. the
+    // bridged slice turned out empty), so refuse to start unless we truly have a
+    // toolpath source.
+    const finalSource = typeof printSim.getSource === "function" ? printSim.getSource() : null;
+    if (!ready || finalSource !== "toolpath") {
+      showPrintNotice("No sliced toolpath to print — slice the part first, then press Start print.");
+      if (typeof printSim.stop === "function") {
+        printSim.stop(); // drop any clip source prepare() just set up
+      }
+      isDockedPrintActive = false;
+      return;
+    }
+    // If this print draws from the wire drum, reveal the drum assembly (animated).
+    revealWireDrumIfActiveFeedstock();
     applyPrintModelSubstitution(); // show the sliced model, hide the STL
     printSim.reset();              // begin empty, at progress 0
     setSlicerFullscreen(false);    // leave full view for the 3D scene
@@ -7978,6 +8425,7 @@ async function startDockedPrint() {
     runPrePrintHomingSequence(() => {
       initPrintBedSimulation();    // capture nozzle tip + model height, save bed
       printSim.play();             // start printing (bed traces the toolpath)
+      capturePrintViewCameraState(); // remember this framing for "Reset view"
       updateBottomNavState();
     });
   } finally {
@@ -7990,18 +8438,130 @@ async function startDockedPrint() {
 // Start-print entry point, shared by the viewer's own button AND the embedded
 // slicer's dock-bar "Start print" (which asks via postMessage — see below). Keeps
 // the material gate + the single startDockedPrint path in one place.
+// Returns true if the print was actually started (gate passed → startDockedPrint),
+// false if it was declined at the synchronous material gate. Callers that framed a
+// preview use this to know whether to tear down or restore their view.
 function runStartPrintAction() {
   markUserActivity();
   if (!printSim) {
-    return;
+    return false;
   }
   // Gate: verify a proper, sufficient material is loaded before printing.
   const check = validatePrintMaterial();
   if (!check.ok) {
     handleBlockedPrintMaterial(check);
-    return;
+    return false;
   }
   startDockedPrint();
+  return true;
+}
+
+// --- Start-print placement preview -----------------------------------------
+// "Start print" on a sliced Files row opens a live preview: the camera reframes
+// to show the part sitting at its print position on the plate, with a slim
+// confirm bar. Confirm → runStartPrintAction (material gate → docked print);
+// Cancel → restore the previous camera. Pre-print only; no print state changes
+// until the operator confirms.
+const startPrintPreviewBarEl = document.getElementById("startPrintPreviewBar");
+const startPrintPreviewConfirmEl = document.getElementById("startPrintPreviewConfirm");
+const startPrintPreviewCancelEl = document.getElementById("startPrintPreviewCancel");
+let isStartPrintPreviewActive = false;
+let startPrintPreviewReturnCamera = null;
+
+function setStartPrintPreviewBarOpen(open) {
+  if (!startPrintPreviewBarEl) {
+    return;
+  }
+  startPrintPreviewBarEl.hidden = !open;
+  startPrintPreviewBarEl.setAttribute("aria-hidden", open ? "false" : "true");
+}
+
+// If the print's feedstock is the wire drum (it's the active/assigned feedstock),
+// reveal the drum assembly (with its animation) so the scene reflects the real
+// feed source. Cosmetic — does not affect the print cycle.
+function revealWireDrumIfActiveFeedstock() {
+  const drumIsFeedstock =
+    normalizeSpoolKey(hotspotMaterialsFocusSpoolKey) === "wiredrum"
+    && Boolean(hotspotMaterialAssignments.wiredrum);
+  if (drumIsFeedstock) {
+    setWireDrumConnected(true);
+  }
+}
+
+function openStartPrintPreview(fileName) {
+  if (!printSim) {
+    return;
+  }
+  const name = String(fileName || "").trim();
+  // Make sure the sliced part is the loaded/selected one so the preview and the
+  // subsequent print target it.
+  if (name && name !== selectedCloudLibraryFileName) {
+    setSelectedCloudLibraryFile(name, { updateSelect: true, syncDataset: true });
+    loadCloudOverlayFromSelectedFile();
+  }
+  // Feedstock = wire drum → show the drum assembly in the preview (animated).
+  revealWireDrumIfActiveFeedstock();
+  isStartPrintPreviewActive = true;
+  // Capture the current view so Cancel can restore it.
+  startPrintPreviewReturnCamera = captureCameraState();
+  // Reframe onto the print position (nozzle tip / the placed part) so the
+  // operator sees where the part will sit while printing.
+  const focus = (typeof getNozzleTipWorldPoint === "function" ? getNozzleTipWorldPoint() : null)
+    || (cloudStlObject ? getLinkWorldCenter(HEAD_LINK) : null);
+  const cameraState = buildFilesMenuCameraState(focus);
+  if (cameraState) {
+    beginCameraTransition(cameraState, FRONT_DOOR_BUTTON_CAMERA_DURATION_MS, { distanceLock: null });
+  }
+  setStartPrintPreviewBarOpen(true);
+}
+
+function cancelStartPrintPreview() {
+  if (!isStartPrintPreviewActive) {
+    return;
+  }
+  isStartPrintPreviewActive = false;
+  setStartPrintPreviewBarOpen(false);
+  if (startPrintPreviewReturnCamera) {
+    beginCameraTransition(startPrintPreviewReturnCamera, FRONT_DOOR_BUTTON_CAMERA_DURATION_MS, {
+      distanceLock: null,
+    });
+    startPrintPreviewReturnCamera = null;
+  }
+}
+
+function confirmStartPrintPreview() {
+  if (!isStartPrintPreviewActive) {
+    return;
+  }
+  isStartPrintPreviewActive = false;
+  setStartPrintPreviewBarOpen(false);
+  const started = runStartPrintAction();
+  if (started) {
+    // Print is starting; startDockedPrint owns the view from here.
+    startPrintPreviewReturnCamera = null;
+  } else if (startPrintPreviewReturnCamera) {
+    // Gate declined (e.g. no/insufficient material) — the print did NOT start, so
+    // restore the pre-preview view instead of stranding the operator at the
+    // print-preview angle. The material warning banner is already showing.
+    beginCameraTransition(startPrintPreviewReturnCamera, FRONT_DOOR_BUTTON_CAMERA_DURATION_MS, {
+      distanceLock: null,
+    });
+    startPrintPreviewReturnCamera = null;
+  }
+}
+
+if (startPrintPreviewConfirmEl) {
+  startPrintPreviewConfirmEl.addEventListener("click", () => {
+    markUserActivity();
+    confirmStartPrintPreview();
+  });
+}
+
+if (startPrintPreviewCancelEl) {
+  startPrintPreviewCancelEl.addEventListener("click", () => {
+    markUserActivity();
+    cancelStartPrintPreview();
+  });
 }
 
 if (slicerLoadToViewerEl) {
@@ -8364,6 +8924,12 @@ function clearCloudStlObject() {
   stopCloudStlDrag(null, { silent: true });
   // Return the bed to where it was before any print simulation.
   teardownPrintBedSimulation();
+  // Drop any slicer-solid preview so the next loaded part starts from the cloud
+  // STL (not a stale hidden STL / leftover preview).
+  if (printSim && typeof printSim.setSolidPreview === "function") {
+    printSim.setSolidPreview(false);
+  }
+  printHideStl = false;
 
   if (!cloudStlObject) {
     if (loadedCloudLibraryFileName) {
@@ -9669,7 +10235,9 @@ function renderCloudFileLibrary() {
     const materialEl = document.createElement("span");
     materialEl.className = "cloud-file-item-material";
     materialEl.textContent = `Material: ${getMaterialLabelById(
-      hotspotMaterialAssignments.spool1 || hotspotMaterialAssignments.spool2,
+      hotspotMaterialAssignments.spool1
+        || hotspotMaterialAssignments.spool2
+        || hotspotMaterialAssignments.wiredrum,
     )}`;
     detailsEl.appendChild(materialEl);
 
@@ -9684,6 +10252,11 @@ function renderCloudFileLibrary() {
     applyCloudFileSliceBadge(sliceBadgeEl, cloudFileSliceStatusByName.get(entry.name) || "");
     detailsEl.appendChild(sliceBadgeEl);
 
+    // Row action buttons sit together on one line ("Load to slicer" +, once
+    // sliced, "Start print").
+    const actionsEl = document.createElement("span");
+    actionsEl.className = "cloud-file-item-actions";
+
     // "Load to slicer": choose this file and open the full-view slice panel with
     // it pre-selected (no picker inside the slicer).
     const loadToSlicerEl = document.createElement("button");
@@ -9696,7 +10269,24 @@ function renderCloudFileLibrary() {
       markUserActivity();
       loadFileToSlicer(entry.name);
     });
-    detailsEl.appendChild(loadToSlicerEl);
+    actionsEl.appendChild(loadToSlicerEl);
+
+    // "Start print": shown only once this part is sliced/print-ready. Skips the
+    // full slicer — opens the placement preview + confirmation, then starts.
+    const startPrintEl = document.createElement("button");
+    startPrintEl.type = "button";
+    startPrintEl.className = "cloud-file-item-print-button";
+    startPrintEl.textContent = "Start print";
+    startPrintEl.hidden = cloudFileSliceStatusByName.get(entry.name) !== "ready";
+    startPrintEl.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      markUserActivity();
+      openStartPrintPreview(entry.name);
+    });
+    actionsEl.appendChild(startPrintEl);
+
+    detailsEl.appendChild(actionsEl);
 
     const metaWrapEl = document.createElement("span");
     metaWrapEl.className = "cloud-file-item-meta";
@@ -9784,6 +10374,10 @@ function setCloudFileRowSliceStatus(fileName, status) {
   );
   if (rowEl) {
     applyCloudFileSliceBadge(rowEl.querySelector(".cloud-file-item-slice-badge"), status);
+    const printBtn = rowEl.querySelector(".cloud-file-item-print-button");
+    if (printBtn) {
+      printBtn.hidden = status !== "ready";
+    }
   }
 }
 
@@ -10260,7 +10854,9 @@ let autoSliceFlowActive = false;
 // means selecting a new part while one is still slicing is ignored until the
 // current slice settles (kiosk one-at-a-time).
 async function autoPreparePrintSimulationForSelection() {
-  if (!printSim || printSimAutoRunInProgress) {
+  // Never run a background slice while a docked print is starting/active — its
+  // prepare() would race and could stomp the live print's toolpath source.
+  if (!printSim || printSimAutoRunInProgress || isDockedPrintActive) {
     return;
   }
   if (!cloudStlObject || !hasLoadedCloudFileForPrint()) {
@@ -10276,11 +10872,19 @@ async function autoPreparePrintSimulationForSelection() {
   printSimAutoRunInProgress = true;
   try {
     const ready = await printSim.prepare();
+    // "ready" (→ the row's "Start print" button) must mean a REAL sliced toolpath,
+    // not prepare()'s clip-reveal fallback (which also returns true but has no
+    // toolpath — the part isn't actually sliced). Require a toolpath source.
+    const hasRealToolpath =
+      typeof printSim.getSource === "function" && printSim.getSource() === "toolpath";
     if (isAutoFlow) {
       // Only badge the row. Revealing the part is deferred to "Load to viewer",
       // so the warmed slice does not collapse the Files list behind the slicer.
-      setCloudFileRowSliceStatus(fileName, ready ? "ready" : "");
+      setCloudFileRowSliceStatus(fileName, (ready && hasRealToolpath) ? "ready" : "");
     }
+    // Reflect the slicer's orientation/placement in the main model when a real
+    // toolpath is prepared (shows the placed slicer solid; else keeps cloud STL).
+    updateSlicerModelPreview();
   } catch (error) {
     console.warn("[printSim] auto slice failed:", error?.message || error);
     if (isAutoFlow) {
@@ -11694,6 +12298,7 @@ function teardownPrintBedSimulation() {
   printSimBedJointName = null;
   printSimBedNozzleTip = null;
   isDockedPrintActive = false;
+  teardownPrintViewReset(); // drop the "Reset view" button/timer with the print
   // Un-substitute: let the STL show again per the user's visibility toggle.
   if (printHideStl) {
     printHideStl = false;
@@ -14866,12 +15471,13 @@ if (settingsLightToggleEl) {
 if (settingsAdvancedModeToggleEl) {
   settingsAdvancedModeToggleEl.addEventListener("click", () => {
     markUserActivity();
+    // Advanced access is granted by the active mode (Support/God); this control
+    // is only a disclosure for the advanced submenu now — no PIN prompt. It is
+    // permission-hidden for lower modes, so a click here means advanced is on.
     if (isAdvancedModeEnabled) {
       setSettingsCalibrateMenuOpen(false);
       setSettingsAdvancedMenuOpen(!isSettingsAdvancedMenuOpen);
-      return;
     }
-    openAdvancedModePinModal();
   });
 }
 
@@ -15699,6 +16305,14 @@ if (materialsSpoolCard2El) {
   });
 }
 
+if (materialsSpoolCardWireDrumEl) {
+  materialsSpoolCardWireDrumEl.addEventListener("click", () => {
+    markUserActivity();
+    setHotspotMaterialsFocusSpool("wiredrum");
+    setMaterialsMenuConfirmMessage("");
+  });
+}
+
 if (filesFeederDriveUpEl) {
   filesFeederDriveUpEl.addEventListener("click", () => {
     markUserActivity();
@@ -15717,6 +16331,29 @@ if (filesFeederDriveDownEl) {
   filesFeederDriveDownEl.addEventListener("click", () => {
     markUserActivity();
     runFilesSelectedSpoolFeederCommand("down");
+  });
+}
+
+// Feeder-wheel toggle: switch which feeder (and its spool) the Up/Down jog
+// drives — Left = Spool 1 (left + central wheels), Right = Spool 2 (right +
+// central). Linked to spool selection. Stops any active jog first so the newly
+// selected wheels don't inherit the old one's motion.
+function selectFeederWheelSpool(spoolKey) {
+  setFeederDriveStop();
+  setHotspotMaterialsFocusSpool(spoolKey);
+}
+
+if (filesFeederWheelLeftEl) {
+  filesFeederWheelLeftEl.addEventListener("click", () => {
+    markUserActivity();
+    selectFeederWheelSpool("spool1");
+  });
+}
+
+if (filesFeederWheelRightEl) {
+  filesFeederWheelRightEl.addEventListener("click", () => {
+    markUserActivity();
+    selectFeederWheelSpool("spool2");
   });
 }
 
@@ -15759,6 +16396,15 @@ if (feederCameraAnchorRightEl) {
 if (wireDrumAppearButtonEl) {
   wireDrumAppearButtonEl.addEventListener("click", () => {
     triggerWireDrumAppearance();
+  });
+}
+
+if (materialsWireDrumToggleEl) {
+  // Materials-menu "Connect wire drum": explicitly connect/disconnect (not a blind
+  // toggle) so it reads off the shared reveal state. Cosmetic feedstock display —
+  // does not touch the spool material accounting or the print cycle.
+  materialsWireDrumToggleEl.addEventListener("click", () => {
+    setWireDrumConnected(!isWireDrumConnected());
   });
 }
 
@@ -16885,3 +17531,67 @@ function initializePrintSimulation() {
   updateButtons("idle");
   populateSlicerProfiles().catch(() => {});
 }
+
+// --- Bridge for the machine error-code layer (error_codes.js) ---------------
+// error_codes.js owns the fault catalog + code→notification mapping; it calls
+// this bridge to surface a code in the existing Notification Center and, for a
+// safety-disengaging error, to halt the print UI. Kept tiny + decoupled so the
+// catalog/transport can evolve without touching the viewer internals.
+window.MeltioNotifications = {
+  // record: { id, type, title, description, severity, recommendedAction,
+  //           possibleCauses, source, relatedScreen, canAcknowledge, ... }
+  raise(record) {
+    if (!record || typeof record !== "object") return null;
+    const normalized = normalizeNotificationRecord(record);
+    notificationsById.set(normalized.id, normalized);
+    renderNotificationCenter();
+    updateNotificationBellState();
+    return normalized.id;
+  },
+  resolve(id) {
+    const existing = notificationsById.get(String(id));
+    if (!existing) return;
+    notificationsById.set(String(id), { ...existing, status: "resolved", timestamp: new Date().toISOString() });
+    renderNotificationCenter();
+    updateNotificationBellState();
+  },
+};
+
+// The role/mode system (permissions.js) drives advanced access: Support & God
+// call set(true) to enable the advanced controls; lower modes call set(false).
+// Replaces the old user-facing Advanced Mode toggle + PIN.
+window.MeltioAdvanced = {
+  set(on) {
+    const enable = Boolean(on);
+    advancedRoleDriven = enable;
+    setAdvancedModeEnabled(enable);
+    updateAdvancedRequiredControls();
+    if (!enable) {
+      setSettingsAdvancedMenuOpen(false);
+    }
+  },
+};
+
+// Critical banner "View" → open the Notification Center.
+document.getElementById("criticalNotificationBannerView")?.addEventListener("click", () => {
+  markUserActivity();
+  setNotificationCenterOpen(true);
+});
+
+window.MeltioMachine = {
+  // Halt the print for a safety-disengaging error: pause an active print and
+  // surface the pause notice. Idempotent + safe to call when nothing is running.
+  haltPrintForError() {
+    try {
+      if (printSim && typeof printSim.getState === "function") {
+        const state = printSim.getState();
+        if (state !== "idle" && state !== "paused" && typeof printSim.togglePlay === "function") {
+          printSim.togglePlay();
+          openPrintPauseNotice();
+          updateBottomNavState();
+        }
+      }
+      if (slicerLoadToViewerEl) slicerLoadToViewerEl.disabled = true; // block Start until cleared
+    } catch (_e) {}
+  },
+};

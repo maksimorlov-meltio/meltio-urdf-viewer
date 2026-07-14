@@ -24,6 +24,10 @@ DATABASE_ROOT = PROJECT_ROOT / "database"
 ASSETS_ROOT = PROJECT_ROOT / "assets"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 DEFAULT_DATASET_NAME = "small-torture-test_1-0-0"
+# Roles/users/permission-matrix document (see /api/permissions/config).
+PERMISSIONS_STORE = DATABASE_ROOT / "permissions.json"
+# Engine/M600 error+warning code catalog (see /api/error-codes).
+ERROR_CODES_STORE = DATABASE_ROOT / "error_codes.json"
 
 # Optional external slicer (aslicer) integration. Disabled unless AVIS_SLICER_URL
 # is set, so the viewer runs fully standalone by default. See docs/PRINT_SIM.md.
@@ -304,6 +308,46 @@ def create_app() -> FastAPI:
     @app.get("/urdf")
     def urdf_index() -> FileResponse:
         return FileResponse(STATIC_DIR / "urdf.html")
+
+    # --- Roles & permissions config -------------------------------------------
+    # Backend is the source of truth for the roles/users/permission matrix; the
+    # client caches it in localStorage and falls back to built-in defaults when
+    # the store is empty or unreachable. Enforcement itself is client-side UI
+    # gating (this is an operator console, not a security boundary), so these
+    # endpoints only persist/serve the config document.
+    @app.get("/api/permissions/config")
+    def get_permissions_config() -> dict:
+        try:
+            if PERMISSIONS_STORE.exists():
+                return json.loads(PERMISSIONS_STORE.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            pass
+        return {}  # empty → client uses its built-in defaults
+
+    @app.put("/api/permissions/config")
+    def put_permissions_config(payload: dict | None = Body(default=None)) -> dict:
+        data = payload if isinstance(payload, dict) else {}
+        try:
+            PERMISSIONS_STORE.parent.mkdir(parents=True, exist_ok=True)
+            PERMISSIONS_STORE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail=f"Could not save permissions: {exc}") from exc
+        return {"ok": True}
+
+    # --- Machine error/warning code catalog -----------------------------------
+    # Static reference catalog of Engine/M600 fault codes (descriptions, causes,
+    # remediation). The client pulls this once, caches it, and enriches live
+    # codes with it. The master source is a Google Sheet; regenerate the JSON
+    # with tools/import_error_codes.py. This endpoint only serves the catalog —
+    # the live "which codes are active now" feed is a separate concern.
+    @app.get("/api/error-codes")
+    def get_error_codes() -> dict:
+        try:
+            if ERROR_CODES_STORE.exists():
+                return json.loads(ERROR_CODES_STORE.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            pass
+        return {"version": 0, "codes": []}
 
     @app.get("/api/slicer/status")
     def slicer_status() -> dict[str, object]:

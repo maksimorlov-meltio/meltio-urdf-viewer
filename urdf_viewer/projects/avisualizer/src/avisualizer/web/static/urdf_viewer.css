@@ -563,6 +563,19 @@ body.settings-menu-open .topbar-settings-submenu {
   padding: 6px 8px;
 }
 
+/* Feeder-wheel Left/Right segmented toggle: two buttons on one row (the generic
+   .drive-toggle-group is forced to a single column inside the context panel). */
+.hotspot-context-panel #hotspotMaterialsPanel .files-feeder-wheel-toggle {
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 8px;
+}
+
+.hotspot-context-panel #hotspotMaterialsPanel .files-feeder-wheel-toggle button {
+  min-height: 34px;
+  height: 34px;
+  padding: 6px 8px;
+}
+
 .hotspot-context-panel #hotspotMaterialsPanel .feeder-camera-preview {
   margin-top: 2px;
 }
@@ -588,91 +601,8 @@ body.settings-menu-open .topbar-settings-submenu {
   height: 100%;
 }
 
-.feeder-drive-direction-indicator {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 2;
-}
-
-.feeder-drive-direction-indicator[hidden] {
-  display: none !important;
-}
-
-.feeder-drive-arrow {
-  position: absolute;
-  left: 22%;
-  top: 62%;
-  width: 34px;
-  height: 34px;
-  opacity: 0;
-  filter: drop-shadow(0 0 6px rgba(255, 42, 42, 0.5));
-  animation-duration: 0.9s;
-  animation-timing-function: ease-in-out;
-  animation-iteration-count: infinite;
-  animation-fill-mode: both;
-}
-
-.feeder-drive-arrow::before,
-.feeder-drive-arrow::after {
-  content: "";
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-}
-
-.feeder-drive-arrow::before {
-  top: 12px;
-  width: 6px;
-  height: 16px;
-  border-radius: 4px;
-  background: linear-gradient(180deg, rgba(255, 127, 127, 0.96), rgba(255, 55, 55, 0.96));
-}
-
-.feeder-drive-arrow::after {
-  top: 2px;
-  width: 0;
-  height: 0;
-  border-left: 8px solid transparent;
-  border-right: 8px solid transparent;
-  border-bottom: 12px solid rgba(255, 66, 66, 0.98);
-}
-
-.feeder-drive-direction-indicator.is-up .feeder-drive-arrow {
-  animation-name: feederDriveArrowBlinkDiagonalUp;
-}
-
-.feeder-drive-direction-indicator.is-down .feeder-drive-arrow {
-  animation-name: feederDriveArrowBlinkDiagonalDown;
-}
-
-@keyframes feederDriveArrowBlinkDiagonalUp {
-  0% {
-    opacity: 0;
-    transform: translate(6px, 6px) rotate(-45deg);
-  }
-  35% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-    transform: translate(-6px, -6px) rotate(-45deg);
-  }
-}
-
-@keyframes feederDriveArrowBlinkDiagonalDown {
-  0% {
-    opacity: 0;
-    transform: translate(-6px, -6px) rotate(135deg);
-  }
-  35% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-    transform: translate(6px, 6px) rotate(135deg);
-  }
-}
+/* Feeder direction arrow overlay removed — direction is shown by the spinning
+   wheels alone. */
 
 .feeder-camera-placeholder {
   width: 100%;
@@ -914,6 +844,39 @@ body.controls-panel-open .controls-sidebar-toggle {
 }
 .materials-return-slicer:hover { background: rgba(83, 160, 102, 0.28); }
 .materials-return-slicer[hidden] { display: none; }
+
+/* "Connect wire drum" — Materials-menu feedstock toggle. Cosmetic only: reveals
+   the wire-drum assembly (mirrors the Appearance "Wire Drum" button); it does NOT
+   affect material accounting or the print cycle. Blue "engaged" accent when
+   connected, matching the drive/toggle active treatment. */
+.materials-feedstock-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.materials-wire-drum-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+  color: #e8eef7;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.materials-wire-drum-toggle:hover:not(:disabled) { background: rgba(255, 255, 255, 0.12); }
+.materials-wire-drum-toggle[aria-pressed="true"] {
+  border-color: rgba(55, 125, 208, 0.7);
+  background: rgba(55, 125, 208, 0.85);
+  color: #fff;
+}
+.materials-wire-drum-toggle[aria-pressed="true"]:hover:not(:disabled) { background: rgba(55, 125, 208, 0.98); }
+.materials-wire-drum-toggle:disabled { opacity: 0.5; cursor: default; }
 
 /* Wide layout: spool controls beside the material-info panel. */
 .materials-menu-body {
@@ -1974,7 +1937,6 @@ body.light-mode .feeder-camera-placeholder {
   .status-panel,
   .control-subpanel,
   .quick-front-door-toggle,
-  .feeder-drive-arrow,
   #scene,
   .annotation-layer,
   .viewcube-overlay {
@@ -3536,8 +3498,14 @@ body.light-mode .advanced-mode-indicator.is-inactive {
   height: 100%;
   min-height: 0;
   display: grid;
-  grid-template-rows: auto auto auto auto minmax(0, 1fr) auto auto;
+  /* File-list row keeps a minimum height so the (tall) Materials & Feeder panel
+     below it can't squeeze the STL list down to nothing on shorter windows. */
+  grid-template-rows: auto auto auto auto minmax(160px, 1fr) auto auto;
   gap: 4px;
+  /* When the window is too short for the file list + the materials/feeder panel,
+     let the whole pane scroll so nothing (e.g. the feeder controls at the bottom)
+     is clipped by the popup's overflow:hidden and becomes unreachable. */
+  overflow-y: auto;
 }
 
 .cloud-section-title {
@@ -4651,6 +4619,10 @@ body.light-mode .topbar-icon[aria-expanded="true"] svg {
   grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
 }
 
+.cloud-model-popup #hotspotMaterialsPanel .files-feeder-wheel-toggle {
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+}
+
 .cloud-model-popup #hotspotMaterialsPanel {
   display: grid;
   gap: 8px;
@@ -4708,6 +4680,12 @@ body.cloud-menu-open #cloudModelPopup #hotspotContextPanel {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
+}
+
+/* The wire drum is a third feedstock card; give it the full width of the switch
+   (its own row under the two spools) so the three read as one feedstock group. */
+.spool-select-card-wide {
+  grid-column: 1 / -1;
 }
 
 .spool-select-card {
@@ -6011,9 +5989,9 @@ body.light-mode .bottom-nav .bottom-nav-item[aria-pressed="true"] {
 .print-sim-panel {
   display: flex;
   flex-direction: column;
-  gap: var(--ui-space-2);
+  gap: var(--ui-space-3);
   width: 100%;
-  padding: var(--ui-space-3) var(--ui-space-4);
+  padding: var(--ui-space-4);
   border-radius: var(--ui-radius-lg);
   border: 1px solid var(--ui-border-strong);
   background: var(--ui-surface-2);
@@ -6027,6 +6005,8 @@ body.light-mode .bottom-nav .bottom-nav-item[aria-pressed="true"] {
 .print-sim-controls button {
   flex: 1;
   min-height: var(--ui-tap-min);
+  font-size: var(--ui-font-size-body);
+  font-weight: var(--ui-font-weight-semibold);
 }
 
 .print-sim-panel button[aria-pressed="true"] {
@@ -6046,9 +6026,21 @@ body.light-mode .bottom-nav .bottom-nav-item[aria-pressed="true"] {
   gap: var(--ui-space-3);
 }
 
+/* Flat layout: separate the stacked rows with faint hairlines instead of
+   boxing each control group. The controls row + each field carry a divider;
+   hidden rows (display:none) drop theirs automatically. */
+.print-sim-controls,
+.print-sim-field {
+  padding-bottom: var(--ui-space-3);
+  border-bottom: 1px solid var(--ui-border-subtle);
+}
+
 .print-sim-field-label {
-  width: 64px;
+  flex: none;
+  width: 76px;
   font-size: var(--ui-font-size-label);
+  font-weight: var(--ui-font-weight-semibold);
+  line-height: 1.3;
   color: var(--ui-text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -6058,32 +6050,35 @@ body.light-mode .bottom-nav .bottom-nav-item[aria-pressed="true"] {
   flex: 1;
 }
 
-/* Playback speed multiplier: preset chips + manual entry. */
+/* Playback speed multiplier: preset chips + manual entry, flat like the
+   View/Style toggles — plain text, active preset fills blue, and a light
+   thin-bordered field for the manual multiplier. */
 .print-sim-speed-field {
-  align-items: flex-start;
+  align-items: center;
 }
 
 .print-sim-speed-presets {
   flex: 1;
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--ui-space-1);
   align-items: center;
 }
 
 .print-sim-speed-preset {
-  min-height: 26px;
-  padding: 2px 8px;
-  font-size: var(--ui-font-size-label);
-  border-radius: var(--ui-radius-sm, 6px);
-  border: 1px solid var(--ui-border-subtle);
-  background: var(--ui-button-quiet-bg);
-  color: var(--ui-text-secondary);
+  flex: 1;
+  min-height: 32px;
+  padding: 0 var(--ui-space-2);
+  font-size: var(--ui-font-size-body);
+  font-weight: var(--ui-font-weight-medium);
+  border-radius: var(--ui-radius-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ui-text-muted);
   cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease;
 }
 
 .print-sim-speed-preset:hover {
-  border-color: var(--ui-border-strong);
   color: var(--ui-text-primary);
 }
 
@@ -6091,89 +6086,66 @@ body.light-mode .bottom-nav .bottom-nav-item[aria-pressed="true"] {
   background: var(--ui-button-primary-bg);
   border-color: transparent;
   color: var(--ui-button-primary-text);
-  font-weight: var(--ui-font-weight-bold);
+  font-weight: var(--ui-font-weight-semibold);
 }
 
 .print-sim-speed-manual {
-  width: 56px;
-  min-height: 26px;
-  padding: 2px 6px;
-  border-radius: var(--ui-radius-sm, 6px);
+  flex: none;
+  width: 52px;
+  min-height: 32px;
+  padding: 0 var(--ui-space-2);
+  border-radius: var(--ui-radius-sm);
   border: 1px solid var(--ui-border-subtle);
-  background: var(--ui-input-bg, var(--ui-button-quiet-bg));
+  background: transparent;
   color: var(--ui-text-primary);
+  font-size: var(--ui-font-size-body);
+  text-align: center;
 }
 
-/* View-mode toggle: STL / Toolpath / Thermal. */
-.print-sim-view-field {
-  align-items: flex-start;
-}
-
-.print-sim-view-modes {
-  flex: 1;
-  display: flex;
-  gap: 4px;
-}
-
-.print-sim-view-mode {
-  flex: 1;
-  min-height: 28px;
-  padding: 3px 8px;
-  font-size: var(--ui-font-size-label);
-  border-radius: var(--ui-radius-sm, 6px);
-  border: 1px solid var(--ui-border-subtle);
-  background: var(--ui-button-quiet-bg);
-  color: var(--ui-text-secondary);
-  cursor: pointer;
-}
-
-.print-sim-view-mode:hover:not(:disabled) {
-  border-color: var(--ui-border-strong);
-  color: var(--ui-text-primary);
-}
-
-.print-sim-view-mode.is-active {
-  background: var(--ui-button-primary-bg);
-  border-color: transparent;
-  color: var(--ui-button-primary-text);
-  font-weight: var(--ui-font-weight-bold);
-}
-
-.print-sim-view-mode:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-/* Render-style toggle (Lines / Tubes) reuses the view-mode chip styling. */
+/* Minimal / flat toggles (View: STL/Toolpath/Thermal, Style: Lines/Tubes):
+   no track box, no per-segment borders. Inactive segments are plain muted
+   text; the active one fills with the accent blue as a soft pill. */
+.print-sim-view-field,
 .print-sim-style-field {
-  align-items: flex-start;
+  align-items: center;
 }
+
+.print-sim-view-modes,
 .print-sim-style-modes {
   flex: 1;
   display: flex;
-  gap: 4px;
+  gap: var(--ui-space-1);
 }
+
+.print-sim-view-mode,
 .print-sim-style-mode {
   flex: 1;
-  min-height: 28px;
-  padding: 3px 8px;
-  font-size: var(--ui-font-size-label);
-  border-radius: var(--ui-radius-sm, 6px);
-  border: 1px solid var(--ui-border-subtle);
-  background: var(--ui-button-quiet-bg);
-  color: var(--ui-text-secondary);
+  min-height: 32px;
+  padding: 0 var(--ui-space-2);
+  font-size: var(--ui-font-size-body);
+  font-weight: var(--ui-font-weight-medium);
+  border-radius: var(--ui-radius-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ui-text-muted);
   cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease;
 }
+
+.print-sim-view-mode:hover:not(:disabled),
 .print-sim-style-mode:hover:not(:disabled) {
-  border-color: var(--ui-border-strong);
   color: var(--ui-text-primary);
 }
+
+.print-sim-view-mode.is-active,
 .print-sim-style-mode.is-active {
   background: var(--ui-button-primary-bg);
   border-color: transparent;
   color: var(--ui-button-primary-text);
-  font-weight: var(--ui-font-weight-bold);
+  font-weight: var(--ui-font-weight-semibold);
 }
+
+.print-sim-view-mode:disabled,
 .print-sim-style-mode:disabled {
   opacity: 0.4;
   cursor: not-allowed;
@@ -6489,6 +6461,99 @@ body.slicer-fullscreen #slicerLoadToViewer {
   filter: brightness(1.15);
 }
 
+/* "Start print" on a sliced/ready row — a green "go" accent to read as the
+   primary next action once a part is print-ready. Hidden until ready. */
+.cloud-file-item-print-button {
+  align-self: flex-start;
+  margin-top: var(--ui-space-1);
+  padding: 4px var(--ui-space-2);
+  border-radius: var(--ui-radius-sm);
+  border: 1px solid rgba(83, 160, 102, 0.6);
+  background: rgba(83, 160, 102, 0.9);
+  color: #ffffff;
+  font-size: var(--ui-font-size-label);
+  font-weight: var(--ui-font-weight-bold);
+  cursor: pointer;
+}
+.cloud-file-item-print-button:hover { background: rgba(83, 160, 102, 1); }
+.cloud-file-item-print-button[hidden] { display: none !important; }
+
+/* Row action buttons on one line: "Load to slicer" + (when ready) "Start print". */
+.cloud-file-item-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+  flex-wrap: wrap;
+  margin-top: var(--ui-space-1);
+}
+.cloud-file-item-actions .cloud-file-item-slicer-button,
+.cloud-file-item-actions .cloud-file-item-print-button {
+  margin-top: 0;
+}
+
+/* Slim confirmation bar for the start-print placement preview. Floats above the
+   bottom nav (z 20) so the reframed 3D scene stays visible behind it. */
+.start-print-preview-bar {
+  position: fixed;
+  left: 50%;
+  bottom: clamp(180px, 14vh, 300px);
+  transform: translateX(-50%);
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  max-width: calc(100vw - 24px);
+  padding: 14px 18px;
+  border-radius: 14px;
+  border: 1px solid rgba(203, 224, 255, 0.22);
+  background: linear-gradient(180deg, rgba(19, 24, 32, 0.94), rgba(13, 17, 25, 0.94));
+  backdrop-filter: blur(14px);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.5);
+  color: #eaf1fb;
+}
+.start-print-preview-bar[hidden] { display: none; }
+
+/* Floating "Reset view" button — bottom-right during a docked print, sitting
+   above the docked print bar (Stop/Pause/Slicer) and clear of the slicer
+   flyout. Only shown once the operator has moved the camera off the print view;
+   click or the 50s idle timer glides it back. Token-driven to match the app. */
+.print-reset-view-button {
+  position: fixed;
+  right: 24px;
+  bottom: clamp(180px, 16vh, 320px);
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+  min-height: 40px;
+  padding: 0 var(--ui-space-4);
+  border-radius: var(--ui-radius-xl);
+  border: 1px solid var(--ui-border-strong);
+  background: var(--ui-surface-overlay);
+  backdrop-filter: blur(var(--ui-overlay-blur));
+  box-shadow: var(--ui-shadow-panel);
+  color: var(--ui-text-primary);
+  font-size: var(--ui-font-size-body);
+  font-weight: var(--ui-font-weight-semibold);
+  cursor: pointer;
+}
+.print-reset-view-button:hover {
+  border-color: var(--ui-border-accent);
+  color: #ffffff;
+}
+.print-reset-view-button svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.print-reset-view-button[hidden] { display: none !important; }
+.start-print-preview-text { font-size: 15px; font-weight: 600; }
+.start-print-preview-actions { display: flex; gap: 10px; flex: none; }
+
 /* --- Auto-slice flow: file-row slice badge + collapse-for-print -----------
    Choosing a file auto-slices; these surface progress and reveal the part.
    Additive, token-driven. */
@@ -6674,3 +6739,433 @@ body.cloud-menu-open:not(.files-collapsed-for-print):not(.slicer-fullscreen) .cl
   color: #d3ffde !important;
   box-shadow: 0 0 24px rgba(122, 255, 148, 0.28), inset 0 0 0 1px rgba(180, 255, 199, 0.2) !important;
 }
+
+/* Docked-print bar restyle: match the Files-menu bottom nav — neutral glassy
+   tiles with only the active button carrying the subtle green accent (rule
+   above). Drop the red Stop colour and the green paused-pulse so the three
+   buttons read as one consistent, calm group. */
+body.files-collapsed-for-print .bottom-nav-item.is-stop-mode {
+  color: var(--ui-text-secondary);
+}
+body.files-collapsed-for-print .bottom-nav-item.is-paused-pulse {
+  color: var(--ui-text-secondary);
+  animation: none;
+  box-shadow: none;
+}
+/* Rearrange the docked bar left -> right: Slicer / Pause / Stop. `order` works
+   whether the bar is laid out as grid (portrait) or inline-flex (landscape). */
+body.files-collapsed-for-print #navSlicerToggle { order: 1; }
+body.files-collapsed-for-print #navPlayToggle { order: 2; }
+body.files-collapsed-for-print #navDoorToggle { order: 3; }
+
+/* ==========================================================================
+   Roles & permissions (see permissions.js): topbar role chip, PIN login +
+   God-Mode dashboard modals, permission matrix, and control gating states.
+   Token-driven to match the app.
+   ========================================================================== */
+
+/* Advanced Mode is retired — the role/mode system governs advanced access and
+   the topbar role chip is the active-mode indicator. Hide the legacy indicator,
+   its manual "Exit Advanced Mode" button, and the (no-longer-triggered) PIN /
+   timeout modals so they can never surface. */
+.advanced-mode-indicator,
+#settingsExitAdvancedMode,
+#advancedModePinModal,
+#advancedModeTimeoutWarningModal {
+  display: none !important;
+}
+
+/* Denied controls: dimmed + not-allowed. `perm-hidden` removes them entirely. */
+.perm-denied {
+  opacity: 0.4;
+  cursor: not-allowed !important;
+  filter: grayscale(0.3);
+}
+.perm-hidden {
+  display: none !important;
+}
+
+/* Topbar role chip */
+.perm-role-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ui-space-1);
+  min-height: 30px;
+  padding: 0 var(--ui-space-3);
+  margin-right: var(--ui-space-2);
+  border-radius: var(--ui-radius-xl);
+  border: 1px solid var(--ui-border-subtle);
+  background: var(--ui-button-quiet-bg);
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-label);
+  font-weight: var(--ui-font-weight-semibold);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.perm-role-chip:hover {
+  border-color: var(--ui-border-strong);
+  color: var(--ui-text-primary);
+}
+.perm-role-chip-god {
+  border-color: var(--ui-border-accent);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+}
+
+/* Modal scaffolding (login + dashboard share it) */
+.perm-root { position: relative; z-index: 400; }
+.perm-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--ui-scrim);
+  backdrop-filter: blur(var(--ui-overlay-blur));
+  z-index: 400;
+}
+.perm-modal-shell {
+  position: fixed;
+  inset: 0;
+  z-index: 401;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--ui-space-4);
+  pointer-events: none;
+}
+.perm-modal-card,
+.perm-dash-card {
+  pointer-events: auto;
+  width: min(420px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-3);
+  padding: var(--ui-space-4);
+  border-radius: var(--ui-radius-lg);
+  border: 1px solid var(--ui-border-strong);
+  background: var(--ui-modal-bg);
+  box-shadow: var(--ui-shadow-panel);
+  color: var(--ui-text-primary);
+}
+.perm-modal-shell-wide .perm-dash-card { width: min(860px, calc(100vw - 32px)); }
+
+.perm-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ui-space-2);
+}
+.perm-modal-head h3 { margin: 0; font-size: var(--ui-font-size-panel-title); }
+.perm-modal-note { margin: 0; color: var(--ui-text-muted); font-size: var(--ui-font-size-body); }
+.perm-icon-btn {
+  min-height: 32px;
+  min-width: 32px;
+  border-radius: var(--ui-radius-sm);
+  border: 1px solid var(--ui-border-subtle);
+  background: var(--ui-button-quiet-bg);
+  color: var(--ui-text-secondary);
+  cursor: pointer;
+}
+.perm-icon-btn:hover { color: var(--ui-text-primary); border-color: var(--ui-border-strong); }
+
+.perm-field { display: flex; align-items: center; gap: var(--ui-space-3); }
+.perm-field label { width: 48px; font-size: var(--ui-font-size-label); color: var(--ui-text-secondary); text-transform: uppercase; }
+.perm-pin-input {
+  flex: 1;
+  min-height: 40px;
+  padding: 0 var(--ui-space-3);
+  border-radius: var(--ui-radius-sm);
+  border: 1px solid var(--ui-border-strong);
+  background: var(--ui-surface-3);
+  color: var(--ui-text-primary);
+  font-size: 18px;
+  letter-spacing: 0.3em;
+}
+.perm-error { margin: 0; color: var(--ui-error); font-size: var(--ui-font-size-body); }
+
+.perm-modal-actions { display: flex; justify-content: flex-end; gap: var(--ui-space-2); }
+.perm-btn-primary {
+  min-height: 36px;
+  padding: 0 var(--ui-space-4);
+  border-radius: var(--ui-radius-sm);
+  border: 1px solid transparent;
+  background: var(--ui-button-primary-bg);
+  color: var(--ui-button-primary-text);
+  font-weight: var(--ui-font-weight-semibold);
+  cursor: pointer;
+}
+.perm-btn-primary:hover { background: var(--ui-button-primary-bg-hover); }
+.perm-btn-quiet {
+  min-height: 36px;
+  padding: 0 var(--ui-space-4);
+  border-radius: var(--ui-radius-sm);
+  border: 1px solid var(--ui-border-subtle);
+  background: var(--ui-button-quiet-bg);
+  color: var(--ui-text-secondary);
+  cursor: pointer;
+}
+.perm-btn-quiet:hover { color: var(--ui-text-primary); border-color: var(--ui-border-strong); }
+.perm-btn-danger {
+  min-height: 34px;
+  padding: 0 var(--ui-space-3);
+  border-radius: var(--ui-radius-sm);
+  border: 1px solid var(--ui-danger-soft);
+  background: var(--ui-danger-soft);
+  color: var(--ui-error);
+  cursor: pointer;
+}
+
+/* Dashboard */
+.perm-tabs { display: flex; gap: var(--ui-space-1); border-bottom: 1px solid var(--ui-border-subtle); }
+.perm-tab {
+  min-height: 34px;
+  padding: 0 var(--ui-space-3);
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--ui-text-muted);
+  font-weight: var(--ui-font-weight-medium);
+  cursor: pointer;
+}
+.perm-tab:hover { color: var(--ui-text-primary); }
+.perm-tab.is-active { color: var(--ui-accent); border-bottom-color: var(--ui-accent); }
+
+.perm-dash-body { flex: 1; overflow: auto; min-height: 200px; }
+.perm-dash-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--ui-space-3); }
+.perm-dash-current { color: var(--ui-text-muted); font-size: var(--ui-font-size-body); }
+
+/* Matrix */
+.perm-matrix-wrap { overflow-x: auto; }
+.perm-matrix { width: 100%; border-collapse: collapse; font-size: var(--ui-font-size-body); }
+.perm-matrix th, .perm-matrix td { padding: 6px 10px; text-align: center; }
+.perm-matrix th { position: sticky; top: 0; background: var(--ui-surface-2); color: var(--ui-text-secondary); font-weight: var(--ui-font-weight-semibold); }
+.perm-matrix-capcol, .perm-matrix-cap { text-align: left !important; color: var(--ui-text-primary); }
+.perm-matrix-group td { text-align: left; padding-top: 12px; color: var(--ui-accent); font-size: var(--ui-font-size-label); text-transform: uppercase; letter-spacing: 0.05em; }
+.perm-matrix tr:not(.perm-matrix-group):hover td { background: var(--ui-card-bg-hover); }
+.perm-matrix input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--ui-accent); cursor: pointer; }
+
+/* Users / roles lists */
+.perm-list { display: flex; flex-direction: column; gap: var(--ui-space-2); }
+.perm-list-row { display: flex; align-items: center; gap: var(--ui-space-2); }
+.perm-inline-input, .perm-inline-select {
+  min-height: 34px;
+  padding: 0 var(--ui-space-2);
+  border-radius: var(--ui-radius-sm);
+  border: 1px solid var(--ui-border-subtle);
+  background: var(--ui-surface-3);
+  color: var(--ui-text-primary);
+}
+.perm-inline-input { flex: 1; }
+.perm-inline-pin { flex: 0 0 92px; }
+.perm-inline-label { font-size: var(--ui-font-size-label); color: var(--ui-text-muted); text-transform: uppercase; }
+.perm-badge {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+  padding: 2px 6px; border-radius: var(--ui-radius-sm);
+  background: var(--ui-button-quiet-bg); color: var(--ui-text-muted);
+}
+.perm-add { align-self: flex-start; margin-top: var(--ui-space-2); }
+
+/* Modes section injected into the Settings menu */
+.perm-modes-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-1);
+  padding-bottom: var(--ui-space-2);
+  margin-bottom: var(--ui-space-2);
+  border-bottom: 1px solid var(--ui-border-subtle);
+}
+.perm-modes-title {
+  margin: 0 0 var(--ui-space-1) 0;
+  font-size: var(--ui-font-size-label);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ui-text-muted);
+}
+.perm-mode-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ui-space-2);
+  min-height: 34px;
+  padding: 0 var(--ui-space-3);
+  border-radius: var(--ui-radius-sm);
+  border: 1px solid var(--ui-border-subtle);
+  background: var(--ui-button-quiet-bg);
+  color: var(--ui-text-secondary);
+  font-weight: var(--ui-font-weight-medium);
+  cursor: pointer;
+  text-align: left;
+}
+.perm-mode-btn:hover { color: var(--ui-text-primary); border-color: var(--ui-border-strong); }
+.perm-mode-btn.is-active {
+  border-color: var(--ui-border-accent);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+}
+.perm-mode-btn-god { border-color: var(--ui-border-accent); }
+.perm-mode-check { font-size: 12px; }
+
+/* ==========================================================================
+   Notification UX pass: severity-visible bell/badge, colored rows, filter-chip
+   counts, a persistent critical banner, and transient arrival toasts.
+   ========================================================================== */
+
+/* Bell: amber for warnings, red pulse for criticals (critical dominates). */
+.topbar-notification-toggle.has-warning-notifications {
+  border-color: rgba(236, 191, 102, 0.65);
+  box-shadow: inset 0 0 0 1px rgba(255, 222, 151, 0.14), 0 0 10px rgba(230, 167, 61, 0.22);
+}
+.topbar-notification-toggle.has-critical-notifications {
+  animation: notif-bell-pulse 1.6s ease-in-out infinite;
+}
+@keyframes notif-bell-pulse {
+  0%, 100% { box-shadow: inset 0 0 0 1px rgba(255, 220, 220, 0.12), 0 0 8px rgba(214, 86, 86, 0.22); }
+  50% { box-shadow: inset 0 0 0 1px rgba(255, 220, 220, 0.2), 0 0 18px rgba(218, 95, 95, 0.55); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .topbar-notification-toggle.has-critical-notifications { animation: none; }
+}
+
+/* Badge colour by highest unacknowledged severity. */
+.topbar-notification-toggle .topbar-notification-badge.badge-critical {
+  background: var(--ui-error);
+  color: #fff;
+}
+.topbar-notification-toggle .topbar-notification-badge.badge-warning {
+  background: var(--ui-warning);
+  color: #1d1201;
+}
+
+/* Row left accent by severity (in addition to the existing icon/label tint). */
+.notification-card.severity-critical { border-left: 3px solid var(--ui-error); }
+.notification-card.severity-warning { border-left: 3px solid var(--ui-warning); }
+.notification-card.severity-info { border-left: 3px solid var(--ui-accent); }
+
+/* Filter-chip counts */
+.notification-chip-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  margin-left: 6px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  color: inherit;
+  font-size: 10px;
+  font-weight: var(--ui-font-weight-bold);
+  line-height: 16px;
+}
+
+/* Persistent critical banner across the top of the viewport. */
+.critical-notif-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 260;
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-3);
+  padding: 10px var(--ui-space-4);
+  background: linear-gradient(180deg, rgba(191, 63, 63, 0.98), rgba(150, 42, 42, 0.98));
+  border-bottom: 1px solid rgba(255, 190, 190, 0.4);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+  color: #fff;
+  font-weight: var(--ui-font-weight-semibold);
+}
+.critical-notif-banner[hidden] { display: none; }
+.critical-notif-banner-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  font-weight: var(--ui-font-weight-bold);
+}
+.critical-notif-banner-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.critical-notif-banner-view {
+  flex: none;
+  min-height: 30px;
+  padding: 0 var(--ui-space-3);
+  border-radius: var(--ui-radius-sm);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  font-weight: var(--ui-font-weight-semibold);
+  cursor: pointer;
+}
+.critical-notif-banner-view:hover { background: rgba(255, 255, 255, 0.26); }
+
+/* Arrival toasts (top-right stack). */
+.notification-toast-layer {
+  position: fixed;
+  top: 64px;
+  right: 16px;
+  z-index: 250;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-space-2);
+  width: min(360px, calc(100vw - 32px));
+  pointer-events: none;
+}
+.notification-toast {
+  pointer-events: auto;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas: "icon body close" "icon actions actions";
+  gap: 4px var(--ui-space-2);
+  padding: var(--ui-space-3);
+  border-radius: var(--ui-radius-md);
+  border: 1px solid var(--ui-border-strong);
+  border-left: 3px solid var(--ui-accent);
+  background: var(--ui-surface-overlay);
+  backdrop-filter: blur(var(--ui-overlay-blur));
+  box-shadow: var(--ui-shadow-panel);
+  color: var(--ui-text-primary);
+  animation: notif-toast-in 0.22s ease-out;
+}
+.notification-toast.severity-critical { border-left-color: var(--ui-error); }
+.notification-toast.severity-warning { border-left-color: var(--ui-warning); }
+.notification-toast.is-leaving { animation: notif-toast-out 0.2s ease-in forwards; }
+@keyframes notif-toast-in { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
+@keyframes notif-toast-out { to { opacity: 0; transform: translateX(16px); } }
+@media (prefers-reduced-motion: reduce) {
+  .notification-toast, .notification-toast.is-leaving { animation: none; }
+}
+.notification-toast-icon { grid-area: icon; width: 22px; height: 22px; }
+.notification-toast-icon svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+.notification-toast.severity-critical .notification-toast-icon { color: var(--ui-error); }
+.notification-toast.severity-warning .notification-toast-icon { color: var(--ui-warning); }
+.notification-toast-body { grid-area: body; min-width: 0; }
+.notification-toast-title { margin: 0; font-size: var(--ui-font-size-body); font-weight: var(--ui-font-weight-semibold); }
+.notification-toast-desc { margin: 2px 0 0; font-size: var(--ui-font-size-label); color: var(--ui-text-secondary); overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.notification-toast-actions { grid-area: actions; display: flex; gap: var(--ui-space-2); margin-top: 4px; }
+.notification-toast-actions button {
+  min-height: 28px;
+  padding: 0 var(--ui-space-3);
+  border-radius: var(--ui-radius-sm);
+  border: 1px solid var(--ui-border-subtle);
+  background: var(--ui-button-quiet-bg);
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-font-size-label);
+  font-weight: var(--ui-font-weight-medium);
+  cursor: pointer;
+}
+.notification-toast-view {
+  border-color: transparent !important;
+  background: var(--ui-button-primary-bg) !important;
+  color: var(--ui-button-primary-text) !important;
+}
+.notification-toast-close {
+  grid-area: close;
+  align-self: start;
+  width: 22px; height: 22px;
+  border: none; background: transparent;
+  color: var(--ui-text-muted); cursor: pointer; font-size: 13px;
+}
+.notification-toast-close:hover { color: var(--ui-text-primary); }

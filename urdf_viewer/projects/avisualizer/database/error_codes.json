@@ -1,0 +1,258 @@
+{
+  "version": 1,
+  "source": "M600 / Engine V4 error-code sheet",
+  "note": "Catalog of Engine/M600 fault codes. Keyed by class:code (the same code exists in both the error and warning catalogs with different meanings). Repetitive per-target faults (lasers 1-9, tools, fans) are stored once as a family with a `target` descriptor; the resolver expands the trailing index. Regenerate from the master Google Sheet with tools/import_error_codes.py.",
+  "modules": {
+    "200": "Engine / Master Controller (ECU)",
+    "103": "Module detection / Laser Control Unit (LCU)",
+    "106": "Process control / Head Control Unit (HCU)",
+    "108": "Protection glass / load cell",
+    "10F": "Argon flow / pressure",
+    "11F": "Oxygen sensors / inert bubble (IGC)"
+  },
+  "codes": [
+    {
+      "code": "200.0.0", "class": "error", "module": "200",
+      "title": "Controller node unresponsive",
+      "description": "No 'alive' communication from the main node — the master board is not receiving alive signals from the laser board.",
+      "cause": "The master controller (ECU) is not receiving 'alive' confirmation from the LCU (Laser Control Unit), or the CAN bus is open / non-functional.",
+      "engineAction": "Disengages safety",
+      "remediation": [
+        "Check that the Laser Control Unit module is powered and supervision LEDs are active.",
+        "Ensure the firmware is loaded and updated.",
+        "Inspect the wiring between the ECU and LCU modules and replace if necessary.",
+        "Replace the LCU module.",
+        "Replace the ECU module."
+      ]
+    },
+    {
+      "code": "200.1.0", "class": "error", "module": "200",
+      "title": "Digital output driver short circuit",
+      "description": "The digital output driver is short-circuited or overloaded.",
+      "cause": "A short circuit, or the 200mA consumption limit exceeded on one of the 8 digital outputs.",
+      "engineAction": "Disengages safety",
+      "remediation": ["Inspect the wiring and integration for false contacts or crushed wires."]
+    },
+    {
+      "code": "200.2.0", "class": "error", "module": "200",
+      "title": "Deploy encoder error (invalid value)",
+      "description": "The Z-axis encoder value is invalid, indicating an error or disconnection.",
+      "cause": "The ECU receives encoder values, but they are invalid.",
+      "engineAction": "Disengages safety",
+      "remediation": [
+        "Ensure the encoder is connected and blinking green.",
+        "Adjust the encoder position and ensure it is fully aligned with the magnetic strip at the correct distance."
+      ]
+    },
+    {
+      "code": "200.5.0", "class": "error", "module": "200",
+      "title": "Main chiller error — no Modbus communication",
+      "description": "Communication with the main chiller cannot be established.",
+      "cause": "Chiller is off, the cable is disconnected or damaged, or Modbus configuration is incorrect.",
+      "engineAction": "Disengages safety",
+      "remediation": [
+        "Reset the chiller's thermal protection.",
+        "Connect the Modbus data cable to the chiller and enable Modbus control mode.",
+        "Ensure the terminating resistor is activated on the last chiller and the address is correct.",
+        "Replace the chiller data cables (external then internal), then the chiller, then the Master Controller board."
+      ]
+    },
+    {
+      "code": "200.5.4", "class": "error", "module": "200",
+      "title": "Main chiller alarm active",
+      "description": "The main chiller has detected an internal condition that triggered an alarm.",
+      "cause": "Overheating, low refrigerant, defective components, or overpressure in the system.",
+      "engineAction": "Disengages safety",
+      "remediation": [
+        "Verify refrigerant flow and check for blockages.",
+        "Inspect the condenser for proper functioning and unobstructed fins.",
+        "Ensure condenser fans are operating optimally.",
+        "Check refrigerant levels and refill if necessary."
+      ]
+    },
+    {
+      "code": "200.7.1", "class": "error", "module": "200",
+      "title": "Analog flow too low",
+      "description": "Coolant flow from the main chiller (analog sensor) is below 8 L/min and insufficient for safe operation.",
+      "cause": "Chiller not operating correctly, obstruction, or low coolant level.",
+      "engineAction": "Disengages safety — halts all printing operations",
+      "remediation": ["Verify the chiller operates correctly and the sensor reads accurately.", "Check for obstructions or low coolant levels."]
+    },
+    {
+      "code": "103.0.0", "class": "error", "module": "103",
+      "title": "Machine control software not detected",
+      "description": "The control module does not detect the Meltio control software as active.",
+      "cause": "The Engine control software (PC) is not detected.",
+      "engineAction": "Disengages safety",
+      "remediation": ["Open the Engine control software.", "If it appears after a PCB/software update or restart, clear errors and continue."]
+    },
+    {
+      "code": "103.1.0", "class": "error", "module": "103",
+      "title": "Head Control Unit not detected",
+      "description": "The control module does not detect the Head Control Unit (HCU) module as active.",
+      "cause": "HCU not powered/connected, firmware not loaded, or harness fault.",
+      "engineAction": "Disengages safety",
+      "remediation": ["Check all cables and the head harness.", "Ensure the HCU board is powered, connected, LEDs blinking, and firmware loaded."]
+    },
+    {
+      "codePrefix": "103.6", "class": "error", "module": "103",
+      "target": { "type": "line", "from": 0, "to": 8, "label": "Line" },
+      "title": "Laser current out of range",
+      "description": "Abnormal current consumption outside the ±0.8A range ({target}). The line may have no power, or the laser/cable is damaged.",
+      "cause": "Line has no power, or the laser diode or its cable is damaged.",
+      "engineAction": "Disengages safety",
+      "remediation": ["Ensure the line has power.", "Check the cable from the power supply to the diode."]
+    },
+    {
+      "codePrefix": "103.7", "class": "error", "module": "103",
+      "target": { "type": "laser", "from": 0, "to": 8, "label": "Laser" },
+      "title": "Dimming output out of range",
+      "description": "{target} current-control dimming output is out of range.",
+      "cause": "Damaged IDC cable between the LCU and the source-management PCBs, or an LCU fault.",
+      "engineAction": "Disengages safety",
+      "remediation": ["Check the IDC cables between the Laser Control Unit and the source management PCBs.", "Replace the Laser Control Unit module if needed."]
+    },
+    {
+      "code": "106.0.0", "class": "error", "module": "106",
+      "title": "Process control recovery failed",
+      "description": "The process control system failed to recover the print — no base/head continuity for more than 5 seconds.",
+      "cause": "Material depletion, feeder jamming/malfunction, nozzle clogging, or misconfigured process control type.",
+      "engineAction": "Disengages safety",
+      "remediation": [
+        "Verify there is material on the spool and the feeder is not jammed.",
+        "Confirm the ground reference is connected to the printing base.",
+        "Check that the load resistor is properly connected on the HCU board."
+      ]
+    },
+    {
+      "codePrefix": "106.1", "class": "error", "module": "106",
+      "target": { "type": "laser", "from": 0, "to": 8, "label": "Laser" },
+      "title": "Laser over-temperature detected",
+      "description": "The temperature detected in {target} exceeds 70°C.",
+      "cause": "Cooling insufficient, bypass open, circuit blockage, damaged diode, or dirty lenses.",
+      "engineAction": "Disengages safety",
+      "remediation": [
+        "Check the chiller operates correctly and the bypass is closed.",
+        "Ensure there are no blockages in the chiller circuit.",
+        "Confirm the diode is not damaged and the lenses are clean."
+      ]
+    },
+    {
+      "codePrefix": "106.2", "class": "error", "module": "106",
+      "target": { "type": "laser", "from": 0, "to": 8, "label": "Laser" },
+      "title": "Laser temperature sensor fault — open circuit",
+      "description": "The temperature sensor in {target} is disconnected or has an open circuit.",
+      "cause": "Loose IDC cable (Blue Ring ↔ HCU), laser not connected to the Blue Ring, or loose laser connector.",
+      "engineAction": "Disengages safety",
+      "remediation": ["Check the IDC cable between the Blue Ring and the HCU.", "Confirm the laser is connected to the Blue Ring and its connector is secure."]
+    },
+    {
+      "codePrefix": "106.4", "class": "error", "module": "106",
+      "target": { "type": "tool", "from": 0, "to": 1, "label": "Feeder T" },
+      "title": "Extruder motor error",
+      "description": "The {target} feeder motor has entered alarm mode or is disconnected.",
+      "cause": "Material jam/knot, or motor not powered / data cable disconnected / 75V supply fault.",
+      "engineAction": "Disengages safety",
+      "remediation": ["Check material is not jammed and there are no knots on the spool.", "Ensure the motor is powered, the data cable connected, and the 75V supply working."]
+    },
+    {
+      "code": "106.7.0", "class": "error", "module": "106",
+      "title": "Head collision detected",
+      "description": "Electrical continuity between the head and the printing base was detected while lasers were disabled and safety was active.",
+      "cause": "Head contacting the base with lasers disabled; retraction distance too short or pulley tension off.",
+      "engineAction": "Disengages safety",
+      "remediation": ["Avoid head-to-base contact when lasers are disabled.", "Check the retraction distance and pulley tension."]
+    },
+    {
+      "code": "108.0.0", "class": "error", "module": "108",
+      "title": "Broken protection glass detected",
+      "description": "The head's protective glass has been detected as broken (cover glass sensor open).",
+      "cause": "Protective glass broken or collision sensor disconnected.",
+      "engineAction": "Disengages safety",
+      "remediation": ["Replace the protective glass.", "Check the collision sensor connection."]
+    },
+    {
+      "code": "10F.0.0", "class": "error", "module": "10F",
+      "title": "Argon flow did not reach target",
+      "description": "Argon flow deviated from target by more than 3 L/min for the past minute.",
+      "cause": "Depleted inert gas block/cylinder or insufficient supply pressure.",
+      "engineAction": "Disengages safety",
+      "remediation": ["Replace the inert gas block or cylinder.", "Increase supply line pressure to a minimum of 4 bar."]
+    },
+    {
+      "codePrefix": "11F.0", "class": "error", "module": "11F",
+      "target": { "type": "state", "from": 0, "to": 1, "labels": ["sensor not responding", "invalid message received"] },
+      "title": "Oxygen sensor 0–1000 ppm error",
+      "description": "0–1000 ppm oxygen sensor: {target}.",
+      "cause": "No / invalid Modbus communication with the SEnz-Tx 0–1000 ppm precision oxygen sensor.",
+      "engineAction": "Disengages safety",
+      "remediation": ["Check the connection between the Inert Bubble Control Unit and the 0–1000 ppm oxygen sensor."]
+    },
+    {
+      "code": "11F.3.0", "class": "error", "module": "11F",
+      "title": "Differential pressure sensor error",
+      "description": "No communication with the differential pressure sensor.",
+      "cause": "Sensor communication lost.",
+      "engineAction": "Disengages safety",
+      "remediation": ["Restart the Inert Bubble Control Unit.", "If the issue persists, replace the IGC PCB."]
+    },
+
+    {
+      "code": "200.2.0", "class": "warning", "module": "200",
+      "title": "Safety line opened in integration",
+      "description": "The safety line is open due to external factors in the integration.",
+      "cause": "External integration factor opened the safety line.",
+      "engineAction": "Stops operations until the line is closed.",
+      "remediation": ["Investigate the integration setup for safety-line issues."]
+    },
+    {
+      "code": "200.3.0", "class": "warning", "module": "200",
+      "title": "Safety line opened by local E-stop",
+      "description": "The safety line was opened by the local emergency-stop button.",
+      "cause": "Emergency stop engaged locally.",
+      "engineAction": "Verify emergency conditions and reset as needed.",
+      "remediation": ["Confirm local safety before re-engaging the system."]
+    },
+    {
+      "code": "200.9.0", "class": "warning", "module": "200",
+      "title": "Control unit temperature out of range",
+      "description": "Control unit overheating > 50°C. Fan automatically started at maximum power.",
+      "cause": "Internal control-unit temperature sensor exceeded 50°C.",
+      "engineAction": "Fan activated to prevent further heating.",
+      "remediation": ["Monitor the control unit and consider external cooling measures."]
+    },
+    {
+      "codePrefix": "200.10", "class": "warning", "module": "200",
+      "target": { "type": "state", "from": 0, "to": 3, "labels": ["driver alarm", "Fan 0 failure", "Fan 1 failure", "fan driver not present"] },
+      "title": "Extraction fan error",
+      "description": "Extraction fan: {target}.",
+      "cause": "Fan driver circuitry issue or a fan not present / not working.",
+      "engineAction": "Fans may default to maximum power.",
+      "remediation": ["Check fan wiring, power and presence.", "Repair or replace the fan or its driver; replace the ECU if the driver is missing."]
+    },
+    {
+      "code": "106.3.0", "class": "warning", "module": "106",
+      "title": "Head collision detected but ignored",
+      "description": "A head collision with the base was detected, but collision prevention is currently disabled.",
+      "cause": "Collision prevention system disabled.",
+      "engineAction": "The system continues running.",
+      "remediation": ["Ensure this setting is intentional.", "Enable collision prevention to ensure safe operation."]
+    },
+    {
+      "code": "10F.0.0", "class": "warning", "module": "10F",
+      "title": "Argon pressure too low",
+      "description": "Argon input pressure is below 2 bar.",
+      "cause": "Low argon supply pressure.",
+      "engineAction": "Increase argon supply pressure.",
+      "remediation": ["Check the supply line and increase pressure if possible."]
+    },
+    {
+      "code": "11F.4.0", "class": "warning", "module": "11F",
+      "title": "Inert bubble overpressure detected",
+      "description": "Internal pressure exceeds 100 Pa (upper safety threshold).",
+      "cause": "Exhaust obstruction or pressure-regulation issue.",
+      "engineAction": "Reduces argon flow to 20 L/min (or stops it), and stops the air inlet if active.",
+      "remediation": ["Check for obstructions in the exhaust outlet or pressure regulation.", "Ensure the outlet valve operates correctly.", "Adjust argon flow settings if necessary."]
+    }
+  ]
+}

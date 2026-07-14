@@ -1,9 +1,13 @@
 :root {
-  --bg: #0f1620;
-  --panel-bg: rgba(18, 26, 36, 0.92);
-  --text: #cfe8ff;
-  --muted: #7e94aa;
-  --accent: rgb(118, 179, 255);
+  /* UI-chrome tokens aligned to the avisualizer viewer's design system so the
+     embedded slicer shares one palette/typography with the host app. The
+     toolpath visualization colors below (--perimeter/--infill/--support/…) are
+     semantic 3D colors and are intentionally left unchanged. */
+  --bg: #080f17;
+  --panel-bg: rgba(13, 22, 34, 0.9);
+  --text: #e9f2ff;
+  --muted: #8fa3bb;
+  --accent: #5ebcff;
   --perimeter: #4aa3ff;
   --perimeter-inner: #2f74c9;
   --infill: #ff8c26;
@@ -45,7 +49,7 @@ body {
   overscroll-behavior: none; /* no pull-to-refresh / bounce over the 3D view */
   background: var(--bg);
   color: var(--text);
-  font-family: "Segoe UI", system-ui, sans-serif;
+  font-family: "Inter", "Segoe UI Variable", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
 #scene {
@@ -1652,6 +1656,65 @@ html.dock body[data-section="preview"] .panel-section[data-group="preview"]:not(
 html.dock body[data-section="slice"] .panel-section[data-group="slice"] + .panel-section[data-group="slice"],
 html.dock body[data-section="preview"] .panel-section[data-group="preview"] + .panel-section[data-group="preview"]:not([hidden]) {
   padding-top: 10px; margin-top: 10px; border-top: 1px solid rgba(118, 179, 255, 0.12);
+}
+
+/* Slice + View pop-up buttons match the Model tiles (.model-tool-btn): same
+   dimensions (66px tall, centred content) and chrome, laid out as one tile row.
+   Scoped to html.dock so the standalone desktop/mobile slicer is untouched. */
+html.dock body[data-section="slice"] .panel-section[data-group="slice"] {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+html.dock .panel-section[data-group="slice"] > .section-title,
+html.dock .panel-section[data-group="slice"] > .profile-row {
+  grid-column: 1 / -1;
+}
+/* Let the individual button rows dissolve so their buttons become cells of the
+   section's 4-column tile grid (Slice + Simulate / Profile / Save / Export). */
+html.dock .panel-section[data-group="slice"] > .row:not(.profile-row) {
+  display: contents;
+}
+html.dock .panel-section[data-group="slice"] button:not([hidden]) {
+  min-height: 66px;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 5px;
+  margin: 0;
+  padding: 10px 8px;
+  font-size: 12px;
+  line-height: 1.1;
+  text-align: center;
+}
+/* The primary Slice + Simulate CTA spans two cells so the tile row fills evenly
+   (Slice + Simulate / Profile / Save) with no trailing gap. */
+html.dock body[data-section="slice"] .panel-section[data-group="slice"] #sliceButton {
+  grid-column: span 2;
+}
+
+/* View pop-up: turn the connected segmented control into separated Model-style
+   tiles (66px, bordered, accent-active) instead of a thin joined bar. */
+html.dock .panel-section[data-group="preview"] .segmented {
+  border: 0;
+  border-radius: 0;
+  overflow: visible;
+  gap: 8px;
+}
+html.dock .panel-section[data-group="preview"] .segmented label,
+html.dock .panel-section[data-group="preview"] .segmented label + label {
+  min-height: 66px;
+  padding: 10px 8px;
+  border: 1px solid rgba(118, 179, 255, 0.4);
+  border-radius: 6px;
+  background: #16202c;
+  font-size: 12px;
+}
+html.dock .panel-section[data-group="preview"] .segmented label:has(input:checked) {
+  border-color: var(--accent, #4aa3ff);
+  background: rgba(74, 163, 255, 0.18);
+  color: #fff;
 }
 
 /* --- Top notification banner (slice / out-of-bounds prompts) -------------- */
