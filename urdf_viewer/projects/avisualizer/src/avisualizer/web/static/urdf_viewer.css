@@ -8559,11 +8559,8 @@ body.light-mode .bottom-nav .bottom-nav-item[aria-pressed="true"] {
   color: #1a1a1a !important;
 }
 
-.bottom-nav .bottom-nav-item.is-active::before,
-.bottom-nav .bottom-nav-item[aria-pressed="true"]::before {
-  background: var(--ui-accent) !important;
-  box-shadow: 0 0 10px rgba(240, 145, 58, 0.35) !important;
-}
+/* Active marker line: ONLY the bottom (::after) edge lights up. The top
+   (::before) bar stays transparent — see the active state above (removed). */
 .bottom-nav .bottom-nav-item.is-active::after,
 .bottom-nav .bottom-nav-item[aria-pressed="true"]::after {
   background: var(--ui-accent);
@@ -8673,3 +8670,54 @@ body.light-mode .topbar-icon[aria-expanded="true"] .ui-img-icon {
 
 /* A bit wider gap between the top-right icons. */
 .topbar-right { gap: 16px; }
+
+/* ---- Materials tab: spool spins + pays out filament from its side ---------
+   On activate the .spool-spin body (rim + hub + spoke) rotates about the hub —
+   the spoke makes the spin read — while the .spool-wire strand is drawn out of
+   the rim's side and upward via stroke-dashoffset (pathLength=100). Idle = wire
+   fully offset (retracted into the spool) + body unrotated; deactivating spins
+   it back and pulls the wire in. The whole glyph also lights accent via the
+   shared .is-active rule above.
+   transform-box:fill-box + centre => rotation origin is the rim bbox centre
+   (= the hub), since the spoke sits inside the rim's extent. */
+#navMaterialsToggle .spool-spin {
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform 560ms cubic-bezier(0.34, 1.02, 0.42, 1);
+}
+#navMaterialsToggle.is-active .spool-spin,
+#navMaterialsToggle[aria-pressed="true"] .spool-spin {
+  /* Negative = counter-clockwise on activate; the return to 0 on deactivate then
+     runs clockwise. */
+  transform: rotate(-160deg);
+}
+#navMaterialsToggle .spool-wire {
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+  transition: stroke-dashoffset 560ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+#navMaterialsToggle.is-active .spool-wire,
+#navMaterialsToggle[aria-pressed="true"] .spool-wire {
+  stroke-dashoffset: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  #navMaterialsToggle .spool-spin,
+  #navMaterialsToggle .spool-wire { transition: none; }
+}
+
+/* ---- Top Door: side arrows signal the roof lifting ------------------------
+   The open (roof-lifted) glyph carries .roof-arrows — two up-arrows beside the
+   eaves. They rise + fade in when the open glyph is rendered (cover opening),
+   so the lift reads at a glance. Without the animation (reduced motion) they
+   simply show, since the default state is fully visible. */
+#annotationNavTopCover .roof-arrows {
+  animation: top-door-arrows-rise 480ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes top-door-arrows-rise {
+  0%   { opacity: 0; transform: translateY(3px); }
+  55%  { opacity: 1; }
+  100% { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  #annotationNavTopCover .roof-arrows { animation: none; }
+}

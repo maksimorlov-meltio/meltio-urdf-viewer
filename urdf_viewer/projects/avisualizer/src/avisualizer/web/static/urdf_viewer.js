@@ -795,30 +795,59 @@ const TOP_COVER_BUTTON_CLOSE_RESET_DURATION_MS = 980;
 const TOP_COVER_BUTTON_PERP_Y_SIDE = -1;
 const TOP_COVER_BUTTON_Y_ROTATION_RAD = THREE.MathUtils.degToRad(30);
 const NAV_FILES_ICON_FILES_SVG = '<path d="M4 5h10l6 6v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5Z" /><path d="M14 5v6h6" />';
-// Materials + Files nav icons morph outline -> solid when their menu is open (the
-// "active = solid fill" selection style). The solid subpaths carry .nav-icon-solid
-// so CSS fills them with the accent; the outline variants use the shared stroke.
+// Materials spool: a realistic filament reel that spins and pays out wire.
+//   .spool-spin  = the outer flange rim, the wound-filament coil (an inner ring
+//                  with a small GAP on the upper-right where the strand leaves —
+//                  this loose-end gap both looks like real wound filament AND
+//                  makes the spin visible, since a bare ring can't), and a large
+//                  centre hub bore. It ROTATES on activate. Its bbox is the rim,
+//                  so a fill-box/centre transform-origin turns it about the hub.
+//   .spool-wire  = a straight strand rooted at the RIGHT CORNER of the rim that
+//                  feeds up; drawn via stroke-dashoffset (pathLength=100), so
+//                  idle = retracted into the spool, active = fed out the side.
 const SPOOL_ICON_OUTLINE_SVG =
-  '<circle cx="12" cy="12" r="7.4" /><circle cx="12" cy="12" r="2.4" /><path d="M12 4.5v2.6M12 16.9v2.6M4.5 12h2.6M16.9 12h2.6" />';
-const SPOOL_ICON_SOLID_SVG =
-  '<path class="nav-icon-solid" fill-rule="evenodd" clip-rule="evenodd" d="M12 3.4a8.6 8.6 0 1 0 0 17.2 8.6 8.6 0 0 0 0-17.2Zm0 6.1a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Z" />';
-const FILES_ICON_OUTLINE_SVG = '<path d="M8 3h6l4 4v14H8z" /><path d="M14 3v4h4" />';
-const FILES_ICON_SOLID_SVG = '<path class="nav-icon-solid" d="M8 3h6v4h4v14H8z" />';
+  '<g class="spool-spin">' +
+    '<circle cx="11.5" cy="14" r="6.6" />' +
+    '<path d="M15.88 12.99A4.5 4.5 0 1 1 14.21 10.41" />' +
+    '<circle cx="11.5" cy="14" r="2.5" />' +
+  '</g>' +
+  '<path class="spool-wire" pathLength="100" d="M17.03 10.41V3.2" />';
+// Files nav icon morphs outline -> solid when its menu is open (the "active =
+// solid fill" selection style): a FOLDER, closed outline vs. filled accent. The
+// solid subpath carries .nav-icon-solid so CSS fills it with the accent.
+const FILES_ICON_OUTLINE_SVG =
+  '<path d="M4 7a1.6 1.6 0 0 1 1.6-1.6h3.2l1.8 2.2h7.8A1.6 1.6 0 0 1 20 9.2V18a1.6 1.6 0 0 1-1.6 1.6H5.6A1.6 1.6 0 0 1 4 18V7Z" />';
+const FILES_ICON_SOLID_SVG =
+  '<path class="nav-icon-solid" d="M4 7a1.6 1.6 0 0 1 1.6-1.6h3.2l1.8 2.2h7.8A1.6 1.6 0 0 1 20 9.2V18a1.6 1.6 0 0 1-1.6 1.6H5.6A1.6 1.6 0 0 1 4 18V7Z" />';
 // Door button icon set: a closed-door glyph and an ajar (open) glyph that swap
 // with the door state, plus the stop-square it becomes while a print is underway
 // (see updateBottomNavState / the door click handler).
 const NAV_DOOR_ICON_DOOR_SVG =
   '<path d="M6 3h12v18H6z" /><path d="M10 3v18" /><circle cx="14.5" cy="12" r="0.9" />';
+// Ajar (open) glyph mirrored so the door opens from the RIGHT — hinge on the
+// left, free edge + knob on the right — matching the closed glyph (knob right).
 const NAV_DOOR_ICON_DOOR_OPEN_SVG =
-  '<path d="M3 21h18" /><path d="M14 3l-8 2v15h8z" /><circle cx="8" cy="12.5" r="0.9" />';
+  '<path d="M3 21h18" /><path d="M10 3l8 2v15h-8z" /><circle cx="16" cy="12.5" r="0.9" />';
 const NAV_DOOR_ICON_STOP_SVG = '<rect x="6" y="6" width="12" height="12" rx="1.5" />';
-// Top-cover glyphs: a HOUSE whose ROOF lifts when the cover is open. Closed = roof
-// seated on the walls; open = roof raised, leaving a gap above the (fixed) walls,
-// so the "lid up" state reads at a glance.
+// Top-cover glyphs: a HOUSE (closed-triangle roof on a square body, with a
+// centred arched double-door) whose ROOF lifts when the cover is open. The roof
+// is a closed triangle whose base caps the open-topped walls, so closed = a
+// proper house silhouette; open = the whole roof translated up ~2u AND two side
+// arrows (.roof-arrows) appear beside the eaves, rising in to signal the lift
+// (see #annotationNavTopCover .roof-arrows CSS). The roof is narrowed to x4..20
+// so the arrows have room to sit outside the eaves.
+const TOP_DOOR_ICON_DOOR = 'M10 21V15.5H14V21';
+// Walls are a CLOSED box: the top edge (y11) stays drawn even when the roof
+// lifts off, so the house body keeps its full outline under the raised lid.
+const TOP_DOOR_ICON_WALLS = 'M6 11H18V21H6Z';
+const TOP_DOOR_ICON_ARROWS =
+  '<path class="roof-arrows" d="M2.5 5.5V2.5M1.3 3.9 2.5 2.5 3.7 3.9M21.5 5.5V2.5M20.3 3.9 21.5 2.5 22.7 3.9" />';
 const TOP_DOOR_ICON_CLOSED_SVG =
-  '<path d="M4 11l8-5.5 8 5.5" /><path d="M6.5 11v7.5h11v-7.5" />';
+  '<path d="M4 11L12 5L20 11Z" /><path d="' + TOP_DOOR_ICON_WALLS + '" /><path d="' + TOP_DOOR_ICON_DOOR + '" />';
+// Open: roof lifted a full 3.5u above the box top line (was ~2u) — clearly higher.
 const TOP_DOOR_ICON_OPEN_SVG =
-  '<path d="M4 8l8-5.5 8 5.5" /><path d="M6.5 11v7.5h11v-7.5" />';
+  '<path d="M4 7.5L12 1.5L20 7.5Z" /><path d="' + TOP_DOOR_ICON_WALLS + '" /><path d="' + TOP_DOOR_ICON_DOOR + '" />' +
+  TOP_DOOR_ICON_ARROWS;
 const ANNOTATION_UPDATE_INTERVAL_MS = 0;
 const ANNOTATION_CLICK_ACTIVE_HOLD_MS = 2200;
 const ENABLE_ANNOTATION_OCCLUSION = false;
@@ -16250,12 +16279,11 @@ function updateBottomNavState() {
     navMaterialsToggleEl.classList.toggle("is-active", isMaterialsMenuOpen);
     navMaterialsToggleEl.disabled = false;
     const matIconEl = navMaterialsToggleEl.querySelector("svg");
-    if (matIconEl) {
-      const matIconMode = isMaterialsMenuOpen ? "solid" : "outline";
-      if (matIconEl.dataset.mode !== matIconMode) {
-        matIconEl.innerHTML = isMaterialsMenuOpen ? SPOOL_ICON_SOLID_SVG : SPOOL_ICON_OUTLINE_SVG;
-        matIconEl.dataset.mode = matIconMode;
-      }
+    if (matIconEl && matIconEl.dataset.mode !== "spool") {
+      // Constant spool glyph; the active state lights it accent + spins it a
+      // quarter-turn via CSS (see #navMaterialsToggle svg), no glyph swap.
+      matIconEl.innerHTML = SPOOL_ICON_OUTLINE_SVG;
+      matIconEl.dataset.mode = "spool";
     }
   }
 
