@@ -598,11 +598,6 @@ groundShadowPlane.receiveShadow = true;
 groundShadowPlane.visible = ENABLE_REALTIME_SHADOWS;
 scene.add(groundShadowPlane);
 
-const axes = new THREE.AxesHelper(0.4);
-axes.position.set(-0.65, -0.65, 0.02);
-scene.add(axes);
-addAxesLabels(axes, 0.4);
-
 const gltfLoader = new GLTFLoader();
 const objLoader = new OBJLoader();
 const stlLoader = new STLLoader();
@@ -724,6 +719,9 @@ const CLOUD_PRINT_SIM_AUTO_START_ON_LOAD = false;
 const CLOUD_STL_DROP_ALIGN_DURATION_SEC = 1.0;
 const MOTION_PRESET_DURATION_SEC = 1.3;
 const PALPADOR_SWEEP_DURATION_SEC = 0.9;
+// Palpador position toggle (Controls ▸ Move): ON glides the probe to its RIGHT
+// (deployed) limit, OFF back to its LEFT (home) limit. Deliberately slow/smooth.
+const PALPADOR_TOGGLE_DURATION_SEC = 2.6;
 // Print-position preset (also the target of the pre-print homing routine).
 const PRINT_POSITION_Z_MM = 500;
 const PRINT_POSITION_X_MM = 143;
@@ -797,6 +795,15 @@ const TOP_COVER_BUTTON_CLOSE_RESET_DURATION_MS = 980;
 const TOP_COVER_BUTTON_PERP_Y_SIDE = -1;
 const TOP_COVER_BUTTON_Y_ROTATION_RAD = THREE.MathUtils.degToRad(30);
 const NAV_FILES_ICON_FILES_SVG = '<path d="M4 5h10l6 6v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5Z" /><path d="M14 5v6h6" />';
+// Materials + Files nav icons morph outline -> solid when their menu is open (the
+// "active = solid fill" selection style). The solid subpaths carry .nav-icon-solid
+// so CSS fills them with the accent; the outline variants use the shared stroke.
+const SPOOL_ICON_OUTLINE_SVG =
+  '<circle cx="12" cy="12" r="7.4" /><circle cx="12" cy="12" r="2.4" /><path d="M12 4.5v2.6M12 16.9v2.6M4.5 12h2.6M16.9 12h2.6" />';
+const SPOOL_ICON_SOLID_SVG =
+  '<path class="nav-icon-solid" fill-rule="evenodd" clip-rule="evenodd" d="M12 3.4a8.6 8.6 0 1 0 0 17.2 8.6 8.6 0 0 0 0-17.2Zm0 6.1a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Z" />';
+const FILES_ICON_OUTLINE_SVG = '<path d="M8 3h6l4 4v14H8z" /><path d="M14 3v4h4" />';
+const FILES_ICON_SOLID_SVG = '<path class="nav-icon-solid" d="M8 3h6v4h4v14H8z" />';
 // Door button icon set: a closed-door glyph and an ajar (open) glyph that swap
 // with the door state, plus the stop-square it becomes while a print is underway
 // (see updateBottomNavState / the door click handler).
@@ -805,11 +812,13 @@ const NAV_DOOR_ICON_DOOR_SVG =
 const NAV_DOOR_ICON_DOOR_OPEN_SVG =
   '<path d="M3 21h18" /><path d="M14 3l-8 2v15h8z" /><circle cx="8" cy="12.5" r="0.9" />';
 const NAV_DOOR_ICON_STOP_SVG = '<rect x="6" y="6" width="12" height="12" rx="1.5" />';
-// Top-cover glyphs: a sealed box (closed) and a box with its lid raised (open).
+// Top-cover glyphs: a HOUSE whose ROOF lifts when the cover is open. Closed = roof
+// seated on the walls; open = roof raised, leaving a gap above the (fixed) walls,
+// so the "lid up" state reads at a glance.
 const TOP_DOOR_ICON_CLOSED_SVG =
-  '<path d="M5 9h14v11H5z" /><path d="M5 13h14" />';
+  '<path d="M4 11l8-5.5 8 5.5" /><path d="M6.5 11v7.5h11v-7.5" />';
 const TOP_DOOR_ICON_OPEN_SVG =
-  '<path d="M5 13h14v7H5z" /><path d="M5 13l7-4 7 4" /><path d="M12 3v4" /><path d="M10 5l2-2 2 2" />';
+  '<path d="M4 8l8-5.5 8 5.5" /><path d="M6.5 11v7.5h11v-7.5" />';
 const ANNOTATION_UPDATE_INTERVAL_MS = 0;
 const ANNOTATION_CLICK_ACTIVE_HOLD_MS = 2200;
 const ENABLE_ANNOTATION_OCCLUSION = false;
@@ -11977,6 +11986,25 @@ function runPalpadorSweepAction() {
   return true;
 }
 
+// Palpador as a POSITION TOGGLE (not a one-shot sweep): deployed = glide to the
+// RIGHT limit, home = glide back to the LEFT limit. Slow + smooth via the shared
+// joint-motion tween. Returns the resulting deployed state (or null if the joint
+// is unavailable) so the caller can sync the button.
+function setPalpadorDeployed(deployed) {
+  const state = getJointStateByName(PALPADOR_PRO_JOINT);
+  if (!state || state.kind !== "linear") {
+    setMotionStatus("Palpador unavailable");
+    return null;
+  }
+  clearPalpadorSweepTimeout(); // cancel any legacy auto-return sweep still pending
+  const right = Math.max(state.lower, state.upper); // deployed (right)
+  const left = Math.min(state.lower, state.upper);  // home (left)
+  moveJointToValue(state, deployed ? right : left, PALPADOR_TOGGLE_DURATION_SEC);
+  setMotionStatus(deployed ? "Palpador → right (deployed)" : "Palpador → left (home)");
+  if (palpadorSweepButtonEl) palpadorSweepButtonEl.setAttribute("aria-pressed", deployed ? "true" : "false");
+  return deployed;
+}
+
 function clearPendingFrontDoorSequence() {
   if (frontDoorSequenceStartTimeoutId !== null) {
     clearTimeout(frontDoorSequenceStartTimeoutId);
@@ -16178,7 +16206,11 @@ function updateBottomNavState() {
     }
 
     if (navFilesIconEl) {
-      navFilesIconEl.innerHTML = NAV_FILES_ICON_FILES_SVG;
+      const filesIconMode = isFilesModeActive ? "solid" : "outline";
+      if (navFilesIconEl.dataset.mode !== filesIconMode) {
+        navFilesIconEl.innerHTML = isFilesModeActive ? FILES_ICON_SOLID_SVG : FILES_ICON_OUTLINE_SVG;
+        navFilesIconEl.dataset.mode = filesIconMode;
+      }
     }
   }
 
@@ -16217,6 +16249,14 @@ function updateBottomNavState() {
     navMaterialsToggleEl.setAttribute("aria-pressed", isMaterialsMenuOpen ? "true" : "false");
     navMaterialsToggleEl.classList.toggle("is-active", isMaterialsMenuOpen);
     navMaterialsToggleEl.disabled = false;
+    const matIconEl = navMaterialsToggleEl.querySelector("svg");
+    if (matIconEl) {
+      const matIconMode = isMaterialsMenuOpen ? "solid" : "outline";
+      if (matIconEl.dataset.mode !== matIconMode) {
+        matIconEl.innerHTML = isMaterialsMenuOpen ? SPOOL_ICON_SOLID_SVG : SPOOL_ICON_OUTLINE_SVG;
+        matIconEl.dataset.mode = matIconMode;
+      }
+    }
   }
 
   if (annotationNavTopCoverEl) {
@@ -17853,9 +17893,12 @@ if (printPositionButtonEl) {
 }
 
 if (palpadorSweepButtonEl) {
+  palpadorSweepButtonEl.setAttribute("aria-pressed", "false"); // starts at left/home
   palpadorSweepButtonEl.addEventListener("click", () => {
     markUserActivity();
-    runPalpadorSweepAction();
+    if (!canOperateMotion()) return;
+    const nextDeployed = palpadorSweepButtonEl.getAttribute("aria-pressed") !== "true";
+    setPalpadorDeployed(nextDeployed);
   });
 }
 
@@ -18184,6 +18227,13 @@ refreshChillerSettingsUI();
 // metres, so mm/1000. WD reads the palpador/probe joint.
 let moveStepMm = 10;
 const MOVE_AXIS_JOINT = { x: EJE_X_JOINT, y: EJE_Y_JOINT, z: Z_AXIS_JOINT };
+// Smooth jog: glide the axis to its next step (constant velocity feel) instead of
+// snapping it there. Repeated presses accumulate from the last COMMANDED target
+// (not the mid-glide value) so N taps always equal N steps, even mid-motion.
+const JOG_SPEED_MM_S = 45;          // jog velocity used to derive the glide time
+const JOG_MIN_DURATION_SEC = 0.12;  // floor so a tiny step still eases, never snaps
+const HOME_DURATION_SEC = MOTION_PRESET_DURATION_SEC;
+const moveJogTargetM = { x: null, y: null, z: null };
 const moveReadoutEls = {
   x: document.getElementById("movePosX"),
   y: document.getElementById("movePosY"),
@@ -18197,25 +18247,53 @@ function updateMoveReadout() {
   if (moveReadoutEls.z) moveReadoutEls.z.textContent = fmt(Z_AXIS_JOINT);
   if (moveReadoutEls.wd) moveReadoutEls.wd.textContent = fmt(PALPADOR_PRO_JOINT);
 }
-function jogMoveAxis(axis, dir) {
+function canOperateMotion() {
   // Defense in depth: re-check the capability inside the handler, never trusting
   // the DOM's disabled state alone. A scripted/assistive-tech activation that
   // slips past the visual gate must still be refused here.
-  if (window.MeltioPermissions && typeof window.MeltioPermissions.can === "function"
-      && !window.MeltioPermissions.can("machine.motion")) {
-    return;
-  }
+  return !(window.MeltioPermissions && typeof window.MeltioPermissions.can === "function"
+    && !window.MeltioPermissions.can("machine.motion"));
+}
+function jogMoveAxis(axis, dir) {
+  if (!canOperateMotion()) return;
   const name = MOVE_AXIS_JOINT[axis];
   const state = name ? getJointStateByName(name) : null;
   if (!state) return;
   const deltaInternal = dir * (moveStepMm / 1000);
-  const next = Math.max(state.lower, Math.min(state.upper, state.value + deltaInternal));
-  setJointValue(state, next);
-  updateMoveReadout();
+  // While a glide is already running for this axis, keep stacking onto the last
+  // commanded target; otherwise start from where the axis actually is.
+  const transitionKey = `joint-preset:${state.name}`;
+  const base = (jointControlTransitions.has(transitionKey) && moveJogTargetM[axis] != null)
+    ? moveJogTargetM[axis] : state.value;
+  const next = Math.max(state.lower, Math.min(state.upper, base + deltaInternal));
+  moveJogTargetM[axis] = next;
+  // Constant-velocity feel: glide time scales with the distance actually travelled.
+  const distanceMm = Math.abs(next - state.value) * 1000;
+  const duration = Math.max(distanceMm / JOG_SPEED_MM_S, JOG_MIN_DURATION_SEC);
+  moveJointToValue(state, next, duration); // live readout + render handled by animate()
+  markUserActivity();
+}
+function homeMoveAxes(which) {
+  if (!canOperateMotion()) return;
+  const axes = which === "z" ? ["z"] : ["x", "y"];
+  let moved = false;
+  for (const axis of axes) {
+    const name = MOVE_AXIS_JOINT[axis];
+    const state = name ? getJointStateByName(name) : null;
+    if (!state) continue;
+    const target = Math.max(state.lower, Math.min(state.upper, 0)); // home = origin (readout 0.0)
+    moveJogTargetM[axis] = target;
+    moveJointToValue(state, target, HOME_DURATION_SEC);
+    moved = true;
+  }
+  if (moved) setMotionStatus(which === "z" ? "Homing Z" : "Homing XY");
   markUserActivity();
 }
 document.querySelectorAll("[data-move-axis]").forEach((btn) => {
   btn.addEventListener("click", () => jogMoveAxis(btn.getAttribute("data-move-axis"), Number(btn.getAttribute("data-move-dir")) || 1));
+});
+document.querySelectorAll("[data-move-home]").forEach((btn) => {
+  btn.addEventListener("click", () => homeMoveAxes(btn.getAttribute("data-move-home")));
 });
 document.querySelectorAll("[data-move-step]").forEach((btn) => {
   btn.addEventListener("click", () => {

@@ -2154,7 +2154,7 @@ body.cloud-menu-open .bottom-nav {
 
 .topbar-settings-menu {
   position: absolute;
-  top: calc(100% + 10px);
+  top: calc(100% + 20px);
   right: 0;
   z-index: 24;
   width: min(360px, calc(100vw - 20px));
@@ -2641,10 +2641,16 @@ body.cloud-menu-open .bottom-nav {
   box-shadow: none;
 }
 
-body.light-mode .status-panel.app-topbar,
-body.light-mode .bottom-nav {
+body.light-mode .status-panel.app-topbar {
   border-color: rgba(55, 55, 55, 0.2);
   background: linear-gradient(180deg, rgba(255, 251, 248, 0.9), rgba(255, 248, 242, 0.9));
+}
+
+/* Option-3 bottom nav is card-less in both themes: just a hairline under the bar. */
+body.light-mode .bottom-nav {
+  border-color: transparent;
+  border-bottom-color: rgba(30, 30, 30, 0.18);
+  background: transparent;
 }
 
 body.light-mode .machine-title,
@@ -4752,78 +4758,102 @@ body.light-mode .topbar-icon[aria-expanded="true"] svg {
   letter-spacing: 0.01em;
 }
 
+/* Bottom nav — "icon-forward · accent underline" style (Option 3):
+   no card / gradient / shadow on the tray or the buttons; just a single hairline
+   under the whole bar, bigger icons, and the ACTIVE control marked by a bright
+   orange underline (tab-bar convention). */
 .bottom-nav {
-  padding: 7px;
-  gap: 4px;
-  border-radius: 16px;
-  border: 1px solid var(--ui-border-subtle);
-  background: linear-gradient(180deg, rgba(28, 28, 28, 0.86), rgba(21, 21, 21, 0.86));
-  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.3);
+  padding: 6px 6px 0;
+  gap: 2px;
+  border-radius: 0;
+  border: none;
+  border-bottom: 1px solid var(--ui-border-subtle);
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
 }
 
 .bottom-nav-item {
+  position: relative;
   min-height: 78px;
-  border-radius: 10px;
-  gap: 6px;
-  padding: 10px 6px 8px;
+  border: none;
+  border-radius: 10px 10px 0 0;
+  gap: 7px;
+  padding: 12px 6px 14px;
   color: var(--ui-text-secondary);
+  background: transparent;
 }
 
 .bottom-nav-item svg {
-  width: 26px;
-  height: 26px;
+  width: 29px;
+  height: 29px;
   stroke-width: 1.8;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
 
 .bottom-nav-item span {
-  font-size: 12px;
+  font-size: 12.5px;
   line-height: 1.15;
   text-align: center;
 }
 
+/* Accent underline segment; transparent until the control is active. */
+.bottom-nav-item::after {
+  content: "";
+  position: absolute;
+  left: 22%;
+  right: 22%;
+  bottom: -1px;
+  height: 2.5px;
+  border-radius: 2px;
+  background: transparent;
+  transition: background 0.16s ease;
+  pointer-events: none;
+}
+
 .bottom-nav-item.is-active,
 .bottom-nav-item[aria-pressed="true"] {
-  border-color: var(--ui-border-accent);
-  background: rgba(108, 108, 108, 0.3);
+  border: none;
+  border-color: transparent;
+  background: transparent;
   color: var(--ui-text-primary);
   box-shadow: none;
 }
 
+.bottom-nav-item.is-active::after,
+.bottom-nav-item[aria-pressed="true"]::after {
+  background: var(--ui-accent);
+  box-shadow: 0 0 10px rgba(240, 145, 58, 0.35);
+}
+
 .bottom-nav-item:hover {
-  border-color: rgba(196, 196, 196, 0.32);
-  background: rgba(255, 255, 255, 0.06);
+  border-color: transparent;
+  background: transparent;
   color: var(--ui-text-primary);
 }
 
-.bottom-nav-item:disabled {
-  border-color: rgba(149, 149, 149, 0.14);
-  background: rgba(138, 138, 138, 0.08);
-  color: var(--ui-text-disabled);
-  opacity: 0.72;
-  cursor: not-allowed;
-}
-
-.bottom-nav-item:disabled:hover {
-  border-color: rgba(149, 149, 149, 0.14);
-  background: rgba(138, 138, 138, 0.08);
-  color: var(--ui-text-disabled);
-}
-
+.bottom-nav-item:disabled,
+.bottom-nav-item:disabled:hover,
 .bottom-nav-item.is-disabled,
 .bottom-nav-item[aria-disabled="true"] {
-  border-color: rgba(149, 149, 149, 0.14);
-  background: rgba(138, 138, 138, 0.08);
+  border-color: transparent;
+  background: transparent;
   color: var(--ui-text-disabled);
-  opacity: 0.74;
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .bottom-nav-item.is-disabled:hover,
 .bottom-nav-item[aria-disabled="true"]:hover {
-  border-color: rgba(171, 171, 171, 0.28);
-  background: rgba(148, 148, 148, 0.14);
-  color: var(--ui-text-secondary);
+  border-color: transparent;
+  background: transparent;
+  color: var(--ui-text-disabled);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bottom-nav-item::after { transition: none; }
 }
 
 .status-line::before {
@@ -5209,8 +5239,8 @@ body.light-mode .cloud-materials-current {
 
 .topbar-notification-toggle .topbar-notification-badge {
   position: absolute;
-  top: -5px;
-  right: -5px;
+  top: 4px;
+  right: -2px;
   min-width: 16px;
   height: 16px;
   border-radius: 999px;
@@ -5251,7 +5281,7 @@ body.light-mode .cloud-materials-current {
 
 .topbar-notification-center {
   position: absolute;
-  top: calc(100% + 10px);
+  top: calc(100% + 20px);
   right: 92px;
   z-index: 24;
   width: min(560px, calc(100vw - 26px));
@@ -7002,13 +7032,13 @@ body.cloud-menu-open:not(.files-collapsed-for-print):not(.slicer-fullscreen) .cl
    higher-specificity theme override still wins, and per-button state colours
    (.is-active / .is-stop-mode / :disabled) are left untouched. */
 .bottom-nav {
-  width: calc(100vw - 16px) !important;
-  max-width: calc(100vw - 16px) !important;
+  width: 100% !important;
+  max-width: 100% !important;
   display: flex !important;
   align-items: stretch !important;
   gap: 6px !important;
-  padding: 10px !important;
-  border-radius: 20px !important;
+  padding: 14px 20px !important;
+  border-radius: 0 !important;
   border: 1px solid rgba(255, 226, 203, 0.2);
   background: linear-gradient(180deg, rgba(26, 26, 26, 0.86), rgba(19, 19, 19, 0.86));
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.34);
@@ -7018,17 +7048,17 @@ body.cloud-menu-open:not(.files-collapsed-for-print):not(.slicer-fullscreen) .cl
 .bottom-nav-item {
   flex: 1 1 0 !important;
   min-width: 0 !important;
-  min-height: 132px !important;
-  border-radius: 14px !important;
-  gap: 10px !important;
-  padding: 18px 8px !important;
+  min-height: 150px !important;
+  border-radius: 0 !important;
+  gap: 12px !important;
+  padding: 22px 8px !important;
 }
 .bottom-nav-item svg {
-  width: 36px !important;
-  height: 36px !important;
+  width: 46px !important;
+  height: 46px !important;
 }
 .bottom-nav-item span {
-  font-size: 18px !important;
+  font-size: 22px !important;
   line-height: 1.15 !important;
   font-weight: var(--ui-font-weight-semibold) !important;
 }
@@ -7040,10 +7070,12 @@ body.cloud-menu-open:not(.files-collapsed-for-print):not(.slicer-fullscreen) .cl
    buttons share the available width and stay fully visible regardless of the
    window size or which menu is open. */
 .bottom-nav {
-  left: 50% !important;
-  right: auto !important;
-  transform: translateX(-50%) !important;
-  max-width: calc(100vw - 16px) !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  transform: none !important;
+  width: 100% !important;
+  max-width: 100% !important;
   box-sizing: border-box !important;
   flex-wrap: nowrap !important;
 }
@@ -7691,7 +7723,7 @@ a:not(.btn):not([class*="nav"]):hover {
    ========================================================================== */
 .topbar-utility-settings {
   position: absolute;
-  top: calc(100% + 8px);
+  top: calc(100% + 18px);
   left: 0;
   z-index: 260;
   width: 268px;
@@ -7849,16 +7881,20 @@ a:not(.btn):not([class*="nav"]):hover {
   gap: 8px;
 }
 .topbar-utility-stepper button {
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   flex: none;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  text-align: center;
   border: 1px solid var(--ui-border-subtle);
   border-radius: var(--ui-radius-sm);
   background: rgba(255, 255, 255, 0.05);
   color: var(--ui-text-primary);
-  font-size: 15px;
+  font-size: 18px;
+  font-weight: 500;
   line-height: 1;
   cursor: pointer;
 }
@@ -8047,6 +8083,62 @@ a:not(.btn):not([class*="nav"]):hover {
 }
 .perm-account-chip:not(.is-signed-in) .perm-account-chip-level { color: var(--ui-accent); }
 
+/* Signed-out attention cue: a dimmed-red highlight that sweeps CLOCKWISE around
+   the chip so the operator notices they must sign in first. A conic-gradient
+   "comet" is rotated via a registered <angle> custom property and masked to a
+   thin ring that follows the pill outline; a soft red glow gently pulses under
+   it. Both stop the moment the chip flips to .is-signed-in. */
+@property --perm-signin-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+.perm-account-chip:not(.is-signed-in) {
+  position: relative;
+  border-color: rgba(224, 74, 58, 0.4);
+  animation: perm-signin-glow 2.4s ease-in-out infinite;
+}
+.perm-account-chip:not(.is-signed-in)::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 2px; /* ring thickness */
+  background: conic-gradient(
+    from var(--perm-signin-angle),
+    rgba(224, 74, 58, 0) 0deg,
+    rgba(224, 74, 58, 0) 210deg,
+    rgba(224, 74, 58, 0.35) 300deg,
+    rgba(224, 74, 58, 0.95) 355deg,
+    rgba(224, 74, 58, 0) 360deg
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+          mask-composite: exclude;
+  animation: perm-signin-sweep 2.4s linear infinite;
+  pointer-events: none;
+  z-index: 1;
+}
+/* Keep the avatar/text above the ring. */
+.perm-account-chip:not(.is-signed-in) > * { position: relative; z-index: 2; }
+@keyframes perm-signin-sweep {
+  to { --perm-signin-angle: 360deg; }
+}
+@keyframes perm-signin-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(224, 74, 58, 0); }
+  50%      { box-shadow: 0 0 10px 1px rgba(224, 74, 58, 0.28); }
+}
+/* Respect reduced-motion: drop the sweep + pulse, keep a steady dimmed-red ring. */
+@media (prefers-reduced-motion: reduce) {
+  .perm-account-chip:not(.is-signed-in) {
+    animation: none;
+    border-color: rgba(224, 74, 58, 0.6);
+    box-shadow: 0 0 8px 0 rgba(224, 74, 58, 0.22);
+  }
+  .perm-account-chip:not(.is-signed-in)::before { animation: none; --perm-signin-angle: 300deg; }
+}
+
 /* Initials monogram avatar. */
 .perm-avatar {
   display: inline-grid;
@@ -8186,7 +8278,7 @@ a:not(.btn):not([class*="nav"]):hover {
 }
 .move-btn:hover { border-color: var(--ui-border-accent); color: var(--ui-accent); }
 .move-btn:active { background: rgba(240, 145, 58, 0.16); }
-.move-jog-z .move-btn { flex: 0 0 40px; width: 76px; height: 40px; min-height: 0; min-width: 0; padding: 0 8px; font-family: var(--ui-font-mono); font-size: 11px; }
+.move-jog-z .move-btn { flex: 0 0 40px; width: 108px; height: 40px; min-height: 0; min-width: 0; padding: 0 8px; font-family: var(--ui-font-mono); font-size: 12px; }
 .move-step { display: flex; align-items: center; gap: 6px; margin-top: 12px; }
 .move-step-btn {
   flex: 1 1 0;
@@ -8201,6 +8293,27 @@ a:not(.btn):not([class*="nav"]):hover {
 }
 .move-presets { display: flex; gap: 8px; }
 .move-presets button { flex: 1 1 0; min-height: 44px; }
+/* Palpador is a position toggle: highlight when the probe is deployed (right). */
+#palpadorSweepButton[aria-pressed="true"] {
+  border-color: var(--ui-border-accent);
+  background: rgba(240, 145, 58, 0.16);
+  color: var(--ui-text-primary);
+}
+/* Home buttons are ICON-ONLY and live INSIDE the jog controls: Home XY occupies
+   the D-pad centre (the hub cell), Home Z sits between the two Z keys. The house
+   icon is tinted with the accent so it reads as a distinct "home" action among
+   the neutral jog arrows. */
+.move-home-btn { padding: 0; color: var(--ui-accent); }
+.move-home-btn svg {
+  width: 24px;
+  height: 24px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.move-jog-z .move-home-btn svg { width: 20px; height: 20px; }
 .move-step-btn.is-active {
   background: rgba(255, 255, 255, 0.1);
   color: var(--ui-text-primary);
@@ -8302,3 +8415,261 @@ body.print-progress-active .topbar-print-progress { display: inline-flex; }
 #filesMaterialsPanel {
   display: none !important;
 }
+
+/* ============================================================================
+   BOTTOM NAV — final style: "icon-forward · accent underline" on a SOLID tray
+   ----------------------------------------------------------------------------
+   The bar accumulated several earlier looks (raised grey cards, then a
+   frosted-glass pill design with per-button backdrop-blur + green active fill).
+   The blur had no opaque fill, so over a BRIGHT part of the 3D scene (the white
+   robot) the blurred-white bled through and the light text vanished — the button
+   became invisible. Fix: remove ALL blur, and sit the flat icon+underline tabs on
+   ONE solid, near-opaque tray so contrast is guaranteed over any background (dark
+   grid OR white robot). Buttons stay card-less; the active tab is marked by a
+   bright ORANGE UNDERLINE. Uses .bottom-nav .bottom-nav-item specificity +
+   !important on the surface resets so it wins over the layered gradient/hover/
+   active/disabled rules above (incl. light-mode variants). */
+/* Full-bleed bottom bar: spans the whole frame width, flush to the bottom edge,
+   square corners, with only a TOP hairline that runs edge to edge. Geometry
+   (width / left / bottom / radius / sizes) is forced by the !important block
+   above; here we own the surface look (solid tray, no blur, top border). */
+.bottom-nav {
+  border: none;
+  border-top: 1px solid var(--ui-border-subtle);
+  /* Near-opaque so a white background behind the bar never shows through. */
+  background: rgba(20, 20, 22, 0.94);
+  box-shadow: 0 -6px 22px rgba(0, 0, 0, 0.4);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+body.light-mode .bottom-nav {
+  border: none;
+  border-top: 1px solid rgba(30, 30, 30, 0.18);
+  background: rgba(246, 246, 247, 0.96);
+  box-shadow: 0 -6px 22px rgba(0, 0, 0, 0.14);
+}
+
+/* Full-bleed top bar (upper menu): span the whole frame width, flush to the top,
+   square corners, with only a BOTTOM hairline running edge to edge. */
+.status-panel.app-topbar {
+  top: 0;
+  left: 0;
+  right: 0;
+  width: 100%;
+  max-width: none;
+  box-sizing: border-box;
+  border: none;
+  border-bottom: 1px solid var(--ui-border-subtle);
+  border-radius: 0;
+}
+body.light-mode .status-panel.app-topbar {
+  border: none;
+  border-bottom: 1px solid rgba(30, 30, 30, 0.18);
+  border-radius: 0;
+}
+
+.bottom-nav .bottom-nav-item {
+  position: relative;
+  overflow: visible;
+  isolation: auto;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  min-height: 108px;
+  padding: 14px 8px 16px;
+  gap: 10px;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  /* The blur that made buttons disappear over the white robot. */
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  color: var(--ui-text-secondary);
+}
+body.light-mode .bottom-nav .bottom-nav-item {
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  color: #2e2e2e;
+}
+
+/* Active marker lines: a matching accent bar on BOTH the top (::before) and the
+   bottom (::after) edge of the selected button. The ::before is repurposed from
+   the old frosted-gloss pseudo, so it fully overrides the pill gloss with
+   !important. Both are transparent until the button is active. */
+.bottom-nav .bottom-nav-item::before {
+  content: "" !important;
+  display: block !important;
+  position: absolute !important;
+  left: 24% !important;
+  right: 24% !important;
+  top: 4px !important;
+  bottom: auto !important;
+  width: auto !important;
+  height: 3px !important;
+  border-radius: 2px !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  transition: background 0.16s ease, box-shadow 0.16s ease;
+  pointer-events: none;
+  z-index: 2;
+}
+.bottom-nav .bottom-nav-item::after {
+  content: "";
+  position: absolute;
+  left: 24%;
+  right: 24%;
+  bottom: 4px;
+  height: 3px;
+  border-radius: 2px;
+  background: transparent;
+  box-shadow: none;
+  transition: background 0.16s ease, box-shadow 0.16s ease;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.bottom-nav .bottom-nav-item:hover,
+.bottom-nav .bottom-nav-item:active {
+  color: var(--ui-text-primary) !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+body.light-mode .bottom-nav .bottom-nav-item:hover,
+body.light-mode .bottom-nav .bottom-nav-item:active {
+  color: #1a1a1a !important;
+  background: transparent !important;
+}
+
+.bottom-nav .bottom-nav-item.is-active,
+.bottom-nav .bottom-nav-item[aria-pressed="true"],
+body.light-mode .bottom-nav .bottom-nav-item.is-active,
+body.light-mode .bottom-nav .bottom-nav-item[aria-pressed="true"] {
+  color: var(--ui-text-primary) !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+body.light-mode .bottom-nav .bottom-nav-item.is-active,
+body.light-mode .bottom-nav .bottom-nav-item[aria-pressed="true"] {
+  color: #1a1a1a !important;
+}
+
+.bottom-nav .bottom-nav-item.is-active::before,
+.bottom-nav .bottom-nav-item[aria-pressed="true"]::before {
+  background: var(--ui-accent) !important;
+  box-shadow: 0 0 10px rgba(240, 145, 58, 0.35) !important;
+}
+.bottom-nav .bottom-nav-item.is-active::after,
+.bottom-nav .bottom-nav-item[aria-pressed="true"]::after {
+  background: var(--ui-accent);
+  box-shadow: 0 0 10px rgba(240, 145, 58, 0.35);
+}
+
+.bottom-nav .bottom-nav-item:disabled,
+.bottom-nav .bottom-nav-item[aria-disabled="true"] {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: var(--ui-text-disabled) !important;
+  opacity: 0.55;
+}
+.bottom-nav .bottom-nav-item:disabled::after,
+.bottom-nav .bottom-nav-item[aria-disabled="true"]::after {
+  background: transparent;
+  box-shadow: none;
+}
+
+/* ---- Icon selection states -------------------------------------------------
+   Clearer active/inactive read:
+   - line thickness bumped to 2px for cleaner icons at the large 46px size;
+   - INACTIVE = muted icon (currentColor = the muted label colour, so it stays
+     theme-correct in both light and dark) dimmed to 72% so unselected recede;
+   - ACTIVE   = bright white label + full-opacity ACCENT-orange icon + orange
+     underline, matching the top-bar icons so selection is obvious/consistent.
+   Works for both inline-SVG icons (stroke) and PNG mask icons (background). */
+.bottom-nav .bottom-nav-item svg {
+  stroke-width: 2 !important;
+  stroke: currentColor;
+}
+.bottom-nav .bottom-nav-item svg,
+.bottom-nav .bottom-nav-item .ui-img-icon {
+  opacity: 0.72;
+  transition: opacity 0.16s ease, stroke 0.16s ease, background-color 0.16s ease;
+}
+
+/* Active / pressed: full-opacity accent-orange icon (both icon types). */
+.bottom-nav .bottom-nav-item.is-active svg,
+.bottom-nav .bottom-nav-item[aria-pressed="true"] svg {
+  stroke: var(--ui-accent) !important;
+  opacity: 1;
+}
+
+/* Solid-fill icon variant (Materials / Files when their menu is open): these
+   subpaths are FILLED with the accent rather than stroked. They only render in
+   the active state, so the accent fill is unconditional. */
+.bottom-nav .bottom-nav-item svg .nav-icon-solid {
+  fill: var(--ui-accent) !important;
+  stroke: none !important;
+}
+.bottom-nav .bottom-nav-item.is-active .ui-img-icon,
+.bottom-nav .bottom-nav-item[aria-pressed="true"] .ui-img-icon {
+  background-color: var(--ui-accent) !important;
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bottom-nav .bottom-nav-item::before,
+  .bottom-nav .bottom-nav-item::after,
+  .bottom-nav .bottom-nav-item svg,
+  .bottom-nav .bottom-nav-item .ui-img-icon { transition: none; }
+}
+
+/* ============================================================================
+   TOP-BAR RIGHT ICONS — match the bottom nav: FLAT & FRAMELESS (no border, no
+   background box, no shadow, in every state). The active/open state is marked by
+   an ACCENT-tinted icon (like the bottom nav's accent), not a filled box. Also a
+   bit more breathing room between the icons. !important beats the several layered
+   .topbar-icon frame/active rules above (incl. the light-mode variants). */
+.topbar-icon,
+.topbar-icon:hover,
+.topbar-icon:focus,
+.topbar-icon:active,
+.topbar-icon.is-active,
+.topbar-icon[aria-pressed="true"],
+.topbar-icon[aria-expanded="true"],
+body.light-mode .topbar-icon,
+body.light-mode .topbar-icon:hover,
+body.light-mode .topbar-icon.is-active,
+body.light-mode .topbar-icon[aria-pressed="true"],
+body.light-mode .topbar-icon[aria-expanded="true"] {
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+/* Active / open = accent-tinted icon (SVG stroke + PNG mask fill), same accent
+   the bottom nav uses for its active tab. */
+.topbar-icon.is-active svg,
+.topbar-icon[aria-pressed="true"] svg,
+.topbar-icon[aria-expanded="true"] svg,
+body.light-mode .topbar-icon.is-active svg,
+body.light-mode .topbar-icon[aria-pressed="true"] svg,
+body.light-mode .topbar-icon[aria-expanded="true"] svg {
+  stroke: var(--ui-accent) !important;
+}
+.topbar-icon.is-active .ui-img-icon,
+.topbar-icon[aria-pressed="true"] .ui-img-icon,
+.topbar-icon[aria-expanded="true"] .ui-img-icon,
+body.light-mode .topbar-icon.is-active .ui-img-icon,
+body.light-mode .topbar-icon[aria-pressed="true"] .ui-img-icon,
+body.light-mode .topbar-icon[aria-expanded="true"] .ui-img-icon {
+  background-color: var(--ui-accent) !important;
+}
+
+/* A bit wider gap between the top-right icons. */
+.topbar-right { gap: 16px; }
