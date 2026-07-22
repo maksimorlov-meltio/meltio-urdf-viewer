@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>URDF Viewer</title>
-  <link rel="stylesheet" href="/static/urdf_viewer.css?v=166" />
+  <link rel="stylesheet" href="/static/urdf_viewer.css?v=208" />
 </head>
 <body class="controls-panel-collapsed">
   <div class="status-panel app-topbar">
@@ -25,8 +25,18 @@
     </div>
 
     <div class="topbar-right" aria-label="Top bar actions">
+      <div id="topbarPrintProgress" class="topbar-print-progress" role="status" aria-label="Print progress" aria-live="polite" hidden>
+        <span class="tpp-label">Printing</span>
+        <span id="topbarPrintPct" class="tpp-pct">0%</span>
+        <span class="tpp-bar"><span id="topbarPrintBar" class="tpp-bar-fill"></span></span>
+        <span id="topbarPrintEta" class="tpp-eta">ETA —</span>
+      </div>
       <button id="topbarChillerToggle" class="topbar-icon" type="button" aria-label="Chiller" aria-pressed="false">
-        <svg class="ui-img-icon" style="--icon: url('/static/icons/temperature.png?v=2')" aria-hidden="true" focusable="false"></svg>
+        <svg class="thermo-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z" />
+          <circle class="thermo-fill thermo-bulb" cx="11.5" cy="18.5" r="2.7" />
+          <rect class="thermo-fill thermo-col" x="10.2" y="6" width="2.6" height="14" rx="1.3" />
+        </svg>
       </button>
       <button id="topbarFanToggle" class="topbar-icon" type="button" aria-label="Fan" aria-pressed="false">
         <svg class="ui-img-icon" style="--icon: url('/static/icons/ventilation.png?v=3')" aria-hidden="true" focusable="false"></svg>
@@ -186,11 +196,72 @@
           </div>
         </section>
       </div>
+
+      <div id="topbarFanSettings" class="topbar-utility-settings" role="dialog" aria-label="Fan settings" aria-hidden="true" hidden>
+        <header class="topbar-utility-settings-header">
+          <h3>Fan</h3>
+          <button class="topbar-utility-settings-close" type="button" data-utility-close="fan" aria-label="Close fan settings">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12" /><path d="M18 6L6 18" /></svg>
+          </button>
+        </header>
+        <div class="topbar-utility-row">
+          <span class="topbar-utility-label">Fan</span>
+          <button id="fanSettingsPower" class="topbar-utility-switch" type="button" aria-pressed="false">Off</button>
+        </div>
+        <div class="topbar-utility-row">
+          <span class="topbar-utility-label">Mode</span>
+          <div class="topbar-utility-segmented" role="group" aria-label="Fan mode">
+            <button id="fanSettingsModeAuto" type="button" data-fan-mode="auto" class="is-active">Auto</button>
+            <button id="fanSettingsModeManual" type="button" data-fan-mode="manual">Manual</button>
+          </div>
+        </div>
+        <div class="topbar-utility-row">
+          <span class="topbar-utility-label">Speed</span>
+          <input id="fanSettingsSpeed" class="topbar-utility-slider" type="range" min="0" max="100" step="1" value="60" aria-label="Fan speed percent" />
+          <span id="fanSettingsSpeedValue" class="topbar-utility-value is-editable" role="button" tabindex="0" aria-label="Edit fan speed">60%</span>
+        </div>
+        <div class="topbar-utility-row">
+          <span class="topbar-utility-label">RPM</span>
+          <span id="fanSettingsRpm" class="topbar-utility-value">2400</span>
+        </div>
+      </div>
+
+      <div id="topbarChillerSettings" class="topbar-utility-settings" role="dialog" aria-label="Chiller settings" aria-hidden="true" hidden>
+        <header class="topbar-utility-settings-header">
+          <h3>Chiller</h3>
+          <button class="topbar-utility-settings-close" type="button" data-utility-close="chiller" aria-label="Close chiller settings">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12" /><path d="M18 6L6 18" /></svg>
+          </button>
+        </header>
+        <div class="topbar-utility-row">
+          <span class="topbar-utility-label">Chiller</span>
+          <button id="chillerSettingsPower" class="topbar-utility-switch" type="button" aria-pressed="false">Off</button>
+        </div>
+        <div class="topbar-utility-row">
+          <span class="topbar-utility-label">Target</span>
+          <div class="topbar-utility-stepper">
+            <button id="chillerSettingsTargetDown" type="button" aria-label="Lower target temperature">&#8722;</button>
+            <span id="chillerSettingsTargetValue" class="topbar-utility-value is-editable" role="button" tabindex="0" aria-label="Edit target temperature">18.0 &deg;C</span>
+            <button id="chillerSettingsTargetUp" type="button" aria-label="Raise target temperature">+</button>
+          </div>
+        </div>
+        <div class="topbar-utility-row">
+          <span class="topbar-utility-label">Current</span>
+          <span id="chillerSettingsCurrent" class="topbar-utility-value">21.4 &deg;C</span>
+        </div>
+        <div class="topbar-utility-row">
+          <span class="topbar-utility-label">Flow</span>
+          <input id="chillerSettingsFlow" class="topbar-utility-slider" type="range" min="0" max="100" step="1" value="70" aria-label="Coolant flow percent" />
+          <span id="chillerSettingsFlowValue" class="topbar-utility-value is-editable" role="button" tabindex="0" aria-label="Edit coolant flow">4.2 L/min</span>
+        </div>
+      </div>
     </div>
 
     <span id="advancedModeIndicator" class="advanced-mode-indicator" aria-live="polite" hidden>Advanced Mode ON</span>
 
-    <div class="topbar-debug-status" aria-live="polite">
+    <!-- Model/Mesh load status kept as hidden live-region elements so existing JS
+         (setModelStatus/setMeshStatus) still updates them without a visible debug row. -->
+    <div class="topbar-debug-status" aria-live="polite" hidden>
       <p id="modelStatus" class="status-line">Model: loading...</p>
       <p id="meshStatus" class="status-line">Mesh: waiting...</p>
     </div>
@@ -209,113 +280,106 @@
   <div id="controlsPanel" class="controls-panel" aria-hidden="true">
     <div class="controls-panel-header">
       <h2>Controls</h2>
-      <p class="controls-subtitle">Robot setup, cloud overlays, and motion presets</p>
     </div>
 
-    <section class="control-subpanel">
-      <h3>Model</h3>
-      <div class="control-row">
-        <label class="control-label" for="modelSelect">URDF</label>
-        <select id="modelSelect" class="control-input">
-          <option value="/assets/M600_PRO/M600_PRO.urdf" selected>Loading models...</option>
-        </select>
+    <!-- Dev/model controls removed from the operator Controls panel but kept hidden
+         in the DOM so their existing (unguarded) JS wiring still resolves. -->
+    <div hidden aria-hidden="true">
+      <select id="modelSelect">
+        <option value="/assets/M600_PRO/M600_PRO.urdf" selected>M600_PRO</option>
+      </select>
+      <button id="reloadModel" type="button">Reload</button>
+      <button id="resetView" type="button">Reset View</button>
+      <button id="lightModeToggle" type="button">Light Mode: Off</button>
+    </div>
+
+    <section class="control-subpanel move-panel" data-requires-permission="machine.motion">
+      <h3>Move</h3>
+      <dl class="move-readout" id="moveReadout" aria-label="Tool position">
+        <div><dt>X</dt><dd id="movePosX">0.0</dd></div>
+        <div><dt>Y</dt><dd id="movePosY">0.0</dd></div>
+        <div><dt>Z</dt><dd id="movePosZ">0.0</dd></div>
+        <div><dt>WD</dt><dd id="movePosWd">0.0</dd></div>
+      </dl>
+      <div class="move-jog">
+        <div class="move-jog-xy" role="group" aria-label="Jog X and Y">
+          <button class="move-btn move-btn-yplus" type="button" data-move-axis="y" data-move-dir="1" aria-label="Jog +Y">&#9650;</button>
+          <button class="move-btn move-btn-xminus" type="button" data-move-axis="x" data-move-dir="-1" aria-label="Jog -X">&#9664;</button>
+          <span class="move-jog-hub" aria-hidden="true">XY</span>
+          <button class="move-btn move-btn-xplus" type="button" data-move-axis="x" data-move-dir="1" aria-label="Jog +X">&#9654;</button>
+          <button class="move-btn move-btn-yminus" type="button" data-move-axis="y" data-move-dir="-1" aria-label="Jog -Y">&#9660;</button>
+        </div>
+        <div class="move-jog-z" role="group" aria-label="Jog Z">
+          <button class="move-btn" type="button" data-move-axis="z" data-move-dir="1" aria-label="Jog +Z">Z &#9650;</button>
+          <button class="move-btn" type="button" data-move-axis="z" data-move-dir="-1" aria-label="Jog -Z">Z &#9660;</button>
+        </div>
       </div>
-      <div class="control-row actions-row">
-        <button id="reloadModel" type="button">Reload</button>
-        <button id="resetView" class="btn-quiet" type="button">Reset View</button>
-        <button id="lightModeToggle" type="button">Light Mode: Off</button>
+      <div class="move-step" role="group" aria-label="Jog step size">
+        <button class="move-step-btn" type="button" data-move-step="0.1">0.1</button>
+        <button class="move-step-btn" type="button" data-move-step="1">1</button>
+        <button class="move-step-btn is-active" type="button" data-move-step="10">10</button>
+        <button class="move-step-btn" type="button" data-move-step="100">100</button>
+        <span class="move-step-unit">mm</span>
       </div>
+      <div class="control-row actions-row move-presets">
+        <button id="printPositionButton" type="button">Print Position</button>
+        <button id="maintenancePositionButton" type="button">Maintenance</button>
+        <button id="palpadorSweepButton" type="button">Palpador Sweep</button>
+      </div>
+      <p id="motionStatus" class="control-note">Motion: idle</p>
     </section>
 
-    <section class="control-subpanel">
-      <h3>Transparency</h3>
-      <div class="annotation-nav-group annotation-nav-group-row" role="group" aria-label="Assembly transparency toggles">
-        <button
-          id="userStepTransparencyEnabled"
-          class="transparency-toggle"
-          type="button"
-          aria-pressed="false"
-          aria-label="Toggle User Step transparency"
-        >
-          User Step
-        </button>
-        <button
-          id="displayTransparencyEnabled"
-          class="transparency-toggle"
-          type="button"
-          aria-pressed="false"
-          aria-label="Toggle Display transparency"
-        >
-          Display
-        </button>
-        <button
-          id="headTransparencyEnabled"
-          class="transparency-toggle"
-          type="button"
-          aria-pressed="false"
-          aria-label="Toggle Head transparency"
-        >
-          Head
-        </button>
-      </div>
-    </section>
-
-    <section id="feederDriveSection" class="control-subpanel" data-requires-permission="machine.motion" data-perm-hide>
+    <!-- Feeder Drive appears only while the Feeder view is active (see the
+         "Feeder" shortcut below / feederCameraAnchorLeft). Wheel switch chooses
+         WHICH wheel rotates; Up/Stop/Down drives it. -->
+    <section id="feederDriveSection" class="control-subpanel" data-requires-permission="machine.motion" hidden aria-hidden="true">
       <h3>Feeder Drive</h3>
       <div class="control-row">
-        <label class="control-label" for="feederDriveStop">Direction</label>
-        <div class="drive-toggle-group" role="group" aria-label="Feeder drive spool selection">
-          <button id="feederDriveLeft" type="button">Spool 1</button>
-          <button id="feederDriveStop" type="button" class="active">Stop</button>
-          <button id="feederDriveRight" type="button">Spool 2</button>
+        <label class="control-label">Wheel</label>
+        <div class="drive-toggle-group drive-toggle-group-two" role="group" aria-label="Select which feeder wheel rotates">
+          <button id="feederDriveLeft" type="button">Wheel 1</button>
+          <button id="feederDriveRight" type="button">Wheel 2</button>
         </div>
       </div>
       <div class="control-row">
-        <label class="control-label" for="feederDriveUp">Vertical</label>
-        <div class="drive-toggle-group drive-toggle-group-two" role="group" aria-label="Feeder drive vertical direction">
+        <label class="control-label" for="feederDriveUp">Direction</label>
+        <div class="drive-toggle-group" role="group" aria-label="Feeder drive direction">
           <button id="feederDriveUp" type="button">Up</button>
+          <button id="feederDriveStop" type="button" class="active">Stop</button>
           <button id="feederDriveDown" type="button">Down</button>
         </div>
       </div>
     </section>
 
-    <section class="control-subpanel">
-      <h3>Appearance</h3>
-      <div class="control-row actions-row">
-        <button id="wireDrumAppearButton" type="button">Wire Drum</button>
-      </div>
-    </section>
-
-    <section class="control-subpanel">
-      <h3>Cloud Viewer</h3>
-      <p class="control-note">Manage STL and sensor cloud overlays from the left popup menu.</p>
-      <div class="control-row actions-row">
-        <button id="cloudModelMenuOpen" type="button">Open Cloud Menu</button>
-      </div>
-      <p id="cloudStlStatus" class="control-note">Cloud: idle</p>
-    </section>
-
-    <section class="control-subpanel" data-requires-permission="machine.motion" data-perm-hide>
-      <h3>Motion Presets</h3>
-      <div class="control-row actions-row">
-        <button id="maintenancePositionButton" type="button">Maintenance Position</button>
-        <button id="printPositionButton" type="button">Print Position</button>
-        <button id="palpadorSweepButton" type="button">Palpador Sweep</button>
-      </div>
-      <p id="motionStatus" class="control-note">Motion: idle</p>
-    </section>
+    <!-- Appearance + Cloud Viewer removed from the operator panel; elements kept
+         hidden so their (partly unguarded) JS wiring still resolves. -->
+    <div hidden aria-hidden="true">
+      <button id="wireDrumAppearButton" type="button">Wire Drum</button>
+      <button id="cloudModelMenuOpen" type="button">Open Cloud Menu</button>
+      <p id="cloudStlStatus">Cloud: idle</p>
+    </div>
 
     <section class="control-subpanel">
       <h3>Assembly Shortcuts</h3>
       <div class="annotation-nav-group annotation-nav-group-row" role="group" aria-label="Assembly action shortcuts">
         <button id="annotationNavFrontDoor" type="button" aria-pressed="false">Front Door</button>
         <button id="annotationNavSpoolsDoor" type="button" aria-pressed="false" hidden aria-hidden="true" tabindex="-1">Materials</button>
-        <button id="annotationNavTopCover" type="button" aria-pressed="false">Top Door</button>
         <button id="feederCameraAnchorLeft" type="button" aria-pressed="false">Feeder</button>
       </div>
     </section>
 
-    <section class="control-subpanel" data-requires-permission="machine.motion" data-perm-hide>
+    <section class="control-subpanel">
+      <h3>View</h3>
+      <div class="annotation-nav-group annotation-nav-group-row" role="group" aria-label="Assembly transparency toggles">
+        <button id="userStepTransparencyEnabled" class="transparency-toggle" type="button" aria-pressed="false" aria-label="Toggle User Step transparency">User Step</button>
+        <button id="displayTransparencyEnabled" class="transparency-toggle" type="button" aria-pressed="false" aria-label="Toggle Display transparency">Display</button>
+        <button id="headTransparencyEnabled" class="transparency-toggle" type="button" aria-pressed="false" aria-label="Toggle Head transparency">Head</button>
+      </div>
+    </section>
+
+    <!-- Raw joint sliders drive the joint engine (state.sliderEl); kept hidden.
+         The visible jog UI is the Move panel above, which calls setJointValue. -->
+    <section class="control-subpanel" hidden aria-hidden="true">
       <h3>Joints</h3>
       <div id="jointControls" class="joint-controls">
         <p class="empty-state">No controllable joints detected.</p>
@@ -791,31 +855,22 @@
       </div>
     </div>
 
-    <div id="materialsMenuBody" class="materials-menu-body">
-    <section class="cloud-materials-panel materials-menu-panel" aria-label="Dedicated materials controls">
-      <p id="materialsMenuAssignmentStatus" class="control-note">Spool 1: Not assigned</p>
+    <div id="materialsMenuBody" class="materials-menu-body materials-menu-body-single">
+    <section class="cloud-materials-panel materials-menu-panel" aria-label="Feeder material controls">
+      <p id="materialsMenuAssignmentStatus" class="control-note">Feeder 1: Not assigned</p>
 
-      <div class="materials-spool-switch" role="group" aria-label="Select spool">
+      <div class="materials-spool-switch materials-feeder-switch" role="group" aria-label="Select feeder">
         <button id="materialsSpoolCard1" class="spool-select-card" type="button" aria-pressed="true" data-spool-key="spool1">
           <span class="spool-select-card-header">
             <span class="spool-select-icon" aria-hidden="true"></span>
-            <span class="spool-select-name">Spool 1</span>
+            <span class="spool-select-name">Feeder 1</span>
           </span>
           <span id="materialsSpool1Material" class="spool-select-material">Not assigned</span>
-          <span class="spool-select-data-row">
-            <span class="spool-select-data-label">Initial</span>
-            <span id="materialsSpool1InitialAmount">800g</span>
-          </span>
-          <span class="spool-select-data-row">
-            <span class="spool-select-data-label">Used</span>
-            <span id="materialsSpool1UsedAmount">0g</span>
-          </span>
-          <span class="spool-select-data-row">
-            <span class="spool-select-data-label">Left</span>
-            <span id="materialsSpool1Amount">800g</span>
-          </span>
-          <span class="spool-select-data-row spool-select-data-row-status">
-            <span class="spool-select-data-label">Status</span>
+          <span class="spool-select-meta">
+            <span id="materialsSpool1Type" class="spool-select-type">SPOOL</span>
+            <span class="spool-select-meta-sep" aria-hidden="true">·</span>
+            <span id="materialsSpool1Amount" class="spool-select-amount">800g</span>
+            <span class="spool-select-meta-sep" aria-hidden="true">·</span>
             <span id="materialsSpool1Status" class="spool-select-status status-unassigned">Not assigned</span>
           </span>
         </button>
@@ -823,73 +878,36 @@
         <button id="materialsSpoolCard2" class="spool-select-card" type="button" aria-pressed="false" data-spool-key="spool2">
           <span class="spool-select-card-header">
             <span class="spool-select-icon" aria-hidden="true"></span>
-            <span class="spool-select-name">Spool 2</span>
+            <span class="spool-select-name">Feeder 2</span>
           </span>
           <span id="materialsSpool2Material" class="spool-select-material">Not assigned</span>
-          <span class="spool-select-data-row">
-            <span class="spool-select-data-label">Initial</span>
-            <span id="materialsSpool2InitialAmount">450g</span>
-          </span>
-          <span class="spool-select-data-row">
-            <span class="spool-select-data-label">Used</span>
-            <span id="materialsSpool2UsedAmount">0g</span>
-          </span>
-          <span class="spool-select-data-row">
-            <span class="spool-select-data-label">Left</span>
-            <span id="materialsSpool2Amount">450g</span>
-          </span>
-          <span class="spool-select-data-row spool-select-data-row-status">
-            <span class="spool-select-data-label">Status</span>
+          <span class="spool-select-meta">
+            <span id="materialsSpool2Type" class="spool-select-type">SPOOL</span>
+            <span class="spool-select-meta-sep" aria-hidden="true">·</span>
+            <span id="materialsSpool2Amount" class="spool-select-amount">450g</span>
+            <span class="spool-select-meta-sep" aria-hidden="true">·</span>
             <span id="materialsSpool2Status" class="spool-select-status status-unassigned">Not assigned</span>
-          </span>
-        </button>
-
-        <button id="materialsSpoolCardWireDrum" class="spool-select-card spool-select-card-wide" type="button" aria-pressed="false" data-spool-key="wiredrum">
-          <span class="spool-select-card-header">
-            <span class="spool-select-icon" aria-hidden="true"></span>
-            <span class="spool-select-name">Wire Drum</span>
-          </span>
-          <span id="materialsWireDrumMaterial" class="spool-select-material">Not assigned</span>
-          <span class="spool-select-data-row">
-            <span class="spool-select-data-label">Initial</span>
-            <span id="materialsWireDrumInitialAmount">15000g</span>
-          </span>
-          <span class="spool-select-data-row">
-            <span class="spool-select-data-label">Used</span>
-            <span id="materialsWireDrumUsedAmount">0g</span>
-          </span>
-          <span class="spool-select-data-row">
-            <span class="spool-select-data-label">Left</span>
-            <span id="materialsWireDrumAmount">15000g</span>
-          </span>
-          <span class="spool-select-data-row spool-select-data-row-status">
-            <span class="spool-select-data-label">Status</span>
-            <span id="materialsWireDrumStatus" class="spool-select-status status-unassigned">Not assigned</span>
           </span>
         </button>
       </div>
 
-      <div class="control-row materials-feedstock-row">
-        <span class="control-label">Wire drum</span>
-        <button
-          id="materialsWireDrumToggle"
-          class="materials-wire-drum-toggle"
-          type="button"
-          aria-pressed="false"
-          aria-label="Connect or disconnect the wire drum assembly"
-          disabled
-        >Connect</button>
+      <div class="control-row">
+        <label class="control-label" for="materialsFeedTypeSelect">Feed type</label>
+        <select id="materialsFeedTypeSelect" class="control-input" aria-label="Change feed type for the focused feeder">
+          <option value="spool">Spool</option>
+          <option value="drum">Drum</option>
+        </select>
       </div>
 
       <div class="control-row">
         <label class="control-label" for="materialsMaterialSelect">Material</label>
-        <select id="materialsMaterialSelect" class="control-input" aria-label="Select material for focused spool">
+        <select id="materialsMaterialSelect" class="control-input" aria-label="Select material for the focused feeder">
           <option value="">No material</option>
         </select>
       </div>
 
       <div class="control-row">
-        <label class="control-label" for="materialsSpoolAmountInput">Loaded</label>
+        <label class="control-label" for="materialsSpoolAmountInput">Amount loaded</label>
         <div class="spool-amount-input-wrap">
           <input
             id="materialsSpoolAmountInput"
@@ -906,22 +924,18 @@
 
       <p id="materialsSpoolAmountValidation" class="control-note spool-amount-validation" hidden></p>
 
-      <div class="control-row actions-row">
-        <button id="materialsConfirmAction" class="hotspot-material-action-button material-action-button btn-primary" type="button">
-          Confirm Material
+      <div class="control-row actions-row materials-loadunload-row">
+        <button id="materialsLoadAction" class="material-action-button btn-primary" type="button">
+          Load
+        </button>
+        <button id="materialsUnloadAction" class="material-action-button btn-secondary" type="button">
+          Unload
         </button>
       </div>
 
       <p id="materialsConfirmStatus" class="control-note materials-confirm-status" hidden>Materials updated.</p>
       <p id="materialsMenuUsageStatus" class="control-note">Used: 0g | Left: 800g</p>
-      <p id="materialsMenuRequiredStatus" class="control-note">Required: 120g</p>
       <p id="materialsMenuPrintWarning" class="control-note hotspot-material-warning" hidden>Not enough material</p>
-    </section>
-
-    <section class="material-info-panel" aria-label="Selected material information">
-      <h4 class="material-info-title">Material information</h4>
-      <p id="materialInfoName" class="material-info-name">No material assigned</p>
-      <dl id="materialInfoRows" class="material-info-rows"></dl>
     </section>
     </div>
 
@@ -946,13 +960,6 @@
 
   <div id="annotationLayer" class="annotation-layer" aria-hidden="true"></div>
 
-  <!-- Persistent banner while any critical fault is active (safety visibility). -->
-  <div id="criticalNotificationBanner" class="critical-notif-banner" role="alert" aria-hidden="true" hidden>
-    <span class="critical-notif-banner-icon" aria-hidden="true">!</span>
-    <span id="criticalNotificationBannerText" class="critical-notif-banner-text">Critical fault active</span>
-    <button id="criticalNotificationBannerView" class="critical-notif-banner-view" type="button">View</button>
-  </div>
-
   <!-- Transient arrival toasts for new critical/warning notifications. -->
   <div id="notificationToastLayer" class="notification-toast-layer" aria-live="polite" aria-atomic="false"></div>
 
@@ -964,6 +971,16 @@
         <circle cx="14.5" cy="12" r="0.9" />
       </svg>
       <span>Open Door</span>
+    </button>
+
+    <button id="annotationNavTopCover" class="bottom-nav-item" type="button" aria-pressed="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M5 13h14v7H5z" />
+        <path d="M5 13l7-4 7 4" />
+        <path d="M12 3v4" />
+        <path d="M10 5l2-2 2 2" />
+      </svg>
+      <span>Top Door</span>
     </button>
 
     <button id="navMaterialsToggle" class="bottom-nav-item" type="button" aria-pressed="false">
@@ -1029,6 +1046,24 @@
           <p class="calendar-empty-state">Select an event to review details.</p>
         </div>
       </aside>
+    </div>
+  </section>
+
+  <section id="notificationHistoryScreen" class="notif-history-screen" aria-hidden="true" hidden>
+    <div class="notif-history-header">
+      <div class="notif-history-title-wrap">
+        <h2>Notification History</h2>
+        <p class="notif-history-subtitle">When each notification was raised and when it was solved</p>
+      </div>
+      <div class="notif-history-actions">
+        <p id="notificationHistoryCount" class="notif-history-count" aria-live="polite">0 entries</p>
+        <button id="notificationHistoryReturn" type="button">Return To 3D Viewer</button>
+      </div>
+    </div>
+
+    <div class="notif-history-content">
+      <div id="notificationHistoryList" class="notif-history-list" role="list" aria-live="polite"></div>
+      <p id="notificationHistoryEmpty" class="notif-history-empty" hidden>No notifications recorded yet.</p>
     </div>
   </section>
 
@@ -1220,7 +1255,6 @@
       </div>
       <div id="notificationDetailsBody" class="notification-details-body"></div>
       <div class="notification-details-actions">
-        <button id="notificationDetailsGoToIssue" type="button">Go to issue</button>
         <button id="notificationDetailsAcknowledge" type="button">Acknowledge</button>
         <button id="notificationDetailsResolve" type="button">Resolve</button>
       </div>
@@ -1320,6 +1354,34 @@
     // client-side clip-plane reveal, so the viewer stays usable.
     window.AVIS_SLICER = { enabled: true, profile: "M600 Standard SS316L", autoRun: false };
   </script>
+  <div id="numpadOverlay" class="numpad-overlay" role="dialog" aria-modal="true" aria-labelledby="numpadTitle" aria-hidden="true" hidden>
+    <div class="numpad">
+      <div class="numpad-header">
+        <h3 id="numpadTitle" class="numpad-title">Value</h3>
+        <span id="numpadRange" class="numpad-range"></span>
+      </div>
+      <div id="numpadDisplay" class="numpad-display" aria-live="polite"><span id="numpadDisplayValue">0</span><span id="numpadUnit" class="numpad-unit"></span></div>
+      <div class="numpad-grid">
+        <button type="button" data-numpad-key="7">7</button>
+        <button type="button" data-numpad-key="8">8</button>
+        <button type="button" data-numpad-key="9">9</button>
+        <button type="button" data-numpad-key="4">4</button>
+        <button type="button" data-numpad-key="5">5</button>
+        <button type="button" data-numpad-key="6">6</button>
+        <button type="button" data-numpad-key="1">1</button>
+        <button type="button" data-numpad-key="2">2</button>
+        <button type="button" data-numpad-key="3">3</button>
+        <button type="button" data-numpad-key=".">.</button>
+        <button type="button" data-numpad-key="0">0</button>
+        <button type="button" data-numpad-key="back" aria-label="Delete last digit">&#9003;</button>
+      </div>
+      <div class="numpad-actions">
+        <button type="button" id="numpadCancel" class="numpad-cancel">Cancel</button>
+        <button type="button" id="numpadOk" class="numpad-ok">Set</button>
+      </div>
+    </div>
+  </div>
+
   <script type="importmap">
     {
       "imports": {
@@ -1328,8 +1390,8 @@
       }
     }
   </script>
-  <script src="/static/permissions.js?v=2"></script>
-  <script src="/static/error_codes.js?v=1"></script>
-  <script type="module" src="/static/urdf_viewer.js?v=389"></script>
+  <script src="/static/permissions.js?v=9"></script>
+  <script src="/static/error_codes.js?v=2"></script>
+  <script type="module" src="/static/urdf_viewer.js?v=431"></script>
 </body>
 </html>

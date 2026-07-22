@@ -7,10 +7,18 @@ import { fetchSensorData } from "./modules/api.js";
 import { buildSpriteObject, buildVoxelCubeObject } from "./modules/render.js";
 import { createPrintSimulation } from "./sim/printSimulation.js?v=11";
 import { createSlicerClient } from "./sim/slicerClient.js";
+import { createMachineLink } from "./sim/machineLink.js";
+import { createPrePrintCheck } from "./sim/prePrintCheck.js";
 
 // Print-simulation controller. Created at boot once the scene exists; declared
 // here so the camera-guard helpers below can reference it before assignment.
 let printSim = null;
+
+// Machine transport link (sim/machineLink.js). Null until enabled at boot. When
+// connected, the machine is the source of truth: Start/Stop/Pause/E-stop send
+// real commands and telemetry drives the UI. When null/disconnected, the local
+// print simulation runs exactly as before (the standalone demo is unchanged).
+let machineLink = null;
 
 const modelStatusEl = document.getElementById("modelStatus");
 const meshStatusEl = document.getElementById("meshStatus");
@@ -80,6 +88,11 @@ const notificationEmptyStateEl = document.getElementById("notificationEmptyState
 const notificationViewHistoryEl = document.getElementById("notificationViewHistory");
 const notificationClearResolvedEl = document.getElementById("notificationClearResolved");
 const notificationSettingsEl = document.getElementById("notificationSettings");
+const notificationHistoryScreenEl = document.getElementById("notificationHistoryScreen");
+const notificationHistoryListEl = document.getElementById("notificationHistoryList");
+const notificationHistoryEmptyEl = document.getElementById("notificationHistoryEmpty");
+const notificationHistoryCountEl = document.getElementById("notificationHistoryCount");
+const notificationHistoryReturnEl = document.getElementById("notificationHistoryReturn");
 const notificationDetailsModalEl = document.getElementById("notificationDetailsModal");
 const notificationDetailsBodyEl = document.getElementById("notificationDetailsBody");
 const notificationDetailsCloseEl = document.getElementById("notificationDetailsClose");
@@ -164,6 +177,7 @@ const feederDriveStopEl = document.getElementById("feederDriveStop");
 const feederDriveRightEl = document.getElementById("feederDriveRight");
 const feederDriveUpEl = document.getElementById("feederDriveUp");
 const feederDriveDownEl = document.getElementById("feederDriveDown");
+const feederDriveSectionEl = document.getElementById("feederDriveSection");
 const feederCameraAnchorLeftEl = document.getElementById("feederCameraAnchorLeft");
 const feederCameraAnchorRightEl = document.getElementById("feederCameraAnchorRight");
 const hotspotContextPanelEl = document.getElementById("hotspotContextPanel");
@@ -250,6 +264,32 @@ const cloudModelMenuCloseEl = document.getElementById("cloudModelMenuClose");
 const slicerPaneEl = document.getElementById("slicerPane");
 const slicerFrameEl = document.getElementById("slicerFrame");
 const slicerFallbackEl = document.getElementById("slicerFallback");
+
+// --- postMessage trust boundary -------------------------------------------
+// The browser delivers `message` events from ANY origin (any other tab the
+// operator has open, any third-party frame, any popup). Several handlers below
+// act on these messages — injecting slice/toolpath geometry, triggering a
+// machine "Start print", and driving the chamber-O2 "safe to open" SAFETY
+// notice. Trusting only the spoofable `event.data.source` string would let a
+// hostile page start a print or fake an inert-atmosphere reading. So every
+// handler must verify the SENDER, not just the payload:
+//   * slicer messages are trusted only when they actually came from our own
+//     embedded slicer iframe's window (origin-independent, so it keeps working
+//     whatever origin AVIS_SLICER_UI_URL points at);
+//   * the M600 sensor bridge is trusted only when it is strictly same-origin
+//     (an external bridge origin must be added to the allowlist deliberately).
+function isTrustedSlicerMessage(event) {
+  return Boolean(
+    event
+    && slicerFrameEl
+    && slicerFrameEl.contentWindow
+    && event.source === slicerFrameEl.contentWindow,
+  );
+}
+function isSameOriginMessage(event) {
+  // Rejects foreign origins and the opaque "null" origin (sandboxed frames).
+  return Boolean(event) && event.origin === window.location.origin;
+}
 const slicerReloadButtonEl = document.getElementById("slicerReloadButton");
 const slicerEmbedToggleEl = document.getElementById("slicerEmbedToggle");
 const slicerEmbedWrapEl = document.getElementById("slicerEmbedWrap");
@@ -443,7 +483,7 @@ const renderer = new THREE.WebGLRenderer({
 });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, REST_RENDER_PIXEL_RATIO));
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setClearColor(0x060a12);
+renderer.setClearColor(0x0b0a09);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.shadowMap.enabled = ENABLE_REALTIME_SHADOWS;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -451,8 +491,8 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.35;
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x060a12);
-scene.fog = new THREE.Fog(0x060a12, 400, 2200);
+scene.background = new THREE.Color(0x0b0a09);
+scene.fog = new THREE.Fog(0x0b0a09, 400, 2200);
 
 const camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.05, 6000);
 camera.up.set(0, 0, 1);
@@ -492,7 +532,61 @@ camera.add(viewerLightTarget);
 viewerLight.target = viewerLightTarget;
 camera.add(viewerLight);
 
-const grid = new THREE.GridHelper(2.5, 18, 0x2c4058, 0x192634);
+// --- Image-based lighting (IBL) --------------------------------------------
+// The PBR materials throughout the model set envMapIntensity (see
+// styleMeshTree), which does NOTHING without an environment to reflect — that
+// missing env map is why metal parts (notably the feeder-wheel gears) rendered
+// flat and grey. Generate a soft studio environment procedurally (no external
+// HDR file → CSP-safe, works offline) and assign it to the scene so every metal
+// surface picks up reflections and reads with real depth. One-time cost.
+function buildStudioEnvironmentTexture(targetRenderer) {
+  const pmrem = new THREE.PMREMGenerator(targetRenderer);
+  const envScene = new THREE.Scene();
+
+  // Neutral "room" shell: soft grey surroundings that metals bounce off.
+  const shellMat = new THREE.MeshStandardMaterial({
+    side: THREE.BackSide, roughness: 1, metalness: 0,
+  });
+  shellMat.color.setHex(0x30373f);
+  const shell = new THREE.Mesh(new THREE.BoxGeometry(10, 10, 10), shellMat);
+  envScene.add(shell);
+
+  // Emissive planes act as soft area lights — a bright key overhead, a cool
+  // front fill, a warm back rim, and gentle side fills. This is what gives the
+  // gear teeth crisp highlights instead of a dull matte grey.
+  const planeGeo = new THREE.PlaneGeometry(4, 4);
+  const disposables = [shell.geometry, shellMat, planeGeo];
+  const addAreaLight = (hex, intensity, position, rotation) => {
+    const mat = new THREE.MeshStandardMaterial();
+    mat.color.setHex(0x000000);
+    mat.emissive.setHex(hex);
+    mat.emissiveIntensity = intensity;
+    const mesh = new THREE.Mesh(planeGeo, mat);
+    mesh.position.set(position[0], position[1], position[2]);
+    if (rotation) mesh.rotation.set(rotation[0], rotation[1], rotation[2]);
+    envScene.add(mesh);
+    disposables.push(mat);
+  };
+  addAreaLight(0xffffff, 3.4, [0, 4.7, 0], [Math.PI / 2, 0, 0]);   // key (top)
+  addAreaLight(0xc4d9ff, 1.1, [0, 0.5, 4.7], [0, 0, 0]);           // cool front fill
+  addAreaLight(0xffe1bd, 0.9, [0, 1.2, -4.7], [0, Math.PI, 0]);    // warm back rim
+  addAreaLight(0xffffff, 0.7, [4.7, 1.0, 0], [0, -Math.PI / 2, 0]);// right fill
+  addAreaLight(0xffffff, 0.5, [-4.7, 1.0, 0], [0, Math.PI / 2, 0]);// left fill
+
+  const renderTarget = pmrem.fromScene(envScene, 0.04);
+  for (const d of disposables) d.dispose();
+  pmrem.dispose();
+  return renderTarget.texture;
+}
+
+// Built once. Applied ONLY to the feeder-wheel materials (see
+// enhanceFeederWheelMaterials) — NOT as scene.environment. A global environment
+// map makes IBL run per-pixel across the whole 7.5M-tri model, which showed up
+// as camera-movement lag; scoping it to the three gear meshes keeps the metal
+// look the gears needed at effectively zero frame cost.
+const studioEnvironmentTexture = buildStudioEnvironmentTexture(renderer);
+
+const grid = new THREE.GridHelper(2.5, 18, 0x36322e, 0x1c1a17);
 grid.rotation.x = Math.PI * 0.5;
 scene.add(grid);
 
@@ -513,7 +607,7 @@ const gltfLoader = new GLTFLoader();
 const objLoader = new OBJLoader();
 const stlLoader = new STLLoader();
 const CAD_TO_VIEWER_X_ROTATION = Math.PI * 0.5;
-const DARK_BG_HEX = 0x060a12;
+const DARK_BG_HEX = 0x0b0a09;
 const LIGHT_BG_HEX = 0xffffff;
 const LEFT_FEEDER_WHEEL_JOINT = "left_feeder_wheel_joint";
 const RIGHT_FEEDER_WHEEL_JOINT = "right_feeder_wheel_joint";
@@ -689,8 +783,10 @@ const FEEDER_ANCHOR_DISTANCE_FACTOR = 0.15;
 const FEEDER_ANCHOR_MIN_DISTANCE = 0.26;
 const FEEDER_ANCHOR_MAX_DISTANCE = 2.8;
 const FEEDER_ANCHOR_TARGET_Z_OFFSET = 0.035;
-const FEEDER_PREVIEW_DISTANCE_SCALE = 0.28;
-const FEEDER_PREVIEW_MIN_DISTANCE = 0.08;
+// Framing of the three gears in the wide preview strip: 0.28 left too much dead
+// space on the sides, 0.16 was cramped/too close — 0.22 sits comfortably between.
+const FEEDER_PREVIEW_DISTANCE_SCALE = 0.22;
+const FEEDER_PREVIEW_MIN_DISTANCE = 0.06;
 const FEEDER_PREVIEW_MAX_DISTANCE = 1.4;
 const FEEDER_HEAD_RESTORE_DELAY_MS = Math.max((TOP_COVER_OPEN_DURATION_SEC * 1000) + 120, 320);
 const SPOOLS_DOOR_BUTTON_CAMERA_DURATION_MS = 940;
@@ -701,11 +797,19 @@ const TOP_COVER_BUTTON_CLOSE_RESET_DURATION_MS = 980;
 const TOP_COVER_BUTTON_PERP_Y_SIDE = -1;
 const TOP_COVER_BUTTON_Y_ROTATION_RAD = THREE.MathUtils.degToRad(30);
 const NAV_FILES_ICON_FILES_SVG = '<path d="M4 5h10l6 6v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5Z" /><path d="M14 5v6h6" />';
-// Door button icon set: its normal door glyph, and the stop-square it becomes
-// while a print is underway (see updateBottomNavState / the door click handler).
+// Door button icon set: a closed-door glyph and an ajar (open) glyph that swap
+// with the door state, plus the stop-square it becomes while a print is underway
+// (see updateBottomNavState / the door click handler).
 const NAV_DOOR_ICON_DOOR_SVG =
   '<path d="M6 3h12v18H6z" /><path d="M10 3v18" /><circle cx="14.5" cy="12" r="0.9" />';
+const NAV_DOOR_ICON_DOOR_OPEN_SVG =
+  '<path d="M3 21h18" /><path d="M14 3l-8 2v15h8z" /><circle cx="8" cy="12.5" r="0.9" />';
 const NAV_DOOR_ICON_STOP_SVG = '<rect x="6" y="6" width="12" height="12" rx="1.5" />';
+// Top-cover glyphs: a sealed box (closed) and a box with its lid raised (open).
+const TOP_DOOR_ICON_CLOSED_SVG =
+  '<path d="M5 9h14v11H5z" /><path d="M5 13h14" />';
+const TOP_DOOR_ICON_OPEN_SVG =
+  '<path d="M5 13h14v7H5z" /><path d="M5 13l7-4 7 4" /><path d="M12 3v4" /><path d="M10 5l2-2 2 2" />';
 const ANNOTATION_UPDATE_INTERVAL_MS = 0;
 const ANNOTATION_CLICK_ACTIVE_HOLD_MS = 2200;
 const ENABLE_ANNOTATION_OCCLUSION = false;
@@ -730,7 +834,7 @@ const SPOOL_ASSEMBLY_PICK_AREAS = Object.freeze([
   }),
 ]);
 const SPOOL_HIGHLIGHT_DURATION_MS = 5600;
-const SPOOL_HIGHLIGHT_RING_COLOR = new THREE.Color(0x3b82ff);
+const SPOOL_HIGHLIGHT_RING_COLOR = new THREE.Color(0xf0913a);
 const SPOOL_HIGHLIGHT_RING_BASE_OPACITY = 0.72;
 const SPOOL_HIGHLIGHT_RING_PULSE_OPACITY = 0.3;
 const SPOOL_HIGHLIGHT_RING_TUBE_RADIUS = 0.075;
@@ -1019,6 +1123,9 @@ let spoolsDoorMeshes = [];
 let wireSpoolDoorMeshes = [];
 let wireDrumRevealProgress = 0;
 let wireDrumRevealTarget = 0;
+// Manual "Wire Drum" appearance override (Appearance button / print-sim reveal).
+// The per-frame drum logic ORs this with the door/feeder-driven rules.
+let manualWireDrumConnect = false;
 let cameraTransitionState = null;
 let gasSpringAlignmentOffsets = null;
 let activeFeederCameraAnchorSide = null;
@@ -1137,6 +1244,10 @@ const mockNotificationSignals = {
   firmwareUpdateAvailable: false,
   internetConnected: true,
   preventiveMaintenanceDue: false,
+  // Pre-print interlock signals (consumed by the pre-print self-check). Nominal
+  // in the standalone demo; overridden by real telemetry when a machine is linked.
+  doorsClosed: true,
+  laserHeadReady: true,
 };
 let notificationMockTickCounter = 0;
 let selectedNotificationDetailId = null;
@@ -1147,6 +1258,9 @@ const spoolAssemblyPickToCenter = new THREE.Vector3();
 const FEEDER_FLOAT_SIDE_OFFSET_PX = 84;
 const SCENE_SHIFT_DESKTOP_PX = 132;
 const SCENE_SHIFT_MOBILE_PX = 72;
+// Smoothly animate the camera view-offset pan (matches the old 0.28s CSS slide).
+const SCENE_VIEW_SHIFT_TIME_CONSTANT = 0.08;
+let sceneViewShiftCurrentPx = 0;
 const OVERLAY_MENU_SAFE_MARGIN_PX = 10;
 const HOTSPOT_CONTEXT_PANEL_BOTTOM_GAP_PX = 16;
 const HOTSPOT_UI_TRANSITION_MS = 200;
@@ -1222,27 +1336,51 @@ function getNotificationFilterButtons() {
 function buildNotificationIconSvg(iconKey) {
   switch (iconKey) {
     case "emergency":
-      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"8\"/><path d=\"M12 8v5M12 16v.1\"/></svg>";
+      // Warning triangle with exclamation (E-stop / emergency).
+      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M12 3.6 21 19H3L12 3.6Z\"/><path d=\"M12 10v4\"/><path d=\"M12 16.6v.1\"/></svg>";
     case "arm":
-      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M4 12.5 9 17l11-11\"/><path d=\"M4 6.5h7\"/></svg>";
+      // Articulated robot arm with gripper (arm-the-machine).
+      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M4 20h6\"/><path d=\"M6.5 20v-4.5l4-4 3 3\"/><circle cx=\"6.5\" cy=\"15.5\" r=\"1.3\"/><circle cx=\"10.5\" cy=\"11.5\" r=\"1.3\"/><path d=\"M15 9.5l3.2-3.2M15 6.3l3.2 3.2\"/></svg>";
     case "gas":
-      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M12 4c3 3.3 5 5.5 5 8.1A5 5 0 0 1 7 12.1C7 9.5 9 7.3 12 4Z\"/><path d=\"M6 18h12\"/></svg>";
+      // Gas cylinder (inert-gas filtration).
+      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><rect x=\"8\" y=\"6\" width=\"8\" height=\"14\" rx=\"3\"/><path d=\"M10 6V4.5h4V6\"/><path d=\"M12 2.5V4.5\"/><path d=\"M9 11h6\"/></svg>";
     case "controller":
-      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><rect x=\"7\" y=\"7\" width=\"10\" height=\"10\" rx=\"2\"/><path d=\"M4 10h3M4 14h3M17 10h3M17 14h3M10 4v3M14 4v3M10 17v3M14 17v3\"/></svg>";
+      // CPU / controller board with pins.
+      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><rect x=\"7\" y=\"7\" width=\"10\" height=\"10\" rx=\"1.5\"/><rect x=\"10\" y=\"10\" width=\"4\" height=\"4\" rx=\"0.5\"/><path d=\"M9.5 4v3M14.5 4v3M9.5 17v3M14.5 17v3M4 9.5h3M4 14.5h3M17 9.5h3M17 14.5h3\"/></svg>";
     case "coolant":
-      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M14 4v8a4 4 0 1 1-4 0V4\"/><path d=\"M10 14h4\"/></svg>";
+    case "chiller":
+      // Coolant droplet with a shine.
+      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M12 3.5c3.2 3.6 5.2 6 5.2 8.8a5.2 5.2 0 0 1-10.4 0C6.8 9.5 8.8 7.1 12 3.5Z\"/><path d=\"M9.2 13a3 3 0 0 0 2.8 2.8\"/></svg>";
+    case "thermometer":
+      // Thermometer (temperature / chiller readings).
+      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M14 13.6V5a2 2 0 0 0-4 0v8.6a4 4 0 1 0 4 0Z\"/><path d=\"M12 8.5v6\"/></svg>";
+    case "fan":
+      // Cooling-fan blades around a hub.
+      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"1.7\"/><path d=\"M12 10.3c-1-3.1-.6-6 1.4-6.2 1.9-.2 2.4 2.9.9 6.2\"/><path d=\"M13.7 12c3.1-1 6-.6 6.2 1.4.2 1.9-2.9 2.4-6.2.9\"/><path d=\"M12 13.7c1 3.1.6 6-1.4 6.2-1.9.2-2.4-2.9-.9-6.2\"/><path d=\"M10.3 12c-3.1 1-6 .6-6.2-1.4-.2-1.9 2.9-2.4 6.2-.9\"/></svg>";
+    case "nozzle":
+      // Deposition nozzle / extruder tip (heat block tapering to an orifice).
+      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M7.5 5h9l-1.2 6H8.7L7.5 5Z\"/><path d=\"M8.7 11l1.3 4.2h4l1.3-4.2\"/><path d=\"M11 15.2 12 20l1-4.8\"/></svg>";
+    case "glass":
+      // Protective cover glass / lens pane with reflection streaks.
+      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><rect x=\"4\" y=\"6\" width=\"16\" height=\"12\" rx=\"2\"/><path d=\"M8 9.5 11.5 14.5\"/><path d=\"M12 9.5 15.5 14.5\"/></svg>";
     case "security":
-      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M12 3l7 3v5c0 5-3 8-7 10-4-2-7-5-7-10V6l7-3Z\"/><path d=\"M9.7 12.2 11.4 14l3.1-3.4\"/></svg>";
+      // Shield with check (closed-loop security).
+      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M12 3 19 6v5c0 4.6-3 7.7-7 9.5-4-1.8-7-4.9-7-9.5V6l7-3Z\"/><path d=\"m9 11.5 2 2 4-4.5\"/></svg>";
     case "software":
-      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M12 4v10\"/><path d=\"m8 10-8 8-8-8\"/><path d=\"M5 4h14\"/></svg>";
+      // Cloud with download arrow (software update).
+      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M7 16.5a4 4 0 0 1-.4-8 5.5 5.5 0 0 1 10.6 1.3A3.5 3.5 0 0 1 17 16.5\"/><path d=\"M12 10.5v6m0 0-2.4-2.4M12 16.5l2.4-2.4\"/></svg>";
     case "firmware":
-      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><rect x=\"7\" y=\"7\" width=\"10\" height=\"10\" rx=\"2\"/><path d=\"M12 4v3M12 17v3M4 12h3M17 12h3\"/></svg>";
+      // Microchip with a flash bolt (firmware update).
+      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><rect x=\"6.5\" y=\"6.5\" width=\"11\" height=\"11\" rx=\"1.5\"/><path d=\"M12.4 9.2 10 12.6h3.2L11.4 15.6\"/><path d=\"M9 3.5v3M15 3.5v3M9 17.5v3M15 17.5v3M3.5 9h3M3.5 15h3M17.5 9h3M17.5 15h3\"/></svg>";
     case "internet":
-      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M3 3l18 18\"/><path d=\"M6.8 9.2a8 8 0 0 1 10.4 0\"/><path d=\"M9.7 12.2a4 4 0 0 1 4.6 0\"/><path d=\"M12 16.5v.1\"/></svg>";
+      // Wi-Fi arcs with a slash (no connection).
+      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M4 4 20 20\"/><path d=\"M5 9.2a11 11 0 0 1 14 0\"/><path d=\"M8.4 12.6a6 6 0 0 1 7.2 0\"/><path d=\"M12 16.4v.1\"/></svg>";
     case "maintenance":
-      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M14.8 6.2a3.5 3.5 0 0 0 2.9 4.7l-7.2 7.2-2.8-2.8 7.2-7.2a3.5 3.5 0 0 0-.1-1.9Z\"/><path d=\"M5 7h4M7 5v4\"/></svg>";
+      // Wrench (preventive maintenance).
+      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M15.4 6.6a3.6 3.6 0 0 0 4.4 4.4L11 19.8 7.2 16 16 7.2a3.6 3.6 0 0 0-.6-.6Z\"/><path d=\"m8.5 14.5-1 1\"/></svg>";
     default:
-      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"8\"/><path d=\"M12 8v4M12 15v.1\"/></svg>";
+      // Info bubble.
+      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"8\"/><path d=\"M12 11.2v5\"/><path d=\"M12 8v.1\"/></svg>";
   }
 }
 
@@ -1327,12 +1465,10 @@ function openNotificationDetailsModal(notificationId) {
     notificationDetailsAcknowledgeEl.title = "Mark as seen (keeps the issue in the list)";
   }
   if (notificationDetailsResolveEl) {
-    // Auto-resolving (signal-driven) notifications clear themselves — hide the
-    // manual Resolve so the operator isn't offered a no-op action.
-    notificationDetailsResolveEl.hidden = !notification.canResolveManually;
-    notificationDetailsResolveEl.title = "Mark as fixed (removes it once resolved)";
-    const canResolve = notification.canResolveManually && !(notification.persistWhileSignalActive && notification.status !== "resolved");
-    notificationDetailsResolveEl.disabled = !canResolve;
+    // "Resolve" leads to Settings where the fix is made (not a status toggle).
+    notificationDetailsResolveEl.hidden = false;
+    notificationDetailsResolveEl.disabled = false;
+    notificationDetailsResolveEl.title = "Open Settings to fix this";
   }
 }
 
@@ -1347,6 +1483,12 @@ function closeNotificationDetailsModal() {
 
 function setNotificationCenterOpen(isOpen) {
   isNotificationCenterOpen = Boolean(isOpen);
+
+  // Opening the notification center clears the transient arrival toasts (the
+  // notifications live in the list now).
+  if (isNotificationCenterOpen && typeof clearNotificationToasts === "function") {
+    clearNotificationToasts();
+  }
 
   document.body.classList.toggle("notification-center-open", isNotificationCenterOpen);
 
@@ -1391,8 +1533,6 @@ function updateNotificationBellState() {
   // Amber bell only when the top active severity is a warning (critical dominates).
   topbarNotificationsToggleEl.classList.toggle("has-warning-notifications", criticalCount === 0 && warningCount > 0);
 
-  updateCriticalBanner(activeNotifications, criticalCount);
-
   if (!topbarNotificationBadgeEl) {
     return;
   }
@@ -1415,26 +1555,9 @@ function updateNotificationBellState() {
   topbarNotificationBadgeEl.classList.toggle("badge-warning", !hasCritU && hasWarnU);
 }
 
-// --- Critical banner + arrival toasts (UX pass) ----------------------------
-// A persistent top banner whenever any critical is active, and transient toasts
-// when new critical/warning notifications arrive (so an operator watching the
-// 3D scene can't miss them). Both read the same notificationsById state.
-function updateCriticalBanner(activeNotifications, criticalCount) {
-  const bannerEl = document.getElementById("criticalNotificationBanner");
-  if (!bannerEl) return;
-  const show = criticalCount > 0;
-  bannerEl.hidden = !show;
-  bannerEl.setAttribute("aria-hidden", show ? "false" : "true");
-  if (show) {
-    const textEl = document.getElementById("criticalNotificationBannerText");
-    if (textEl) {
-      const top = getNotificationListSorted(activeNotifications).find((n) => n.severity === "critical");
-      const extra = criticalCount > 1 ? ` (+${criticalCount - 1} more)` : "";
-      textEl.textContent = top ? `${top.title}${extra}` : `${criticalCount} critical fault(s) active`;
-    }
-  }
-}
-
+// --- Arrival toasts (UX pass) ----------------------------------------------
+// Transient toasts when new critical/warning notifications arrive (so an
+// operator watching the 3D scene can't miss them). Reads notificationsById.
 const notificationToastedIds = new Set();
 let notificationToastInitialized = false;
 
@@ -1457,6 +1580,259 @@ function syncNotificationToasts() {
     showNotificationToast(n);
   }
 }
+
+// --- Bell arrival animation ------------------------------------------------
+// Swing the bell icon whenever a genuinely new (any-severity) notification
+// becomes active. Uses its own "seen" set, seeded on first run so the initial
+// batch on load doesn't ring. Resolved ids are pruned so a re-activation rings
+// again.
+const bellArrivalSeenIds = new Set();
+let bellArrivalInitialized = false;
+
+function ringNotificationBell() {
+  const el = topbarNotificationsToggleEl;
+  if (!el) {
+    return;
+  }
+  // Restart the one-shot animation even if it is already applied.
+  el.classList.remove("bell-ring");
+  void el.offsetWidth; // force reflow so re-adding the class replays it
+  el.classList.add("bell-ring");
+}
+
+function syncNotificationBellArrival() {
+  const activeIds = [...notificationsById.values()]
+    .filter((n) => n.status === "active")
+    .map((n) => n.id);
+  const activeIdSet = new Set(activeIds);
+
+  if (!bellArrivalInitialized) {
+    activeIds.forEach((id) => bellArrivalSeenIds.add(id));
+    bellArrivalInitialized = true;
+    return;
+  }
+
+  let hasNew = false;
+  for (const id of activeIds) {
+    if (!bellArrivalSeenIds.has(id)) {
+      bellArrivalSeenIds.add(id);
+      hasNew = true;
+    }
+  }
+  // Drop ids that are no longer active so they ring again if re-raised.
+  for (const id of [...bellArrivalSeenIds]) {
+    if (!activeIdSet.has(id)) {
+      bellArrivalSeenIds.delete(id);
+    }
+  }
+
+  if (hasNew) {
+    ringNotificationBell();
+  }
+}
+
+if (topbarNotificationsToggleEl) {
+  // Clear the one-shot class when the swing finishes so it can replay cleanly.
+  topbarNotificationsToggleEl.addEventListener("animationend", (event) => {
+    if (event.animationName === "bell-ring") {
+      topbarNotificationsToggleEl.classList.remove("bell-ring");
+    }
+  });
+}
+
+// --- Notification history log ----------------------------------------------
+// Persisted record of every notification "episode" (a raise → resolve span),
+// shown in the full-screen Notification History (opened from the Notification
+// Center's "View history"). Each entry: { hid, id, type, title, severity,
+// source, raisedAt (ISO), resolvedAt (ISO|null) }. An episode opens when a
+// notification becomes active and closes when it leaves the active set (resolved
+// or removed) — detected by diffing on every renderNotificationCenter().
+const NOTIFICATION_HISTORY_STORAGE_KEY = "avisualizer.notificationHistory.v1";
+const NOTIFICATION_HISTORY_MAX_ENTRIES = 300;
+let notificationHistoryLog = [];
+const notificationHistoryOpenByNotifId = new Map(); // notifId -> open episode hid
+let notificationHistorySeq = 0;
+let isNotificationHistoryScreenOpen = false;
+
+function loadNotificationHistory() {
+  try {
+    const raw = window.localStorage.getItem(NOTIFICATION_HISTORY_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (Array.isArray(parsed)) {
+      notificationHistoryLog = parsed.filter((e) => e && e.raisedAt);
+    }
+  } catch {
+    notificationHistoryLog = [];
+  }
+  for (const entry of notificationHistoryLog) {
+    if (typeof entry.hid === "number" && entry.hid >= notificationHistorySeq) {
+      notificationHistorySeq = entry.hid + 1;
+    }
+    // Re-attach episodes that were still open when last persisted so a still-
+    // active issue keeps its original raised time across reloads.
+    if (!entry.resolvedAt) {
+      notificationHistoryOpenByNotifId.set(entry.id, entry.hid);
+    }
+  }
+}
+
+function saveNotificationHistory() {
+  try {
+    window.localStorage.setItem(
+      NOTIFICATION_HISTORY_STORAGE_KEY,
+      JSON.stringify(notificationHistoryLog.slice(-NOTIFICATION_HISTORY_MAX_ENTRIES)),
+    );
+  } catch {
+    /* storage unavailable / over quota — history is best-effort */
+  }
+}
+
+function syncNotificationHistory() {
+  const activeById = new Map();
+  for (const [id, n] of notificationsById.entries()) {
+    if (n.status !== "resolved") {
+      activeById.set(id, n);
+    }
+  }
+
+  let changed = false;
+
+  // Open an episode for each newly-active notification.
+  for (const [id, n] of activeById.entries()) {
+    if (notificationHistoryOpenByNotifId.has(id)) {
+      continue;
+    }
+    const hid = notificationHistorySeq++;
+    notificationHistoryLog.push({
+      hid,
+      id,
+      type: n.type,
+      title: n.title,
+      severity: n.severity,
+      source: n.source,
+      raisedAt: n.timestamp || new Date().toISOString(),
+      resolvedAt: null,
+    });
+    notificationHistoryOpenByNotifId.set(id, hid);
+    changed = true;
+  }
+
+  // Close episodes whose notification is no longer active.
+  for (const [id, hid] of [...notificationHistoryOpenByNotifId.entries()]) {
+    if (activeById.has(id)) {
+      continue;
+    }
+    const entry = notificationHistoryLog.find((e) => e.hid === hid);
+    if (entry && !entry.resolvedAt) {
+      entry.resolvedAt = new Date().toISOString();
+      changed = true;
+    }
+    notificationHistoryOpenByNotifId.delete(id);
+  }
+
+  if (changed) {
+    if (notificationHistoryLog.length > NOTIFICATION_HISTORY_MAX_ENTRIES) {
+      notificationHistoryLog = notificationHistoryLog.slice(-NOTIFICATION_HISTORY_MAX_ENTRIES);
+    }
+    saveNotificationHistory();
+    if (isNotificationHistoryScreenOpen) {
+      renderNotificationHistoryScreen();
+    }
+  }
+}
+
+// Human-readable span between two ISO instants: "45 s", "7 min", "2 h 5 min",
+// "1 d 3 h".
+function formatNotificationDuration(startIso, endIso) {
+  const start = new Date(startIso).getTime();
+  const end = new Date(endIso).getTime();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) {
+    return "";
+  }
+  const totalSeconds = Math.round((end - start) / 1000);
+  if (totalSeconds < 60) {
+    return `${totalSeconds} s`;
+  }
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  if (totalMinutes < 60) {
+    return `${totalMinutes} min`;
+  }
+  const totalHours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (totalHours < 24) {
+    return minutes ? `${totalHours} h ${minutes} min` : `${totalHours} h`;
+  }
+  const days = Math.floor(totalHours / 24);
+  const hours = totalHours % 24;
+  return hours ? `${days} d ${hours} h` : `${days} d`;
+}
+
+function renderNotificationHistoryScreen() {
+  if (!notificationHistoryListEl) {
+    return;
+  }
+  const entries = [...notificationHistoryLog].sort(
+    (a, b) => getNotificationTimestampMs(b.raisedAt) - getNotificationTimestampMs(a.raisedAt),
+  );
+
+  if (notificationHistoryCountEl) {
+    notificationHistoryCountEl.textContent = `${entries.length} ${entries.length === 1 ? "entry" : "entries"}`;
+  }
+
+  if (!entries.length) {
+    notificationHistoryListEl.innerHTML = "";
+    if (notificationHistoryEmptyEl) {
+      notificationHistoryEmptyEl.hidden = false;
+    }
+    return;
+  }
+  if (notificationHistoryEmptyEl) {
+    notificationHistoryEmptyEl.hidden = true;
+  }
+
+  notificationHistoryListEl.innerHTML = entries
+    .map((entry) => {
+      const severity = normalizeNotificationSeverity(entry.severity, "info");
+      const ongoing = !entry.resolvedAt;
+      const solvedText = ongoing
+        ? '<em class="notif-history-ongoing">Ongoing</em>'
+        : escapeHtml(formatCalendarDateTime(entry.resolvedAt));
+      const duration = ongoing ? "" : formatNotificationDuration(entry.raisedAt, entry.resolvedAt);
+      return `
+        <article class="notif-history-row severity-${severity} ${ongoing ? "is-ongoing" : "is-resolved"}" role="listitem">
+          <span class="notif-history-sev severity-${severity}">${escapeHtml(getNotificationSeverityLabel(severity))}</span>
+          <div class="notif-history-main">
+            <h4 class="notif-history-title">${escapeHtml(entry.title || "Notification")}</h4>
+            <p class="notif-history-source">${escapeHtml(entry.source || "System")}</p>
+          </div>
+          <div class="notif-history-times">
+            <span class="notif-history-time"><span class="nh-label">Raised</span> ${escapeHtml(formatCalendarDateTime(entry.raisedAt))}</span>
+            <span class="notif-history-time"><span class="nh-label">Solved</span> ${solvedText}</span>
+            ${duration ? `<span class="notif-history-duration">Active ${escapeHtml(duration)}</span>` : ""}
+          </div>
+        </article>`;
+    })
+    .join("");
+}
+
+function setNotificationHistoryScreenOpen(isOpen) {
+  isNotificationHistoryScreenOpen = Boolean(isOpen);
+  if (!notificationHistoryScreenEl) {
+    return;
+  }
+  notificationHistoryScreenEl.hidden = !isNotificationHistoryScreenOpen;
+  notificationHistoryScreenEl.setAttribute("aria-hidden", isNotificationHistoryScreenOpen ? "false" : "true");
+  if (isNotificationHistoryScreenOpen) {
+    setNotificationCenterOpen(false);
+    if (typeof isCalendarScreenOpen !== "undefined" && isCalendarScreenOpen) {
+      setCalendarScreenOpen(false);
+    }
+    renderNotificationHistoryScreen();
+  }
+}
+
+// Load persisted history before the first render diff runs.
+loadNotificationHistory();
 
 function showNotificationToast(notification) {
   const layer = document.getElementById("notificationToastLayer");
@@ -1526,10 +1902,23 @@ function showNotificationToast(notification) {
     layer.firstElementChild.remove();
   }
 
-  // Warnings auto-dismiss; criticals stay until acted on.
-  if (!isCritical) {
-    window.setTimeout(dismiss, 7000);
-  }
+  // All arrival toasts (incl. critical) auto-dismiss after 10s — or sooner when
+  // the operator switches menus (see clearNotificationToasts). The notification
+  // itself stays in the notification center list either way.
+  toast._dismissToast = dismiss;
+  window.setTimeout(dismiss, 10000);
+}
+
+// Dismiss every visible arrival toast (used on a 10s timeout per-toast, and when
+// the operator opens/switches a menu). Does NOT remove the underlying
+// notifications — they remain in the notification center.
+function clearNotificationToasts() {
+  const layer = document.getElementById("notificationToastLayer");
+  if (!layer) return;
+  [...layer.children].forEach((el) => {
+    if (typeof el._dismissToast === "function") el._dismissToast();
+    else el.remove();
+  });
 }
 
 function getNotificationSignalsSnapshot() {
@@ -1696,7 +2085,6 @@ function renderNotificationCard(notification) {
   const statusClass = `status-${notification.status}`;
   const severityClass = `severity-${notification.severity}`;
   const acknowledgeDisabled = !notification.canAcknowledge || notification.status === "resolved";
-  const resolveDisabled = !notification.canResolveManually || (notification.persistWhileSignalActive && notification.status !== "resolved");
 
   return `
     <article class="notification-card ${severityClass} is-${notification.status}" role="listitem" data-notification-id="${escapeHtml(notification.id)}">
@@ -1717,9 +2105,8 @@ function renderNotificationCard(notification) {
 
       <div class="notification-card-actions">
         <button type="button" title="Mark as seen (keeps the issue in the list)" data-notification-action="acknowledge" data-notification-id="${escapeHtml(notification.id)}"${acknowledgeDisabled ? " disabled" : ""}>Acknowledge</button>
-        <button type="button" data-notification-action="goto" data-notification-id="${escapeHtml(notification.id)}">Go to issue</button>
         <button type="button" data-notification-action="details" data-notification-id="${escapeHtml(notification.id)}">View details</button>
-        ${notification.canResolveManually ? `<button type="button" title="Mark as fixed (removes it once resolved)" data-notification-action="resolve" data-notification-id="${escapeHtml(notification.id)}"${resolveDisabled ? " disabled" : ""}>Resolve</button>` : ""}
+        <button type="button" class="notification-resolve-btn" title="Open Settings to fix this" data-notification-action="resolve" data-notification-id="${escapeHtml(notification.id)}">Resolve</button>
       </div>
     </article>
   `;
@@ -1748,6 +2135,8 @@ function renderNotificationCenter() {
   updateNotificationFilterCounts(activeNotifications);
   updateNotificationBellState();
   syncNotificationToasts();
+  syncNotificationBellArrival();
+  syncNotificationHistory();
 }
 
 // Show a per-severity count on each filter chip (All / Critical / Warning / Info)
@@ -1814,13 +2203,18 @@ function goToNotificationIssue(notificationId) {
     return true;
   }
 
-  if (target === "network-settings" || target === "update-settings" || target === "diagnostics" || target === "machine-status" || target === "safety-status" || target === "process-control" || target === "gas-control" || target === "coolant-control") {
-    setTopbarSettingsMenuOpen(true);
-    setNotificationCenterOpen(false);
-    return true;
+  // Everything else opens Settings — the place where fixes live. Certain targets
+  // additionally open the relevant submenu (Calibrate / Advanced). This is what
+  // the "Resolve" button uses to take the operator to where they make the change.
+  setTopbarSettingsMenuOpen(true);
+  setNotificationCenterOpen(false);
+  if (target === "settings-calibrate" && typeof setSettingsCalibrateMenuOpen === "function") {
+    setSettingsCalibrateMenuOpen(true);
   }
-
-  return false;
+  if (target === "settings-advanced" && typeof setSettingsAdvancedMenuOpen === "function") {
+    setSettingsAdvancedMenuOpen(true);
+  }
+  return true;
 }
 
 function handleNotificationAction(action, notificationId) {
@@ -1835,18 +2229,15 @@ function handleNotificationAction(action, notificationId) {
     return;
   }
 
-  if (action === "goto") {
-    goToNotificationIssue(notificationId);
-    return;
-  }
-
   if (action === "details") {
     openNotificationDetailsModal(notificationId);
     return;
   }
 
-  if (action === "resolve") {
-    resolveNotification(notificationId);
+  // "Resolve" now takes the operator into Settings, to the area where they make
+  // the change that fixes the fault (replaces the old separate "Go to issue").
+  if (action === "resolve" || action === "goto") {
+    goToNotificationIssue(notificationId);
   }
 }
 
@@ -1925,6 +2316,32 @@ const hotspotMaterialAssignments = {
   spool2: null,
   wiredrum: null,
 };
+// Per-feeder feed type shown in the Materials menu (Feeder 1/2 can each be a
+// spool or a drum). Session-persisted under its own localStorage key.
+const feederFeedType = {
+  spool1: "spool",
+  spool2: "spool",
+};
+try {
+  const storedFeedType = JSON.parse(localStorage.getItem("meltioFeederFeedType") || "null");
+  if (storedFeedType && typeof storedFeedType === "object") {
+    if (storedFeedType.spool1 === "drum" || storedFeedType.spool1 === "spool") {
+      feederFeedType.spool1 = storedFeedType.spool1;
+    }
+    if (storedFeedType.spool2 === "drum" || storedFeedType.spool2 === "spool") {
+      feederFeedType.spool2 = storedFeedType.spool2;
+    }
+  }
+} catch (err) {
+  /* ignore malformed storage */
+}
+function persistFeederFeedType() {
+  try {
+    localStorage.setItem("meltioFeederFeedType", JSON.stringify(feederFeedType));
+  } catch (err) {
+    /* storage may be unavailable */
+  }
+}
 const spoolManualAmountGramsByKey = {
   spool1: DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY.spool1,
   spool2: DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY.spool2,
@@ -2759,6 +3176,7 @@ function setCalendarScreenOpen(isOpen) {
     }
     closeHotspotContextPanel();
     setTopbarSettingsMenuOpen(false);
+    setNotificationHistoryScreenOpen(false);
     renderCalendarScreen();
   }
 }
@@ -3144,6 +3562,14 @@ function updateFeederCameraAnchorButtons() {
     buttonEl.setAttribute("aria-pressed", isActive ? "true" : "false");
   }
 
+  // Feeder Drive controls (wheel switch + Up/Stop/Down) only make sense while the
+  // Feeder view is active, so reveal the section then and hide it otherwise.
+  if (feederDriveSectionEl) {
+    const feederActive = hasModel && Boolean(activeFeederCameraAnchorSide);
+    feederDriveSectionEl.hidden = !feederActive;
+    feederDriveSectionEl.setAttribute("aria-hidden", feederActive ? "false" : "true");
+  }
+
   updateFeederWheelFloatingControls();
 }
 
@@ -3237,13 +3663,13 @@ function updateSingleFeederWheelFloatingControls(side, shouldShowForCamera) {
   const sideOffset = side === "right"
     ? FEEDER_FLOAT_SIDE_OFFSET_PX
     : -FEEDER_FLOAT_SIDE_OFFSET_PX;
-  const sceneShiftX = getSceneOverlayShiftX();
-
+  // The camera view offset already pans the projection, so the anchor NDC
+  // reflects the shifted scene — no manual shift compensation needed here.
   const screenX = ((sideAnchors.ndc.x * 0.5) + 0.5) * window.innerWidth;
   const screenY = ((-sideAnchors.ndc.y * 0.5) + 0.5) * window.innerHeight;
 
   const x = clamp(
-    screenX + sideOffset + sceneShiftX - (panelWidth * 0.5),
+    screenX + sideOffset - (panelWidth * 0.5),
     8,
     Math.max(window.innerWidth - panelWidth - 8, 8),
   );
@@ -3265,10 +3691,14 @@ function updateSingleFeederWheelFloatingControls(side, shouldShowForCamera) {
   setToggleButtonState(downEl, downActive, false);
 }
 
-function getSceneOverlayShiftX() {
+// How far the rendered scene is panned to the right (in CSS px) to clear the
+// left-hand Controls / Cloud panel. This is applied via the camera view offset
+// (see updateSceneViewShift) so the canvas stays full-bleed — no exposed void.
+// Projected overlays (annotations, feeder controls) read the shifted camera
+// directly and therefore need no manual compensation.
+function getSceneRenderShiftX() {
   const isShifted = document.body.classList.contains("controls-panel-open")
-    || document.body.classList.contains("cloud-menu-open")
-    || document.body.classList.contains("materials-menu-open");
+    || document.body.classList.contains("cloud-menu-open");
   if (!isShifted) {
     return 0;
   }
@@ -3276,6 +3706,49 @@ function getSceneOverlayShiftX() {
   return window.matchMedia("(max-width: 900px)").matches
     ? SCENE_SHIFT_MOBILE_PX
     : SCENE_SHIFT_DESKTOP_PX;
+}
+
+// Pan the rendered image horizontally by `px` CSS pixels using the camera's
+// view offset. The canvas stays full-viewport, so nothing is exposed on the
+// left — the model shifts, not the screen. px <= 0 clears the offset.
+function applySceneViewOffset(px) {
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  if (!w || !h) {
+    return;
+  }
+
+  if (Math.abs(px) < 0.01) {
+    if (camera.view && camera.view.enabled) {
+      camera.clearViewOffset();
+    }
+    return;
+  }
+
+  // A negative offsetX widens the frustum to the left, which slides the
+  // existing content to the right without any zoom/distortion.
+  camera.setViewOffset(w, h, -px, 0, w, h);
+}
+
+// Ease the current pan toward the target each frame. Returns true while the
+// pan is still animating so the render loop keeps drawing during the slide.
+function updateSceneViewShift(deltaSeconds) {
+  const target = getSceneRenderShiftX();
+  const before = sceneViewShiftCurrentPx;
+
+  if (Math.abs(target - before) < 0.5) {
+    if (before !== target) {
+      sceneViewShiftCurrentPx = target;
+      applySceneViewOffset(target);
+      return true;
+    }
+    return false;
+  }
+
+  const smoothing = 1 - Math.exp(-Math.max(deltaSeconds, 0) / SCENE_VIEW_SHIFT_TIME_CONSTANT);
+  sceneViewShiftCurrentPx = before + (target - before) * smoothing;
+  applySceneViewOffset(sceneViewShiftCurrentPx);
+  return true;
 }
 
 function getOverlayVerticalSafeBounds(elementHeight = 0) {
@@ -3718,7 +4191,7 @@ function createFeederPreviewController() {
     return null;
   }
 
-  previewRenderer.setClearColor(0x060a12, 1);
+  previewRenderer.setClearColor(0x141312, 1);
   previewRenderer.outputColorSpace = THREE.SRGBColorSpace;
   previewRenderer.toneMapping = THREE.ACESFilmicToneMapping;
   previewRenderer.toneMappingExposure = 1.35;
@@ -4623,6 +5096,19 @@ function setSpoolStatusElement(statusEl, spoolKey) {
   statusEl.classList.add(status.className);
 }
 
+// Representative material colour chips for spool cards (design-doc legend
+// pattern). Keyed by material id; falls back to neutral for unassigned.
+const MELTIO_MATERIAL_CHIP_COLORS = Object.freeze({
+  "316l-stainless": "#8fa3b8",
+  "17-4ph-stainless": "#9aa7b4",
+  "inconel-718": "#c9a24a",
+  "ti64": "#c8cdd4",
+  "bronze-cu-sn": "#b1723c",
+});
+function getMaterialChipColor(materialId) {
+  return MELTIO_MATERIAL_CHIP_COLORS[materialId] || "rgba(150, 150, 150, 0.45)";
+}
+
 function setSpoolCardState(cardEl, spoolKey, isActive) {
   if (!cardEl) {
     return;
@@ -4632,6 +5118,13 @@ function setSpoolCardState(cardEl, spoolKey, isActive) {
   cardEl.setAttribute("aria-pressed", isActive ? "true" : "false");
   cardEl.setAttribute("aria-current", isActive ? "true" : "false");
   cardEl.dataset.spoolKey = spoolKey;
+
+  // Drive the material colour chip (--spool-color read by .spool-select-icon).
+  const icon = cardEl.querySelector(".spool-select-icon");
+  if (icon) {
+    const materialId = hotspotMaterialAssignments ? hotspotMaterialAssignments[spoolKey] : null;
+    icon.style.setProperty("--spool-color", getMaterialChipColor(materialId));
+  }
 }
 
 function updateSpoolSelectionCards() {
@@ -4728,6 +5221,48 @@ function updateSpoolSelectionCards() {
   setSpoolStatusElement(materialsWireDrumStatusEl, "wiredrum");
 
   updateMaterialInfoPanel();
+  updateMaterialsFeederTypeUI();
+  // Loaded amounts may have changed (load / unload / print consumption): a spool or
+  // the drum with 0 g loaded must become invisible, so refresh 3D visibility here.
+  refreshFeedstockVisibility();
+}
+
+// Materials menu (Feeder 1/2) — reflect the per-feeder feed type on the cards
+// and keep the "Feed type" select synced to the currently-focused feeder.
+function updateMaterialsFeederTypeUI() {
+  const typeLabel = (key) => (feederFeedType[key] === "drum" ? "DRUM" : "SPOOL");
+  const type1El = document.getElementById("materialsSpool1Type");
+  const type2El = document.getElementById("materialsSpool2Type");
+  if (type1El) type1El.textContent = typeLabel("spool1");
+  if (type2El) type2El.textContent = typeLabel("spool2");
+
+  const feedTypeSelectEl = document.getElementById("materialsFeedTypeSelect");
+  if (feedTypeSelectEl) {
+    const focusedKey = normalizeSpoolKey(hotspotMaterialsFocusSpoolKey) || "spool1";
+    const focusedType = feederFeedType[focusedKey] || "spool";
+    if (feedTypeSelectEl.value !== focusedType) {
+      feedTypeSelectEl.value = focusedType;
+    }
+  }
+}
+
+// Unload the focused feeder: clear its material assignment and zero the amount.
+function unloadFocusedFeeder() {
+  const focusedKey = normalizeSpoolKey(hotspotMaterialsFocusSpoolKey) || "spool1";
+  const focusedLabel = focusedKey === "spool2" ? "Feeder 2" : "Feeder 1";
+  hotspotMaterialAssignments[focusedKey] = null;
+  selectedHotspotMaterialId = null;
+  if (materialsMaterialSelectEl) {
+    materialsMaterialSelectEl.value = "";
+  }
+  setSpoolAmountState(focusedKey, 0, { resetUsage: true });
+  setMaterialsMenuAmountValidationMessage("");
+  setSpoolAmountValidationMessage("");
+  setMaterialsMenuConfirmMessage(`${focusedLabel} unloaded.`);
+  updateSpoolSelectionCards();
+  updateHotspotMaterialAssignmentStatus();
+  updateCloudPrintSimulationControls();
+  persistMaterialsState();
 }
 
 function setMaterialActionLoadingState(spoolKey, isLoading) {
@@ -5261,7 +5796,9 @@ function updateHotspotMaterialAssignmentStatus() {
   }
 
   if (materialsMenuAssignmentStatusEl) {
-    materialsMenuAssignmentStatusEl.textContent = `${focusedSpoolLabel}: ${assignedMaterialLabel}`;
+    // Materials menu uses "Feeder 1/2" naming (scoped to this popup).
+    const feederLabel = focusedSpoolKey === "spool2" ? "Feeder 2" : "Feeder 1";
+    materialsMenuAssignmentStatusEl.textContent = `${feederLabel}: ${assignedMaterialLabel}`;
   }
   if (materialsMenuUsageStatusEl) {
     materialsMenuUsageStatusEl.textContent = `Used: ${formatGramsText(usedGrams)} | Left: ${formatGramsText(leftGrams)}`;
@@ -5868,8 +6405,6 @@ function applyWireDrumAppearance() {
   const clampedProgress = clamp(wireDrumRevealProgress, 0, 1);
   const easedProgress = (clampedProgress * clampedProgress) * (3 - (2 * clampedProgress));
   const isHidden = easedProgress <= 0.001;
-  const isWireDrumVisible = !isHidden;
-
   for (const meshNode of wireDrumMeshes) {
     meshNode.visible = !isHidden;
     // In light mode, disable near-invisible shadow casting to avoid ghost shadows.
@@ -5880,10 +6415,9 @@ function applyWireDrumAppearance() {
     }
   }
 
-  for (const meshNode of spool1Meshes) {
-    meshNode.visible = !isWireDrumVisible;
-    meshNode.castShadow = ENABLE_REALTIME_SHADOWS && !isWireDrumVisible;
-  }
+  // Spool models follow each feeder's feed type (a drum-fed feeder hides its
+  // spool); spool 1 also hides while the drum is revealed (shared bay).
+  applySpoolFeedTypeVisibility();
 
   for (const material of wireDrumMaterials) {
     setMaterialOpacity(material, easedProgress);
@@ -5926,6 +6460,37 @@ function applyWireDrumAppearance() {
 
   wireDrumAppearButtonEl.textContent = "Wire Drum";
   wireDrumAppearButtonEl.setAttribute("aria-pressed", "false");
+}
+
+// Each feeder (Materials menu) can be fed by its spool or by the shared wire drum.
+// A spool's 3D model is hidden ONLY when ITS OWN feeder is set to "drum":
+// Feeder 1 -> spool 1 model, Feeder 2 -> spool 2 model, fully independent. So a
+// spool-fed feeder keeps its spool visible even while the other feeder is on drum
+// (e.g. Feeder 1 = Spool + Feeder 2 = Drum shows Spool 1 AND the drum, hides
+// Spool 2). The drum's own visibility is handled by computeWireDrumVisibleTarget.
+function applySpoolFeedTypeVisibility() {
+  // A spool model is visible only when ITS feeder is on "spool" AND it still has
+  // material loaded (amount loaded > 0). A drum-fed feeder OR an empty spool
+  // (0 g loaded) hides that spool.
+  const grams = (key) => Number(spoolRemainingAmountGramsByKey[key]) || 0;
+  const spool1Visible = feederFeedType.spool1 !== "drum" && grams("spool1") > 0;
+  const spool2Visible = feederFeedType.spool2 !== "drum" && grams("spool2") > 0;
+  for (const meshNode of spool1Meshes) {
+    meshNode.visible = spool1Visible;
+    meshNode.castShadow = ENABLE_REALTIME_SHADOWS && spool1Visible;
+  }
+  for (const meshNode of spool2Meshes) {
+    meshNode.visible = spool2Visible;
+    meshNode.castShadow = ENABLE_REALTIME_SHADOWS && spool2Visible;
+  }
+}
+
+// Recompute all feedstock (spool + drum) visibility from the current feed types
+// and loaded amounts, then repaint. Call after any feed-type or amount change.
+function refreshFeedstockVisibility() {
+  applySpoolFeedTypeVisibility();
+  wireDrumRevealTarget = computeWireDrumVisibleTarget();
+  applyWireDrumAppearance();
 }
 
 // Reflect the wire-drum reveal state on the Materials-menu toggle. Disabled until
@@ -6336,9 +6901,40 @@ function isWireDrumConnected() {
 // the Appearance "Wire Drum" button and the Materials "Connect wire drum" toggle
 // route through here so their states stay in sync.
 function setWireDrumConnected(connected) {
-  wireDrumRevealTarget = connected ? 1 : 0;
+  manualWireDrumConnect = Boolean(connected);
+  wireDrumRevealTarget = computeWireDrumVisibleTarget();
   markUserActivity();
   applyWireDrumAppearance();
+}
+
+// A feeder is set to the "drum" feed type (Materials menu).
+function isDrumFeederAssigned() {
+  return (typeof feederFeedType === "object" && feederFeedType)
+    ? (feederFeedType.spool1 === "drum" || feederFeedType.spool2 === "drum")
+    : false;
+}
+// The feeder is running (a drive side + vertical direction are engaged).
+function isFeederRunning() {
+  return Boolean(feederDriveSide && feederDriveVertical);
+}
+// Drum ASSEMBLY visible when: the materials/spools compartment door is open, OR a
+// drum-type feeder is actively running, OR the manual Appearance override is on.
+function computeWireDrumVisibleTarget() {
+  const spoolsOpen = typeof isSpoolsDoorOpen === "function" && isSpoolsDoorOpen();
+  // The drum reveals when a feeder's feed type is Drum (as soon as it is selected —
+  // it no longer has to be actively running) AND the drum still has material loaded
+  // (amount loaded > 0); an empty drum stays hidden. The door-open and manual
+  // "Wire Drum" appearance overrides still force it visible for inspection.
+  const drumHasStock = (Number(spoolRemainingAmountGramsByKey.wiredrum) || 0) > 0;
+  const drumFeederWantsReveal = isDrumFeederAssigned() && drumHasStock;
+  return (spoolsOpen || drumFeederWantsReveal || manualWireDrumConnect) ? 1 : 0;
+}
+// The drum's OWN door opens only when the compartment door is CLOSED and a drum
+// feeder is actively running (so you can watch it feed); if the materials door is
+// open the drum is visible but its door stays closed.
+function computeWireDrumDoorOpen() {
+  const spoolsOpen = typeof isSpoolsDoorOpen === "function" && isSpoolsDoorOpen();
+  return !spoolsOpen && isDrumFeederAssigned() && isFeederRunning();
 }
 
 function triggerWireDrumAppearance() {
@@ -6346,6 +6942,11 @@ function triggerWireDrumAppearance() {
 }
 
 function animateWireDrumAppearance(deltaSeconds) {
+  // Recompute the drum-assembly visibility + door targets from the live door /
+  // feeder state each frame (decoupled: the compartment door can show the drum
+  // without opening the drum's own door).
+  wireDrumRevealTarget = computeWireDrumVisibleTarget();
+
   if (Math.abs(wireDrumRevealProgress - wireDrumRevealTarget) > 1e-6) {
     const isShowing = wireDrumRevealTarget > wireDrumRevealProgress;
     let revealSpeed = WIRE_DRUM_APPEAR_SPEED_PER_SEC;
@@ -6372,7 +6973,7 @@ function animateWireDrumAppearance(deltaSeconds) {
     return;
   }
 
-  const rawDoorTarget = wireDrumRevealTarget > 0.5
+  const rawDoorTarget = computeWireDrumDoorOpen()
     ? WIRE_SPOOL_DOOR_OPEN_TARGET_RAD
     : WIRE_SPOOL_DOOR_CLOSED_TARGET_RAD;
   const targetDoorValue = clamp(rawDoorTarget, wireSpoolDoorState.lower, wireSpoolDoorState.upper);
@@ -6593,6 +7194,50 @@ function registerHeadMaterials(object3d) {
 
 function registerHeadVisual(object3d) {
   headVisuals.push(object3d);
+}
+
+// Give the feeder-wheel gears a proper machined-steel look. styleMeshTree tunes
+// every part to a low-metalness default; the feeder wheels are bare metal gears,
+// so with the scene environment now in place we push them to high metalness /
+// low roughness so the teeth catch reflections and read as real steel instead of
+// flat grey. Runs once per loaded model over the three wheel links only.
+function enhanceFeederWheelMaterials() {
+  if (!robotRoot) {
+    return;
+  }
+  const steelTuned = new Set();
+  for (const linkName of [LEFT_FEEDER_WHEEL_LINK, RIGHT_FEEDER_WHEEL_LINK, CENTRAL_FEEDER_WHEEL_LINK]) {
+    const linkObject = robotRoot.getObjectByName(`link:${linkName}`);
+    if (!linkObject) {
+      continue;
+    }
+    linkObject.traverse((node) => {
+      if (!node.isMesh || !node.material) {
+        return;
+      }
+      const materials = Array.isArray(node.material) ? node.material : [node.material];
+      for (const mat of materials) {
+        if (!mat || steelTuned.has(mat)) {
+          continue;
+        }
+        steelTuned.add(mat);
+        // Semi-metallic brushed-steel: metallic enough to catch environment
+        // highlights on the teeth, but not so metallic that the gears go dark in
+        // the near-black preview strip (pure metal only shows what it reflects).
+        if ("metalness" in mat) mat.metalness = 0.6;
+        if ("roughness" in mat) mat.roughness = 0.42;
+        if ("envMapIntensity" in mat) mat.envMapIntensity = 1.5;
+        // Scoped IBL: give just these gear materials the studio reflections so
+        // the teeth read as steel, without a scene-wide env map.
+        if ("envMap" in mat) mat.envMap = studioEnvironmentTexture;
+        // Light steel tone so the gears stay legible against the dark UI.
+        if (mat.color && typeof mat.color.setHex === "function") {
+          mat.color.setHex(0xb4bcc6);
+        }
+        mat.needsUpdate = true;
+      }
+    });
+  }
 }
 
 function styleMeshTree(object3d) {
@@ -7063,8 +7708,12 @@ function syncControlsPanelVerticalGap() {
   const requestedGap = CLOUD_MENU_VERTICAL_GAP_PX != null ? CLOUD_MENU_VERTICAL_GAP_PX : 0;
   const gap = Math.max(Math.min(requestedGap, Math.floor((band - minPanelHeight) / 2)), 0);
 
+  // Anchor the panel just below the topbar and let it size to its CONTENT
+  // (bottom: auto). Cap the height to the available band so long content scrolls
+  // and never overlaps the bottom nav — but short content leaves no empty space.
   controlsPanelEl.style.top = `${Math.round(topbarBottom + gap)}px`;
-  controlsPanelEl.style.bottom = `${Math.round(window.innerHeight - bottomNavTop + gap)}px`;
+  controlsPanelEl.style.bottom = "auto";
+  controlsPanelEl.style.maxHeight = `${Math.round(Math.max(band - gap * 2, minPanelHeight))}px`;
 }
 
 function setMaterialsMenuPopupRelocationEnabled(isEnabled) {
@@ -7691,6 +8340,9 @@ let bridgedSliceData = null;
 let bridgedToolpathFresh = false;
 
 window.addEventListener("message", (event) => {
+  if (!isTrustedSlicerMessage(event)) {
+    return;
+  }
   const data = event && event.data;
   if (!data || data.source !== "meltio-slicer" || data.type !== "slice-data") {
     return;
@@ -8342,6 +8994,115 @@ function showPrintNotice(message) {
   } catch (e) { /* best-effort */ }
 }
 
+// --- Machine link integration ---------------------------------------------
+// Wire the transport layer (sim/machineLink.js) to the console. Disabled by
+// default so the standalone demo runs on the local simulation exactly as before;
+// enable by setting window.AVIS_MACHINE = { enabled: true, base: "" } before this
+// script loads, or by opening the console with ?machine=1. When connected, the
+// machine is authoritative: telemetry drives the on-screen print progress and
+// the connection label, and the Start/Stop/Pause/E-stop buttons send real
+// commands (see runStartPrintAction / confirmStopPrint / haltPrintForError).
+function machineLinkConfig() {
+  const cfg = (typeof window !== "undefined" && window.AVIS_MACHINE) || {};
+  let enabled = Boolean(cfg.enabled);
+  try {
+    if (new URLSearchParams(window.location.search).get("machine") === "1") enabled = true;
+  } catch (_e) { /* no-op */ }
+  return { enabled, base: String(cfg.base || "") };
+}
+
+// True when a real (or mock) machine is connected and telemetry is fresh.
+function machineConnected() {
+  return Boolean(machineLink && machineLink.isConnected());
+}
+
+function initMachineLink() {
+  const cfg = machineLinkConfig();
+  if (!cfg.enabled) {
+    return; // stay on the local simulation
+  }
+  machineLink = createMachineLink({
+    base: cfg.base,
+    onStateChange: (next) => onMachineStateChange(next),
+    onTelemetry: (snap) => onMachineTelemetry(snap),
+  });
+  // Expose for the error-code layer / console debugging.
+  window.MeltioMachineLink = machineLink;
+  machineLink.start();
+}
+
+// Reflect the machine's connection/operational state in the topbar label.
+function onMachineStateChange(next) {
+  if (!topbarConnectionEl) return;
+  const label = {
+    disconnected: "Disconnected",
+    connecting: "Connecting…",
+  }[next] || "Connected";
+  topbarConnectionEl.textContent = label;
+}
+
+// Telemetry is the source of truth while connected. The on-screen reveal still
+// plays locally as a smooth visual estimate, but the machine's reported progress
+// is the authority: resync when the two diverge, and mirror the machine's
+// pause/resume so the scene and controls can never contradict the machine.
+// (Phase 1: local playback + telemetry resync. Full frame-by-frame authority
+// from telemetry/position is a follow-up once real position data exists.)
+const MACHINE_PROGRESS_RESYNC_THRESHOLD = 0.03;
+
+function onMachineTelemetry(snap) {
+  if (!printSim || !snap || !isDockedPrintActive) return;
+  const state = snap.state;
+  if (state === "printing" || state === "paused" || state === "completed") {
+    const target = state === "completed" ? 1 : (Number(snap.progress) || 0);
+    const current = typeof printSim.getProgress === "function" ? printSim.getProgress() : 0;
+    if (Math.abs(current - target) > MACHINE_PROGRESS_RESYNC_THRESHOLD
+        && typeof printSim.setProgress === "function") {
+      printSim.setProgress(target);
+      syncProgressUi();
+    }
+  }
+  // Mirror machine-driven pause/resume onto the local sim so the Play/Pause
+  // button state and the pause notice always match the machine.
+  const simState = printSim.getState();
+  if (state === "paused" && simState === "playing") {
+    printSim.pause();
+    openPrintPauseNotice();
+    updateBottomNavState();
+  } else if (state === "printing" && simState === "paused") {
+    printSim.play();
+    closePrintPauseNotice();
+    updateBottomNavState();
+  }
+}
+
+// Command a real print: arm the machine, then send START_PRINT carrying the job
+// identity and the sliced estimate. Best-effort with explicit failure handling —
+// a rejected/timed-out command must NOT leave the console pretending to print.
+async function commandMachinePrintStart() {
+  const name = String(selectedCloudLibraryFileName || cloudStlFileSelectEl?.value || "").trim();
+  let stats = {};
+  try {
+    stats = (typeof printSim.getStats === "function" && printSim.getStats()) || {};
+  } catch (_e) { /* stats are best-effort */ }
+  try {
+    await machineLink.arm();
+    await machineLink.startPrint({
+      jobId: name || null,
+      program: name || null,
+      estimatedSeconds: Number(stats.printSeconds) || undefined,
+      layerCount: Number(stats.layerCount) || undefined,
+    });
+    // Telemetry (onMachineTelemetry) now drives the reveal; nothing else to do.
+  } catch (err) {
+    // The machine did not accept the print. Tear the docked print down cleanly
+    // and tell the operator why — never animate a print that isn't running.
+    showPrintNotice(`Machine did not start the print: ${err && err.message ? err.message : "command failed"}`);
+    if (typeof printSim.stop === "function") printSim.stop();
+    isDockedPrintActive = false;
+    updateBottomNavState();
+  }
+}
+
 async function startDockedPrint() {
   if (!printSim || slicerLoadToViewerEl?.disabled) {
     return;
@@ -8423,9 +9184,16 @@ async function startDockedPrint() {
     // Play the homing/probe routine, THEN start the actual print. Capturing the
     // bed baseline after homing means the print begins from the print position.
     runPrePrintHomingSequence(() => {
-      initPrintBedSimulation();    // capture nozzle tip + model height, save bed
-      printSim.play();             // start printing (bed traces the toolpath)
+      initPrintBedSimulation();      // capture nozzle tip + model height, save bed
+      printSim.play();               // visual bed trace (estimate; resynced to telemetry)
       capturePrintViewCameraState(); // remember this framing for "Reset view"
+      if (machineConnected()) {
+        // Machine is authoritative for the actual print: command it, and let
+        // telemetry resync the on-screen reveal (onMachineTelemetry). A rejected
+        // command tears the visual down so we never animate a print that the
+        // machine refused to start.
+        commandMachinePrintStart();
+      }
       updateBottomNavState();
     });
   } finally {
@@ -8441,19 +9209,42 @@ async function startDockedPrint() {
 // Returns true if the print was actually started (gate passed → startDockedPrint),
 // false if it was declined at the synchronous material gate. Callers that framed a
 // preview use this to know whether to tear down or restore their view.
+// Lazily-created pre-print self-check (sim/prePrintCheck.js). Singleton so the
+// same dialog instance is reused across every Start path.
+let prePrintCheck = null;
+function getPrePrintCheck() {
+  if (!prePrintCheck) {
+    prePrintCheck = createPrePrintCheck({
+      // Auto checks read the live machine signal snapshot (real telemetry when a
+      // machine is linked; nominal mock signals in the standalone demo).
+      getSignals: () => getNotificationSignalsSnapshot(),
+      getMaterialStatus: () => validatePrintMaterial(),
+      // Authorised = God / Support (advanced role). Only they may override a
+      // failed safety check.
+      isAuthorized: () => advancedRoleDriven,
+      onProceed: ({ overridden } = {}) => {
+        if (overridden) {
+          console.warn("[print] pre-print safety check OVERRIDDEN by authorised operator");
+        }
+        startDockedPrint();
+      },
+      onMaterialFix: (status) => handleBlockedPrintMaterial(status),
+    });
+  }
+  return prePrintCheck;
+}
+
 function runStartPrintAction() {
   markUserActivity();
   if (!printSim) {
     return false;
   }
-  // Gate: verify a proper, sufficient material is loaded before printing.
-  const check = validatePrintMaterial();
-  if (!check.ok) {
-    handleBlockedPrintMaterial(check);
-    return false;
-  }
-  startDockedPrint();
-  return true;
+  // Gate: run the pre-print self-check (safety interlocks + material + operator
+  // build-plate confirmation). The print does NOT start here — it starts from
+  // inside the checklist once every check is green (or an authorised operator
+  // overrides a failed check). See sim/prePrintCheck.js.
+  getPrePrintCheck().open();
+  return true; // flow handed to the checklist dialog
 }
 
 // --- Start-print placement preview -----------------------------------------
@@ -8573,6 +9364,9 @@ if (slicerLoadToViewerEl) {
 // when the dock bar is present, so we hand our own Start-print button over to it.
 let slicerDockReady = false;
 window.addEventListener("message", (event) => {
+  if (!isTrustedSlicerMessage(event)) {
+    return;
+  }
   const data = event && event.data;
   if (!data || data.source !== "meltio-slicer") {
     return;
@@ -8647,7 +9441,7 @@ function setCloudModelMenuOpen(isOpen, options = {}) {
       syncCloudModelPopupVerticalGap();
     });
   } else if (wasCloudModelMenuOpen && !skipResetOnClose) {
-    closeFilesMenuAndResetView({ closeMenu: false });
+    closeFilesMenuAndResetView({ closeMenu: false, gentle: true });
   }
 
   updateBottomNavState();
@@ -10398,6 +11192,20 @@ async function chooseCloudLibraryFile(fileName) {
   // then "Load to viewer" drops the sliced part into the scene.
   setCloudFileRowSliceStatus(fileName, "slicing");
   await loadCloudOverlayFromSelectedFile();
+
+  // Material gate: the print file is chosen FIRST, then material. If nothing at
+  // all is loaded in Materials (no spool/drum assignment), route the operator
+  // straight to the Materials menu to load some before continuing. If a material
+  // is already loaded we stay in Files and let the normal slice/print flow run
+  // (suitability/enough-material is still enforced later at Start print).
+  const nothingLoadedInMaterials =
+    !hotspotMaterialAssignments.spool1
+    && !hotspotMaterialAssignments.spool2
+    && !hotspotMaterialAssignments.wiredrum;
+  if (nothingLoadedInMaterials && typeof setMaterialsMenuOpen === "function") {
+    setMaterialsMenuOpen(true); // closes the Files menu (the "transfer")
+    updateBottomNavState();
+  }
 }
 
 function setSelectedCloudLibraryFile(fileName, options = {}) {
@@ -10686,7 +11494,7 @@ function buildCloudPointObject(payload, viewMode) {
       Number(payload?.voxelSizeZMm) || cloudPointVoxelSizeZMm,
       0,
       pointOffset,
-      0x2c4058,
+      0x36322e,
     );
 
     return {
@@ -11372,6 +12180,116 @@ async function loadMeshObject(meshPath, urdfUrl) {
   throw new Error(`Unsupported mesh format: ${meshPath}`);
 }
 
+// --- Auxiliary chiller unit (HRS050-AF-20) --------------------------------
+// The topbar Chiller toggle shows/hides a standalone HRS050-AF-20 thermo-chiller
+// model that sits on the floor just to the LEFT of the machine. It is NOT part
+// of the URDF robot tree (it is a separate external unit), so it lives directly
+// in the scene and is positioned from the machine's live bounding box each time
+// it is shown. The mesh is loaded lazily on first activation.
+const CHILLER_MODEL_URL = "/assets/M600_PRO/HRS050-AF-20.glb";
+// The machine GLBs are authored in metres, but HRS050-AF-20.glb is authored in
+// millimetres (its raw bounds are ~600×377×1000 units for a ~1 m-tall chiller),
+// so it must be scaled down by 1000x to sit correctly next to the machine.
+const CHILLER_MM_TO_M = 0.001;
+// Placement beside the machine's +X face (the door/hinge side, which reads as
+// "left" in both the default 3/4 view and top-down). Tuned against the operator's
+// requested top-down layout. All metres, machine-relative so it is deterministic.
+const CHILLER_GAP_X = 0.087;        // gap beyond the machine's +X (left) face
+const CHILLER_DEPTH_OFFSET = 0.29;  // shift toward +Y (front) from machine centre
+const CHILLER_Z_SPIN = -Math.PI / 2; // 90° clockwise viewed from above
+let chillerObject = null;
+let chillerLoadPromise = null;
+
+async function ensureChillerLoaded() {
+  if (chillerObject) {
+    return chillerObject;
+  }
+  if (!chillerLoadPromise) {
+    const url = `${CHILLER_MODEL_URL}?v=${activeAssetCacheBustToken || "1"}`;
+    chillerLoadPromise = gltfLoader
+      .loadAsync(url)
+      .then((gltf) => {
+        const group = new THREE.Group();
+        group.name = "aux:HRS050-AF-20";
+        // CAD assets are authored Y-up; match the machine's Z-up conversion.
+        group.rotation.x = CAD_TO_VIEWER_X_ROTATION;
+        // Spin the unit 90° clockwise about the world vertical (Z) so it faces
+        // the requested way beside the machine. Applied in world space so it
+        // composes cleanly with the Y-up→Z-up rotation above.
+        group.rotateOnWorldAxis(new THREE.Vector3(0, 0, 1), CHILLER_Z_SPIN);
+        // Convert this unit's millimetre authoring to the scene's metre scale.
+        group.scale.setScalar(CHILLER_MM_TO_M);
+        group.add(gltf.scene);
+        group.visible = false;
+        scene.add(group);
+        chillerObject = group;
+        return group;
+      })
+      .catch((error) => {
+        console.error("[chiller] failed to load HRS050-AF-20 model", error);
+        chillerLoadPromise = null;
+        return null;
+      });
+  }
+  return chillerLoadPromise;
+}
+
+// Place the chiller on the floor beside the machine's +X (left) face. Fully
+// machine-relative and camera-independent, so it lands in the same spot every
+// time: just past the left face, shifted forward in depth, resting on the floor.
+// The unit is measured with its Z spin already applied (see ensureChillerLoaded).
+function positionChillerBesideMachine() {
+  if (!chillerObject || !robotRoot) {
+    return;
+  }
+  robotRoot.updateMatrixWorld(true);
+  const machineBounds = new THREE.Box3().setFromObject(robotRoot);
+  if (machineBounds.isEmpty()) {
+    return;
+  }
+
+  // Measure the chiller from a zeroed offset so the alignment is exact.
+  chillerObject.position.set(0, 0, 0);
+  chillerObject.updateMatrixWorld(true);
+  const chillerBounds = new THREE.Box3().setFromObject(chillerObject);
+  if (chillerBounds.isEmpty()) {
+    return;
+  }
+
+  const machineCenter = machineBounds.getCenter(new THREE.Vector3());
+  const chillerCenter = chillerBounds.getCenter(new THREE.Vector3());
+  const chillerHalfX = (chillerBounds.max.x - chillerBounds.min.x) * 0.5;
+
+  // X: just beyond the machine's +X (left) face, clearing the footprint + gap.
+  const targetX = machineBounds.max.x + CHILLER_GAP_X + chillerHalfX;
+  // Y (depth): shift forward from the machine centre.
+  const targetY = machineCenter.y + CHILLER_DEPTH_OFFSET;
+
+  const deltaX = targetX - chillerCenter.x;
+  const deltaY = targetY - chillerCenter.y;
+  // Z (up): rest on the same floor as the machine.
+  const deltaZ = machineBounds.min.z - chillerBounds.min.z;
+
+  chillerObject.position.set(deltaX, deltaY, deltaZ);
+  chillerObject.updateMatrixWorld(true);
+}
+
+// Show/hide the chiller in step with the topbar toggle. Instant, no camera move.
+async function setChillerVisible(visible) {
+  if (!visible) {
+    if (chillerObject) {
+      chillerObject.visible = false;
+    }
+    return;
+  }
+  const object = await ensureChillerLoaded();
+  if (!object) {
+    return;
+  }
+  positionChillerBesideMachine();
+  object.visible = true;
+}
+
 function getImmediateChildrenByTag(parent, tagName) {
   const target = tagName.toLowerCase();
   return Array.from(parent.children).filter((child) => child.tagName.toLowerCase() === target);
@@ -11406,6 +12324,7 @@ function clearRobot() {
   wireDrumMaterials = [];
   wireDrumRevealProgress = 0;
   wireDrumRevealTarget = 0;
+  manualWireDrumConnect = false;
   clearJointControlTransitions();
   cameraTransitionState = null;
   markUserActivity();
@@ -11963,6 +12882,125 @@ function updateTopDoorShortcutButton() {
   annotationNavTopCoverEl.classList.toggle("active", isOpen);
   annotationNavTopCoverEl.classList.toggle("is-open", isOpen);
   annotationNavTopCoverEl.setAttribute("aria-pressed", isOpen ? "true" : "false");
+  // Door state colour: closed = green (sealed), open = red (exposed). Only when
+  // the cover is actually controllable — a disabled button stays neutral.
+  annotationNavTopCoverEl.classList.toggle("is-door-open", hasControlData && isOpen);
+  annotationNavTopCoverEl.classList.toggle("is-door-closed", hasControlData && !isOpen);
+
+  // Label reflects state: "Top Door" when closed, "Top Door Open" when open.
+  const topLabelEl = annotationNavTopCoverEl.querySelector("span");
+  if (topLabelEl) {
+    topLabelEl.textContent = isOpen ? "Top Door Open" : "Top Door";
+  }
+
+  const topIconEl = annotationNavTopCoverEl.querySelector("svg");
+  const topIconMode = isOpen ? "top-open" : "top-closed";
+  if (topIconEl && topIconEl.dataset.mode !== topIconMode) {
+    topIconEl.innerHTML = isOpen ? TOP_DOOR_ICON_OPEN_SVG : TOP_DOOR_ICON_CLOSED_SVG;
+    topIconEl.dataset.mode = topIconMode;
+  }
+}
+
+// --- Files-menu see-through doors ------------------------------------------
+// While the Files menu is open the front door and top cover become fully
+// invisible once physically closed, so the operator can see straight into the
+// build area. Pressing a door button still unlocks + animates the leaf (which
+// stays solid through the swing); when it finishes closing again it vanishes.
+// Front door + top cover only, and no camera movement is ever involved. On
+// gentle Files-menu close the doors are left where they are and simply turn
+// solid again (see closeFilesMenuAndResetView).
+const FILES_SEE_THROUGH_DOOR_TARGETS = [
+  { linkName: FRONT_DOOR_LINK, getData: getFrontDoorControlData, getValue: (d) => d?.state?.value },
+  { linkName: TOP_COVER_LINK, getData: getTopCoverControlData, getValue: (d) => d?.topCoverState?.value },
+];
+
+let seeThroughDoorMaterialCache = new Map();
+let seeThroughDoorHiddenState = new Map();
+let seeThroughDoorCacheRoot = null;
+let filesSeeThroughEngaged = false;
+
+function ensureSeeThroughDoorCache() {
+  // The link objects and their materials are recreated on every model load, so
+  // drop the cache (and any hidden bookkeeping) whenever the robot root changes.
+  if (seeThroughDoorCacheRoot !== robotRoot) {
+    seeThroughDoorMaterialCache = new Map();
+    seeThroughDoorHiddenState = new Map();
+    seeThroughDoorCacheRoot = robotRoot;
+  }
+}
+
+function getSeeThroughDoorMaterialEntries(linkName) {
+  if (seeThroughDoorMaterialCache.has(linkName)) {
+    return seeThroughDoorMaterialCache.get(linkName);
+  }
+  const entries = [];
+  const linkObject = robotRoot ? robotRoot.getObjectByName(`link:${linkName}`) : null;
+  if (linkObject) {
+    linkObject.traverse((object3d) => {
+      if (!object3d.isMesh || !object3d.material) {
+        return;
+      }
+      const materials = Array.isArray(object3d.material) ? object3d.material : [object3d.material];
+      for (const material of materials) {
+        if (!material || entries.some((entry) => entry.material === material)) {
+          continue;
+        }
+        // Snapshot the natural look so restoring never assumes a fully opaque
+        // door — some panels are semi-transparent glass by design.
+        entries.push({
+          material,
+          baseOpacity: typeof material.opacity === "number" ? material.opacity : 1,
+          baseTransparent: Boolean(material.transparent),
+          baseDepthWrite: material.depthWrite !== false,
+        });
+      }
+    });
+  }
+  seeThroughDoorMaterialCache.set(linkName, entries);
+  return entries;
+}
+
+function isDoorValueFullyClosed(controlData, currentValue) {
+  if (!controlData || typeof currentValue !== "number") {
+    return false;
+  }
+  // Hide only once the leaf has essentially reached its closed value, so the
+  // full close animation stays visible before the door disappears.
+  const range = Math.abs(controlData.openValue - controlData.closedValue) || 1;
+  return Math.abs(currentValue - controlData.closedValue) <= range * 0.01 + 1e-4;
+}
+
+function updateFilesMenuDoorSeeThrough() {
+  const filesOpen = isCloudModelMenuOpen;
+  // Nothing to do once the doors are solid again and the menu is closed.
+  if (!filesOpen && !filesSeeThroughEngaged) {
+    return;
+  }
+  ensureSeeThroughDoorCache();
+
+  for (const target of FILES_SEE_THROUGH_DOOR_TARGETS) {
+    const controlData = target.getData();
+    const shouldHide = filesOpen && isDoorValueFullyClosed(controlData, target.getValue(controlData));
+    const currentlyHidden = seeThroughDoorHiddenState.get(target.linkName) === true;
+    if (shouldHide === currentlyHidden) {
+      continue;
+    }
+
+    const entries = getSeeThroughDoorMaterialEntries(target.linkName);
+    for (const entry of entries) {
+      if (shouldHide) {
+        setMaterialOpacity(entry.material, 0);
+      } else {
+        entry.material.opacity = entry.baseOpacity;
+        entry.material.transparent = entry.baseTransparent;
+        entry.material.depthWrite = entry.baseDepthWrite;
+        entry.material.needsUpdate = true;
+      }
+    }
+    seeThroughDoorHiddenState.set(target.linkName, shouldHide);
+  }
+
+  filesSeeThroughEngaged = filesOpen;
 }
 
 function getPrintingAreaWorldPoint(fallbackWorldPoint) {
@@ -12630,13 +13668,8 @@ function runFrontDoorButtonAction(frontDoorWorldPoint) {
   }
 
   if (isFrontDoorOpen()) {
+    // Unlock + animate only — no camera movement (see request).
     const didClose = setFrontDoorOpenState(false);
-    if (didClose) {
-      resetCameraToRobotView({
-        smooth: true,
-        durationMs: FRONT_DOOR_BUTTON_CLOSE_RESET_DURATION_MS,
-      });
-    }
     updateQuickFrontDoorToggleButton();
     return didClose;
   }
@@ -12652,16 +13685,12 @@ function applyFilesMenuOpenDoorAndCameraBehavior() {
     clearFeederFocusState();
   }
 
-  setFrontDoorOpenState(true);
-  // NOTE: the top cover is intentionally left CLOSED when opening Files (per
-  // request) — only the front door opens. The camera still frames the build area
-  // from the front-door angle.
-
-  // Opening Files swings the camera to frame the print head and the eje_y build
-  // area from a ~45° top angle, so the user sees where the part will be printed.
-  // Only skip while a print is actively animating
-  // (playing/paused) — moving the camera then would disrupt the build. Sliced-
-  // but-idle states (ready/slicing/completed) still transition.
+  // Opening the Files menu does NOT auto-open the front door — closed doors turn
+  // see-through via updateFilesMenuDoorSeeThrough so the operator sees straight
+  // into the build area. It DOES move the camera to the Files-menu reset view
+  // (the ~45° top-down build-area framing), so activating Files always frames
+  // the print area. Skip only while a print is actively animating
+  // (playing/paused), when moving the camera would disrupt the build.
   const printPlaybackState = printSim?.getState?.();
   const isPrintPlaybackActive = printPlaybackState === "playing" || printPlaybackState === "paused";
   if (!isPrintPlaybackActive) {
@@ -12819,27 +13848,15 @@ function buildTopCoverButtonCameraState(topCoverWorldPoint) {
   };
 }
 
-function runTopCoverButtonAction(topCoverWorldPoint) {
+function runTopCoverButtonAction() {
   if (activeFeederCameraAnchorSide) {
     clearFeederFocusState();
   }
 
-  const currentlyOpen = isTopCoverOpen();
-
-  if (currentlyOpen) {
-    resetCameraToRobotView({
-      smooth: true,
-      durationMs: TOP_COVER_BUTTON_CLOSE_RESET_DURATION_MS,
-    });
-    return setTopCoverOpenState(false);
-  }
-
-  const cameraState = buildTopCoverButtonCameraState(topCoverWorldPoint);
-  beginCameraTransition(cameraState, TOP_COVER_BUTTON_CAMERA_DURATION_MS, {
-    distanceLock: null,
-  });
-
-  return setTopCoverOpenState(true);
+  // Unlock + animate only — the Top Door button never moves the camera (see
+  // request). Interior visibility while the Files menu is open is handled by
+  // updateFilesMenuDoorSeeThrough, not by a camera focus.
+  return setTopCoverOpenState(!isTopCoverOpen());
 }
 
 function focusCameraOnPoint(worldPoint, focusRadius) {
@@ -14444,6 +15461,7 @@ async function loadUrdf(urdfUrl) {
       applyCloudPointDisplayState();
     }
     initializeSceneAnchorsFromRobot();
+    enhanceFeederWheelMaterials();
     rebuildJointControls();
     synchronizeTopCoverControlState();
     assemblyAnnotationManager.rebuildFromRobot();
@@ -14556,6 +15574,8 @@ function onResize() {
   camera.updateProjectionMatrix();
   applyRenderPixelRatio(getPreferredRenderPixelRatio());
   renderer.setSize(window.innerWidth, window.innerHeight);
+  // Re-apply the view-offset pan for the new viewport size.
+  applySceneViewOffset(sceneViewShiftCurrentPx);
   assemblyAnnotationManager.onResize();
   viewCubeController?.onResize();
   feederPreviewController?.onResize();
@@ -14631,7 +15651,7 @@ function syncTopbarUtilityErrorNotifications() {
       canResolveManually: true,
       sensorValue: "67.2 C",
       persistWhileSignalActive: false,
-      icon: "coolant",
+      icon: "thermometer",
       possibleCauses: "Low coolant flow, blocked filter, pump issue, or heat exchanger saturation.",
     });
   }
@@ -14652,7 +15672,7 @@ function syncTopbarUtilityErrorNotifications() {
       canResolveManually: true,
       sensorValue: "Airflow low",
       persistWhileSignalActive: false,
-      icon: "security",
+      icon: "fan",
       possibleCauses: "Fan motor fault, loose wiring, or blocked inlet/outlet.",
     });
   }
@@ -14801,6 +15821,9 @@ function applyChamberAtmosphere(data) {
 }
 window.meltioApplyChamberAtmosphere = applyChamberAtmosphere;
 window.addEventListener("message", (event) => {
+  if (!isSameOriginMessage(event)) {
+    return;
+  }
   const d = event && event.data;
   if (d && d.source === "meltio-m600" && d.type === "chamber-atmosphere") {
     applyChamberAtmosphere(d);
@@ -15035,6 +16058,15 @@ function confirmStopPrint() {
   setSlicerMenuOpen(false);  // close the Slicer flyout so it can't linger
   cancelPrePrintSequence(); // stop the homing routine if it's still running
 
+  // Machine is authoritative: command the real stop. Fire-and-forget with a
+  // logged failure — the visual teardown below proceeds either way, but a failed
+  // stop must be surfaced (never silently swallowed for a metal machine).
+  if (machineConnected()) {
+    machineLink.stop().catch((err) => {
+      showPrintNotice(`Stop command failed: ${err && err.message ? err.message : "unknown error"}`);
+    });
+  }
+
   // Snapshot how far the print got and what it consumed BEFORE we tear anything
   // down — reset() zeroes the progress and clearCloudStlObject() drops the
   // selected job that the material figures come from.
@@ -15083,6 +16115,41 @@ function confirmStopPrint() {
 }
 
 // Bottom navigation mirrors the app state managed by existing panel/theme toggles.
+// Persistent topbar print-progress pill. A running/paused print is otherwise
+// only visible via the bottom-nav swap; this keeps % + ETA on screen no matter
+// which menu the operator is in. Called every frame (cheap: only writes to the
+// DOM when a value actually changes) and on every print-state change.
+function updateTopbarPrintProgress() {
+  const el = document.getElementById("topbarPrintProgress");
+  if (!el) return;
+  const state = printSim && typeof printSim.getState === "function" ? printSim.getState() : "idle";
+  const active = state === "playing" || state === "paused";
+  document.body.classList.toggle("print-progress-active", active);
+  if (el.hidden === active) el.hidden = !active;
+  if (!active) return;
+  const progress = typeof printSim.getProgress === "function" ? Number(printSim.getProgress()) || 0 : 0;
+  const pct = Math.max(0, Math.min(100, Math.round(progress * 100)));
+  let stats = {};
+  try { stats = (typeof printSim.getStats === "function" && printSim.getStats()) || {}; } catch (_e) { /* best effort */ }
+  const total = Number(stats.printSeconds);
+  const pctEl = document.getElementById("topbarPrintPct");
+  const barEl = document.getElementById("topbarPrintBar");
+  const etaEl = document.getElementById("topbarPrintEta");
+  const pctText = `${pct}%`;
+  if (pctEl && pctEl.textContent !== pctText) pctEl.textContent = pctText;
+  if (barEl) barEl.style.width = pctText;
+  let etaText;
+  if (state === "paused") {
+    etaText = "Paused";
+  } else if (Number.isFinite(total) && total > 0) {
+    etaText = `ETA ${formatPrintDuration(Math.max(0, Math.round(total * (1 - progress))))}`;
+  } else {
+    etaText = "ETA —";
+  }
+  if (etaEl && etaEl.textContent !== etaText) etaEl.textContent = etaText;
+  el.classList.toggle("is-paused", state === "paused");
+}
+
 function updateBottomNavState() {
   // While a print is docked the bar is Stop (door) / Pause (play) / Slicer:
   // Materials + Files are hidden and the Slicer button is shown instead.
@@ -15152,6 +16219,12 @@ function updateBottomNavState() {
     navMaterialsToggleEl.disabled = false;
   }
 
+  if (annotationNavTopCoverEl) {
+    // Mirror Materials: hidden while a print is docked so the repurposed
+    // print-control bar stays a clean four items.
+    annotationNavTopCoverEl.hidden = dockedPrint;
+  }
+
   if (navSlicerToggleEl) {
     // Only shown while a print is docked; toggles the print-sim panel flyout.
     navSlicerToggleEl.hidden = !dockedPrint;
@@ -15173,7 +16246,7 @@ function updateBottomNavState() {
     const iconEl = navDoorToggleEl.querySelector("svg");
     if (printUnderway) {
       navDoorToggleEl.classList.add("is-stop-mode");
-      navDoorToggleEl.classList.remove("is-active");
+      navDoorToggleEl.classList.remove("is-active", "is-door-open", "is-door-closed");
       navDoorToggleEl.setAttribute("aria-pressed", "false");
       navDoorToggleEl.setAttribute("aria-label", "Stop print");
       if (labelEl) {
@@ -15188,13 +16261,20 @@ function updateBottomNavState() {
       const isOpen = isFrontDoorOpen();
       navDoorToggleEl.setAttribute("aria-pressed", isOpen ? "true" : "false");
       navDoorToggleEl.classList.toggle("is-active", isOpen);
-      navDoorToggleEl.setAttribute("aria-label", isOpen ? "Close Door" : "Open Door");
+      // Door state colour: closed = green (sealed), open = red (exposed).
+      navDoorToggleEl.classList.toggle("is-door-open", isOpen);
+      navDoorToggleEl.classList.toggle("is-door-closed", !isOpen);
+      // Label reflects state: closed shows the "Open Door" action, open shows
+      // the "Door Open" status (per request), not a "Close Door" action.
+      const doorLabel = isOpen ? "Door Open" : "Open Door";
+      navDoorToggleEl.setAttribute("aria-label", doorLabel);
       if (labelEl) {
-        labelEl.textContent = isOpen ? "Close Door" : "Open Door";
+        labelEl.textContent = doorLabel;
       }
-      if (iconEl && iconEl.dataset.mode !== "door") {
-        iconEl.innerHTML = NAV_DOOR_ICON_DOOR_SVG;
-        iconEl.dataset.mode = "door";
+      const doorIconMode = isOpen ? "door-open" : "door-closed";
+      if (iconEl && iconEl.dataset.mode !== doorIconMode) {
+        iconEl.innerHTML = isOpen ? NAV_DOOR_ICON_DOOR_OPEN_SVG : NAV_DOOR_ICON_DOOR_SVG;
+        iconEl.dataset.mode = doorIconMode;
       }
     }
   }
@@ -15202,13 +16282,8 @@ function updateBottomNavState() {
 
 function runBottomNavDoorToggleAction() {
   if (isFrontDoorOpen()) {
+    // Unlock + animate only — no camera movement (see request).
     const didClose = setFrontDoorOpenState(false);
-    if (didClose) {
-      resetCameraToRobotView({
-        smooth: true,
-        durationMs: FRONT_DOOR_BUTTON_CLOSE_RESET_DURATION_MS,
-      });
-    }
     updateBottomNavState();
     return didClose;
   }
@@ -15270,7 +16345,7 @@ function runBottomNavMaterialsAction() {
 }
 
 function closeFilesMenuAndResetView(options = {}) {
-  const { closeMenu = true } = options;
+  const { closeMenu = true, gentle = false } = options;
   clearPendingFrontDoorSequence();
 
   if (closeMenu && isCloudModelMenuOpen) {
@@ -15291,10 +16366,18 @@ function closeFilesMenuAndResetView(options = {}) {
 
   setSpoolsDoorOpenState(false);
 
-  // Always force a close target so in-flight open transitions are reversed too.
-  setFrontDoorOpenState(false);
-  // Re-close the top cover opened for the Files-menu top-angle view.
-  setTopCoverOpenState(false);
+  // A gentle close (normal Files-menu dismissal) leaves the front door and top
+  // cover exactly where the operator left them (only dropping the see-through
+  // state, which updateFilesMenuDoorSeeThrough restores to solid once the menu
+  // is flagged closed). A full close (e.g. the Reset View button) additionally
+  // force-closes both doors. Either way the camera returns to the main view,
+  // since activating Files moved it to the Files reset view.
+  if (!gentle) {
+    // Always force a close target so in-flight open transitions are reversed too.
+    setFrontDoorOpenState(false);
+    // Re-close the top cover opened for the Files-menu top-angle view.
+    setTopCoverOpenState(false);
+  }
   updateQuickFrontDoorToggleButton();
 
   // Switching back to the main view resets the camera — EXCEPT while a print is
@@ -15326,7 +16409,7 @@ function runBottomNavFilesToggleAction() {
 
   const nextIsOpen = !isCloudModelMenuOpen;
   if (!nextIsOpen) {
-    closeFilesMenuAndResetView();
+    closeFilesMenuAndResetView({ gentle: true });
     return false;
   }
 
@@ -15383,6 +16466,9 @@ function animate(nowMs = performance.now()) {
   animateFeederWheels(deltaSeconds);
   animateWireDrumAppearance(deltaSeconds);
   updateJointControlTransitions(deltaSeconds);
+  if (typeof updateMoveReadout === "function") updateMoveReadout();
+  if (typeof updateTopbarPrintProgress === "function") updateTopbarPrintProgress();
+  updateFilesMenuDoorSeeThrough();
   updateMaterialsModelLift(deltaSeconds);
   updateCameraTransition(nowMs);
   updateIdleReset(nowMs);
@@ -15392,6 +16478,7 @@ function animate(nowMs = performance.now()) {
   updateCloudPrintSimulation(deltaSeconds);
   printSim?.update(deltaSeconds);
   const controlsChanged = controls.update();
+  const sceneViewShiftActive = updateSceneViewShift(deltaSeconds);
   updateSpoolAssemblyHighlight(nowMs);
   updateFeederWheelFloatingControls();
 
@@ -15400,6 +16487,7 @@ function animate(nowMs = performance.now()) {
   // state updates above still run every frame — only the draw is throttled.
   const sceneActive =
     controlsChanged ||
+    sceneViewShiftActive ||
     (nowMs - lastUserActivityMs) < IDLE_RENDER_ACTIVE_WINDOW_MS ||
     isInteractionQualityActive ||
     cameraTransitionState !== null ||
@@ -15821,8 +16909,15 @@ if (notificationListEl) {
 if (notificationViewHistoryEl) {
   notificationViewHistoryEl.addEventListener("click", () => {
     markUserActivity();
-    setCalendarScreenOpen(true);
+    setNotificationHistoryScreenOpen(true);
     setNotificationCenterOpen(false);
+  });
+}
+
+if (notificationHistoryReturnEl) {
+  notificationHistoryReturnEl.addEventListener("click", () => {
+    markUserActivity();
+    setNotificationHistoryScreenOpen(false);
   });
 }
 
@@ -15876,8 +16971,8 @@ if (notificationDetailsResolveEl) {
       return;
     }
     markUserActivity();
-    resolveNotification(selectedNotificationDetailId);
-    openNotificationDetailsModal(selectedNotificationDetailId);
+    goToNotificationIssue(selectedNotificationDetailId);
+    closeNotificationDetailsModal();
   });
 }
 
@@ -16208,6 +17303,44 @@ if (materialsConfirmActionEl) {
   materialsConfirmActionEl.addEventListener("click", () => {
     markUserActivity();
     commitMaterialsMenuSelection();
+  });
+}
+
+// Materials menu (Feeder 1/2): Load applies the selected material + amount to
+// the focused feeder (reuses the commit path); Unload clears it; the Feed type
+// select switches the focused feeder between Spool and Drum.
+const materialsLoadActionEl = document.getElementById("materialsLoadAction");
+const materialsUnloadActionEl = document.getElementById("materialsUnloadAction");
+const materialsFeedTypeSelectEl = document.getElementById("materialsFeedTypeSelect");
+
+if (materialsLoadActionEl) {
+  materialsLoadActionEl.addEventListener("click", () => {
+    markUserActivity();
+    if (commitMaterialsMenuSelection()) {
+      const focusedKey = normalizeSpoolKey(hotspotMaterialsFocusSpoolKey) || "spool1";
+      const focusedLabel = focusedKey === "spool2" ? "Feeder 2" : "Feeder 1";
+      setMaterialsMenuConfirmMessage(`${focusedLabel} loaded.`);
+    }
+  });
+}
+
+if (materialsUnloadActionEl) {
+  materialsUnloadActionEl.addEventListener("click", () => {
+    markUserActivity();
+    unloadFocusedFeeder();
+  });
+}
+
+if (materialsFeedTypeSelectEl) {
+  materialsFeedTypeSelectEl.addEventListener("change", () => {
+    markUserActivity();
+    const focusedKey = normalizeSpoolKey(hotspotMaterialsFocusSpoolKey) || "spool1";
+    const nextType = materialsFeedTypeSelectEl.value === "drum" ? "drum" : "spool";
+    feederFeedType[focusedKey] = nextType;
+    persistFeederFeedType();
+    updateMaterialsFeederTypeUI();
+    // Reveal/hide spools + drum right away to match the new feed type.
+    refreshFeedstockVisibility();
   });
 }
 
@@ -16750,23 +17883,357 @@ if (topbarPanToggleEl) {
   });
 }
 
-if (topbarChillerToggleEl) {
-  topbarChillerToggleEl.addEventListener("click", () => {
-    markUserActivity();
-    isTopbarChillerEnabled = !isTopbarChillerEnabled;
-    setTopbarUtilityToggleState(topbarChillerToggleEl, isTopbarChillerEnabled);
-    syncTopbarUtilityErrorNotifications();
+// ---- Topbar utility (Fan / Chiller): single tap = on/off toggle; double-tap
+// or long-press = open the settings popover with live controls. ---------------
+const fanState = { on: isTopbarFanEnabled, speed: 60, mode: "auto" };
+const chillerState = { on: isTopbarChillerEnabled, target: 18.0, current: 21.4, flow: 70 };
+try {
+  const stored = JSON.parse(localStorage.getItem("meltioUtilitySettings") || "null");
+  if (stored && typeof stored === "object") {
+    if (stored.fan && typeof stored.fan === "object") Object.assign(fanState, stored.fan);
+    if (stored.chiller && typeof stored.chiller === "object") Object.assign(chillerState, stored.chiller);
+  }
+} catch (err) { /* ignore malformed storage */ }
+function persistUtilitySettings() {
+  try {
+    localStorage.setItem("meltioUtilitySettings", JSON.stringify({ fan: fanState, chiller: chillerState }));
+  } catch (err) { /* storage may be unavailable */ }
+}
+
+const topbarFanSettingsEl = document.getElementById("topbarFanSettings");
+const topbarChillerSettingsEl = document.getElementById("topbarChillerSettings");
+
+function fanRpmFromSpeed(pct) { return Math.round((Math.max(0, Math.min(100, pct)) / 100) * 4200); }
+function chillerFlowLpm(pct) { return (Math.max(0, Math.min(100, pct)) / 100) * 6; }
+
+function applyFanSpin() {
+  if (!topbarFanToggleEl) return;
+  // Higher speed -> shorter spin duration (0.6s at 100%, 4s at 0%).
+  const dur = 0.6 + ((100 - Math.max(0, Math.min(100, fanState.speed))) / 100) * 3.4;
+  topbarFanToggleEl.style.setProperty("--fan-spin-duration", `${dur.toFixed(2)}s`);
+}
+
+function refreshFanSettingsUI() {
+  const power = document.getElementById("fanSettingsPower");
+  if (power) {
+    power.setAttribute("aria-pressed", fanState.on ? "true" : "false");
+    power.textContent = fanState.on ? "On" : "Off";
+  }
+  const speed = document.getElementById("fanSettingsSpeed");
+  const speedVal = document.getElementById("fanSettingsSpeedValue");
+  if (speed) speed.value = String(Math.round(fanState.speed));
+  if (speedVal) speedVal.textContent = `${Math.round(fanState.speed)}%`;
+  const rpm = document.getElementById("fanSettingsRpm");
+  if (rpm) rpm.textContent = fanState.on ? String(fanRpmFromSpeed(fanState.speed)) : "0";
+  const auto = document.getElementById("fanSettingsModeAuto");
+  const manual = document.getElementById("fanSettingsModeManual");
+  if (auto) auto.classList.toggle("is-active", fanState.mode === "auto");
+  if (manual) manual.classList.toggle("is-active", fanState.mode === "manual");
+}
+
+function refreshChillerSettingsUI() {
+  const power = document.getElementById("chillerSettingsPower");
+  if (power) {
+    power.setAttribute("aria-pressed", chillerState.on ? "true" : "false");
+    power.textContent = chillerState.on ? "On" : "Off";
+  }
+  const target = document.getElementById("chillerSettingsTargetValue");
+  if (target) target.textContent = `${chillerState.target.toFixed(1)} °C`;
+  const current = document.getElementById("chillerSettingsCurrent");
+  if (current) current.textContent = chillerState.on ? `${chillerState.current.toFixed(1)} °C` : "—";
+  const flow = document.getElementById("chillerSettingsFlow");
+  const flowVal = document.getElementById("chillerSettingsFlowValue");
+  if (flow) flow.value = String(Math.round(chillerState.flow));
+  if (flowVal) flowVal.textContent = chillerState.on ? `${chillerFlowLpm(chillerState.flow).toFixed(1)} L/min` : "0.0 L/min";
+}
+
+function setFanOn(on) {
+  isTopbarFanEnabled = on;
+  fanState.on = on;
+  setTopbarUtilityToggleState(topbarFanToggleEl, on);
+  syncTopbarUtilityErrorNotifications();
+  applyFanSpin();
+  refreshFanSettingsUI();
+  persistUtilitySettings();
+}
+function setChillerOn(on) {
+  isTopbarChillerEnabled = on;
+  chillerState.on = on;
+  setTopbarUtilityToggleState(topbarChillerToggleEl, on);
+  syncTopbarUtilityErrorNotifications();
+  setChillerVisible(on);
+  refreshChillerSettingsUI();
+  persistUtilitySettings();
+}
+
+function positionUtilityPopover(popoverEl, buttonEl) {
+  if (!popoverEl || !buttonEl) return;
+  const parent = popoverEl.offsetParent || buttonEl.parentElement;
+  if (!parent) return;
+  const btnRect = buttonEl.getBoundingClientRect();
+  const parentRect = parent.getBoundingClientRect();
+  let left = btnRect.left - parentRect.left;
+  const maxLeft = parent.clientWidth - popoverEl.offsetWidth;
+  left = Math.max(0, Math.min(left, Math.max(0, maxLeft)));
+  popoverEl.style.left = `${left}px`;
+}
+
+function setUtilitySettingsOpen(which, open) {
+  const popoverEl = which === "fan" ? topbarFanSettingsEl : topbarChillerSettingsEl;
+  const otherEl = which === "fan" ? topbarChillerSettingsEl : topbarFanSettingsEl;
+  const buttonEl = which === "fan" ? topbarFanToggleEl : topbarChillerToggleEl;
+  if (otherEl) { otherEl.hidden = true; otherEl.setAttribute("aria-hidden", "true"); }
+  if (!popoverEl) return;
+  if (open) {
+    if (which === "fan") refreshFanSettingsUI(); else refreshChillerSettingsUI();
+    popoverEl.hidden = false;
+    popoverEl.setAttribute("aria-hidden", "false");
+    positionUtilityPopover(popoverEl, buttonEl);
+  } else {
+    popoverEl.hidden = true;
+    popoverEl.setAttribute("aria-hidden", "true");
+  }
+}
+
+function attachUtilityInteractions(buttonEl, which, onToggle) {
+  if (!buttonEl) return;
+  let clickTimer = null;
+  buttonEl.addEventListener("click", () => {
+    if (clickTimer) {
+      // second click within the window -> double-tap -> activate/deactivate.
+      // Requiring a double-tap prevents an accidental single touch from
+      // switching the fan/chiller on or off.
+      clearTimeout(clickTimer);
+      clickTimer = null;
+      markUserActivity();
+      onToggle();
+      return;
+    }
+    clickTimer = window.setTimeout(() => {
+      clickTimer = null;
+      markUserActivity();
+      // single tap -> reveal the settings panel (safe, no power change)
+      setUtilitySettingsOpen(which, true);
+    }, 240);
   });
 }
 
-if (topbarFanToggleEl) {
-  topbarFanToggleEl.addEventListener("click", () => {
-    markUserActivity();
-    isTopbarFanEnabled = !isTopbarFanEnabled;
-    setTopbarUtilityToggleState(topbarFanToggleEl, isTopbarFanEnabled);
-    syncTopbarUtilityErrorNotifications();
+attachUtilityInteractions(topbarFanToggleEl, "fan", () => setFanOn(!fanState.on));
+attachUtilityInteractions(topbarChillerToggleEl, "chiller", () => setChillerOn(!chillerState.on));
+
+// Fan settings controls
+document.getElementById("fanSettingsPower")?.addEventListener("click", () => { markUserActivity(); setFanOn(!fanState.on); });
+document.getElementById("fanSettingsModeAuto")?.addEventListener("click", () => { markUserActivity(); fanState.mode = "auto"; refreshFanSettingsUI(); persistUtilitySettings(); });
+document.getElementById("fanSettingsModeManual")?.addEventListener("click", () => { markUserActivity(); fanState.mode = "manual"; refreshFanSettingsUI(); persistUtilitySettings(); });
+document.getElementById("fanSettingsSpeed")?.addEventListener("input", (e) => {
+  markUserActivity();
+  fanState.speed = Number(e.target.value) || 0;
+  if (fanState.mode === "auto") { fanState.mode = "manual"; }
+  applyFanSpin();
+  refreshFanSettingsUI();
+  persistUtilitySettings();
+});
+
+// Chiller settings controls
+document.getElementById("chillerSettingsPower")?.addEventListener("click", () => { markUserActivity(); setChillerOn(!chillerState.on); });
+document.getElementById("chillerSettingsTargetDown")?.addEventListener("click", () => { markUserActivity(); chillerState.target = Math.max(5, chillerState.target - 0.5); refreshChillerSettingsUI(); persistUtilitySettings(); });
+document.getElementById("chillerSettingsTargetUp")?.addEventListener("click", () => { markUserActivity(); chillerState.target = Math.min(30, chillerState.target + 0.5); refreshChillerSettingsUI(); persistUtilitySettings(); });
+document.getElementById("chillerSettingsFlow")?.addEventListener("input", (e) => { markUserActivity(); chillerState.flow = Number(e.target.value) || 0; refreshChillerSettingsUI(); persistUtilitySettings(); });
+
+// ---- On-screen numeric keypad (tap a readout to type a new value) --------
+const numpadOverlayEl = document.getElementById("numpadOverlay");
+const numpadTitleEl = document.getElementById("numpadTitle");
+const numpadRangeEl = document.getElementById("numpadRange");
+const numpadDisplayValueEl = document.getElementById("numpadDisplayValue");
+const numpadUnitEl = document.getElementById("numpadUnit");
+let numpadCtx = null;
+let numpadBuffer = "";
+let numpadFresh = false;
+
+function renderNumpadDisplay() {
+  if (numpadDisplayValueEl) numpadDisplayValueEl.textContent = numpadBuffer === "" ? "0" : numpadBuffer;
+}
+
+function openNumpad(cfg) {
+  if (!numpadOverlayEl || !cfg) return;
+  numpadCtx = cfg;
+  const decimals = cfg.decimals || 0;
+  numpadBuffer = decimals > 0 ? Number(cfg.value).toFixed(decimals) : String(Math.round(Number(cfg.value)));
+  numpadFresh = true;
+  if (numpadTitleEl) numpadTitleEl.textContent = cfg.title || "Value";
+  if (numpadUnitEl) numpadUnitEl.textContent = cfg.unit || "";
+  if (numpadRangeEl) numpadRangeEl.textContent = `${cfg.min}–${cfg.max}${cfg.unit ? " " + cfg.unit : ""}`;
+  renderNumpadDisplay();
+  numpadOverlayEl.hidden = false;
+  numpadOverlayEl.setAttribute("aria-hidden", "false");
+  markUserActivity();
+}
+
+function closeNumpad() {
+  if (!numpadOverlayEl) return;
+  numpadOverlayEl.hidden = true;
+  numpadOverlayEl.setAttribute("aria-hidden", "true");
+  numpadCtx = null;
+  numpadBuffer = "";
+  numpadFresh = false;
+}
+
+function numpadKey(key) {
+  if (!numpadCtx) return;
+  markUserActivity();
+  if (numpadFresh) {
+    numpadFresh = false;
+    if (key !== "back") numpadBuffer = "";
+  }
+  if (key === "back") {
+    numpadBuffer = numpadBuffer.slice(0, -1);
+  } else if (key === ".") {
+    if ((numpadCtx.decimals || 0) > 0 && !numpadBuffer.includes(".")) {
+      numpadBuffer = (numpadBuffer === "" ? "0" : numpadBuffer) + ".";
+    }
+  } else if (numpadBuffer.replace(/[^0-9]/g, "").length < 6) {
+    numpadBuffer += key;
+  }
+  renderNumpadDisplay();
+}
+
+function applyNumpad() {
+  if (!numpadCtx) { closeNumpad(); return; }
+  const n = parseFloat(numpadBuffer);
+  const ctx = numpadCtx;
+  closeNumpad();
+  if (!isFinite(n)) return;
+  const clamped = Math.max(ctx.min, Math.min(ctx.max, n));
+  if (typeof ctx.onApply === "function") ctx.onApply(clamped);
+}
+
+numpadOverlayEl?.querySelectorAll("[data-numpad-key]").forEach((b) =>
+  b.addEventListener("click", () => numpadKey(b.getAttribute("data-numpad-key")))
+);
+document.getElementById("numpadOk")?.addEventListener("click", applyNumpad);
+document.getElementById("numpadCancel")?.addEventListener("click", closeNumpad);
+numpadOverlayEl?.addEventListener("click", (e) => { if (e.target === numpadOverlayEl) closeNumpad(); });
+document.addEventListener("keydown", (e) => {
+  if (!numpadOverlayEl || numpadOverlayEl.hidden) return;
+  if (e.key === "Escape") { e.preventDefault(); closeNumpad(); }
+  else if (e.key === "Enter") { e.preventDefault(); applyNumpad(); }
+  else if (/^[0-9]$/.test(e.key)) { e.preventDefault(); numpadKey(e.key); }
+  else if (e.key === ".") { e.preventDefault(); numpadKey("."); }
+  else if (e.key === "Backspace") { e.preventDefault(); numpadKey("back"); }
+});
+
+function attachNumpadToValue(el, cfgFactory) {
+  if (!el) return;
+  const open = () => openNumpad(cfgFactory());
+  el.addEventListener("click", open);
+  el.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
   });
 }
+
+attachNumpadToValue(document.getElementById("fanSettingsSpeedValue"), () => ({
+  title: "Fan speed", unit: "%", value: fanState.speed, min: 0, max: 100, decimals: 0,
+  onApply: (n) => {
+    fanState.speed = n;
+    if (fanState.mode === "auto") fanState.mode = "manual";
+    applyFanSpin();
+    refreshFanSettingsUI();
+    persistUtilitySettings();
+  },
+}));
+attachNumpadToValue(document.getElementById("chillerSettingsTargetValue"), () => ({
+  title: "Target temp", unit: "°C", value: chillerState.target, min: 5, max: 30, decimals: 1,
+  onApply: (n) => { chillerState.target = n; refreshChillerSettingsUI(); persistUtilitySettings(); },
+}));
+attachNumpadToValue(document.getElementById("chillerSettingsFlowValue"), () => ({
+  title: "Coolant flow", unit: "%", value: chillerState.flow, min: 0, max: 100, decimals: 0,
+  onApply: (n) => { chillerState.flow = n; refreshChillerSettingsUI(); persistUtilitySettings(); },
+}));
+
+// Close buttons + outside-click / Escape dismissal
+document.querySelectorAll("[data-utility-close]").forEach((btn) => {
+  btn.addEventListener("click", () => { markUserActivity(); setUtilitySettingsOpen(btn.getAttribute("data-utility-close"), false); });
+});
+document.addEventListener("pointerdown", (event) => {
+  // Don't dismiss the popover when the keypad overlay (which sits above it) is
+  // open — it lives outside the popover but is a child of this interaction.
+  if (numpadOverlayEl && !numpadOverlayEl.hidden) return;
+  const t = event.target;
+  if (topbarFanSettingsEl && !topbarFanSettingsEl.hidden && !topbarFanSettingsEl.contains(t) && !topbarFanToggleEl?.contains(t)) {
+    setUtilitySettingsOpen("fan", false);
+  }
+  if (topbarChillerSettingsEl && !topbarChillerSettingsEl.hidden && !topbarChillerSettingsEl.contains(t) && !topbarChillerToggleEl?.contains(t)) {
+    setUtilitySettingsOpen("chiller", false);
+  }
+}, true);
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    setUtilitySettingsOpen("fan", false);
+    setUtilitySettingsOpen("chiller", false);
+  }
+});
+
+// Sync initial UI from (possibly persisted) state.
+applyFanSpin();
+refreshFanSettingsUI();
+refreshChillerSettingsUI();
+
+// ---- Move panel: X/Y/Z jog + step + live position readout -------------------
+// Drives the linear joints directly via setJointValue (the raw joint sliders are
+// hidden but still back the engine). Jog step is in mm; linear joint values are
+// metres, so mm/1000. WD reads the palpador/probe joint.
+let moveStepMm = 10;
+const MOVE_AXIS_JOINT = { x: EJE_X_JOINT, y: EJE_Y_JOINT, z: Z_AXIS_JOINT };
+const moveReadoutEls = {
+  x: document.getElementById("movePosX"),
+  y: document.getElementById("movePosY"),
+  z: document.getElementById("movePosZ"),
+  wd: document.getElementById("movePosWd"),
+};
+function updateMoveReadout() {
+  const fmt = (name) => { const s = getJointStateByName(name); return s ? (s.value * 1000).toFixed(1) : "—"; };
+  if (moveReadoutEls.x) moveReadoutEls.x.textContent = fmt(EJE_X_JOINT);
+  if (moveReadoutEls.y) moveReadoutEls.y.textContent = fmt(EJE_Y_JOINT);
+  if (moveReadoutEls.z) moveReadoutEls.z.textContent = fmt(Z_AXIS_JOINT);
+  if (moveReadoutEls.wd) moveReadoutEls.wd.textContent = fmt(PALPADOR_PRO_JOINT);
+}
+function jogMoveAxis(axis, dir) {
+  // Defense in depth: re-check the capability inside the handler, never trusting
+  // the DOM's disabled state alone. A scripted/assistive-tech activation that
+  // slips past the visual gate must still be refused here.
+  if (window.MeltioPermissions && typeof window.MeltioPermissions.can === "function"
+      && !window.MeltioPermissions.can("machine.motion")) {
+    return;
+  }
+  const name = MOVE_AXIS_JOINT[axis];
+  const state = name ? getJointStateByName(name) : null;
+  if (!state) return;
+  const deltaInternal = dir * (moveStepMm / 1000);
+  const next = Math.max(state.lower, Math.min(state.upper, state.value + deltaInternal));
+  setJointValue(state, next);
+  updateMoveReadout();
+  markUserActivity();
+}
+document.querySelectorAll("[data-move-axis]").forEach((btn) => {
+  btn.addEventListener("click", () => jogMoveAxis(btn.getAttribute("data-move-axis"), Number(btn.getAttribute("data-move-dir")) || 1));
+});
+document.querySelectorAll("[data-move-step]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    moveStepMm = Number(btn.getAttribute("data-move-step")) || 10;
+    document.querySelectorAll("[data-move-step]").forEach((b) => b.classList.toggle("is-active", b === btn));
+    markUserActivity();
+  });
+});
+updateMoveReadout();
+
+// Switching menus (any topbar icon or bottom-nav item) dismisses the transient
+// arrival toasts; the notifications remain in the notification center.
+document.addEventListener("click", (event) => {
+  const t = event.target;
+  if (t && t.closest && t.closest(".topbar-icon, .bottom-nav-item")) {
+    if (typeof clearNotificationToasts === "function") clearNotificationToasts();
+  }
+}, true);
 
 if (navControlsToggleEl) {
   navControlsToggleEl.addEventListener("click", () => {
@@ -16800,10 +18267,18 @@ if (navPlayToggleEl) {
     printSim.togglePlay();
     // Pausing surfaces a non-blocking notice; resuming clears it. The green
     // pulse on the (now "Play") button is applied by updateBottomNavState.
-    if (printSim.getState() === "paused") {
+    const nowPaused = printSim.getState() === "paused";
+    if (nowPaused) {
       openPrintPauseNotice();
     } else {
       closePrintPauseNotice();
+    }
+    // Machine is authoritative: send the matching command. On rejection, surface
+    // it; the next telemetry snapshot will resync the visual to the real state.
+    if (machineConnected()) {
+      (nowPaused ? machineLink.pause() : machineLink.resume()).catch((err) => {
+        showPrintNotice(`${nowPaused ? "Pause" : "Resume"} command failed: ${err && err.message ? err.message : "unknown error"}`);
+      });
     }
     updateBottomNavState();
   });
@@ -16925,6 +18400,11 @@ if (printPauseResumeEl) {
     closePrintPauseNotice();
     if (printSim && printSim.getState() === "paused") {
       printSim.togglePlay();
+      if (machineConnected()) {
+        machineLink.resume().catch((err) => {
+          showPrintNotice(`Resume command failed: ${err && err.message ? err.message : "unknown error"}`);
+        });
+      }
     }
     updateBottomNavState();
   });
@@ -16958,8 +18438,7 @@ if (quickFrontDoorToggleEl) {
 if (annotationNavTopCoverEl) {
   annotationNavTopCoverEl.addEventListener("click", () => {
     markUserActivity();
-    const topDoorFocusPoint = getLinkWorldCenter(TOP_COVER_LINK) || controls.target;
-    runTopCoverButtonAction(topDoorFocusPoint);
+    runTopCoverButtonAction();
     updateTopDoorShortcutButton();
   });
 }
@@ -17141,11 +18620,13 @@ updateAdvancedRequiredControls();
 seedCalendarEventsIfNeeded();
 suggestMaintenanceEventsFromSchedule();
 setCalendarScreenOpen(false);
+setNotificationHistoryScreenOpen(false);
 renderCalendarScreen();
 updateNotificationCenterFromSignals();
 setTopbarUtilityToggleState(topbarChillerToggleEl, isTopbarChillerEnabled);
 setTopbarUtilityToggleState(topbarFanToggleEl, isTopbarFanEnabled);
 syncTopbarUtilityErrorNotifications();
+setChillerVisible(isTopbarChillerEnabled);
 if (!feederPreviewController && hotspotFeederCameraPreviewEl) {
   setFeederCameraPreviewPlaceholder();
 }
@@ -17434,6 +18915,8 @@ function initializePrintSimulation() {
     getSlicerThermal: () => (bridgedSliceData && bridgedSliceData.thermal ? bridgedSliceData.thermal : null),
   });
 
+  initMachineLink();
+
   if (prepareEl) {
     prepareEl.addEventListener("click", async () => {
       markUserActivity();
@@ -17572,15 +19055,14 @@ window.MeltioAdvanced = {
   },
 };
 
-// Critical banner "View" → open the Notification Center.
-document.getElementById("criticalNotificationBannerView")?.addEventListener("click", () => {
-  markUserActivity();
-  setNotificationCenterOpen(true);
-});
 
 window.MeltioMachine = {
   // Halt the print for a safety-disengaging error: pause an active print and
   // surface the pause notice. Idempotent + safe to call when nothing is running.
+  // When a machine is connected, ALSO command a real stop — a safety error must
+  // act on the machine, not merely freeze the animation. (If the error came from
+  // the machine's own telemetry it has already halted; the command is a
+  // defensive belt-and-braces and is safe to repeat.)
   haltPrintForError() {
     try {
       if (printSim && typeof printSim.getState === "function") {
@@ -17591,7 +19073,25 @@ window.MeltioMachine = {
           updateBottomNavState();
         }
       }
+      if (machineConnected()) {
+        machineLink.stop().catch(() => { /* already halted / link issue — best effort */ });
+      }
       if (slicerLoadToViewerEl) slicerLoadToViewerEl.disabled = true; // block Start until cleared
     } catch (_e) {}
+  },
+
+  // Software emergency stop. Highest-priority command; the machine honors it from
+  // any state. This is an operator aid layered ON TOP of the machine's hardware
+  // E-stop and interlocks — it does not replace them. Returns a promise so a
+  // caller can react to a failed send (e.g. escalate to "press the physical
+  // E-stop"), but the physical E-stop remains the real safety guarantee.
+  emergencyStop() {
+    if (!machineConnected()) return Promise.resolve(false);
+    return machineLink.emergencyStop()
+      .then(() => true)
+      .catch((err) => {
+        showPrintNotice(`E-STOP command failed — use the physical E-stop. (${err && err.message ? err.message : "no ack"})`);
+        return false;
+      });
   },
 };
