@@ -1,11 +1,14 @@
 # Meltio URDF Viewer
 
-A web-based 3D viewer for the Meltio M600-PRO metal-printing system, with an
-**embedded slicer** and an **in-scene print simulation**. It renders the live
-machine (URDF + meshes), lets you slice an STL, and plays the print back on the
-real gantry motion — all in the browser.
+A web-based 3D **operator HMI** for the Meltio M600-PRO metal-printing system. It
+renders the live machine (URDF + meshes), drives the machine and its peripherals
+through a touch-first control surface, embeds a **slicer**, and plays a slice back
+as an **in-scene print simulation** on the real gantry motion — all in the browser.
 
-![Viewer](docs/screenshot-viewer.png)
+![Interface overview](docs/ui-overview.svg)
+
+> The overview above is a schematic of the current UI. A live capture of the 3D
+> scene is in [`docs/screenshot-viewer.png`](docs/screenshot-viewer.png).
 
 ---
 
@@ -20,14 +23,52 @@ The app is **two local services** that run together:
 
 The viewer embeds the slicer (via the `AVIS_SLICER_URL` environment variable) so
 the Files-menu **slice** and the in-scene **Start print** flow work end to end.
+The front-end is a single-page **vanilla-JS + Three.js** app (no build step) served
+from `urdf_viewer/…/web/static/`; the Python side is a small FastAPI backend
+(auth, permissions, error codes, slicer proxy, machine-link transport).
 
-**Highlights**
-- Full URDF robot render with motion presets (maintenance / print / palpador).
-- Files menu → slice an STL → **Start print**: homing/probe routine, 3-axis bead
-  tracing, real-speed playback, pause/stop, material gate + usage tracking.
-- Fullscreen embedded slicer with a bottom **dock bar** (Model / Slice / View /
-  Start print).
-- Tuned for a **vertical 1080×1920 HMI touch panel** (see *Display* below).
+---
+
+## Operator interface
+
+Everything is tuned for a **vertical 1080×1920 HMI touch panel**, with a full-bleed
+top bar and bottom navigation.
+
+**3D scene** — full URDF render of the M600-PRO with procedural image-based
+lighting, framed resting/overview cameras, and motion presets (maintenance /
+print / palpador). Optional chiller (HRS050) model toggles in beside the machine.
+
+**Top bar (right)** — flat, frameless utility controls, each tinting accent when
+active:
+- **Fan** and **Chiller** — tap to toggle; long-press / double-tap opens a settings
+  popover (fan speed & mode, chiller target/current).
+- **Notifications** — a bell with a live count badge; opens the notification centre
+  (raised/solved machine events from the error-code catalog) with a dated,
+  persisted **history** view. New critical/warning events also arrive as toasts.
+- **Settings** and an **account chip** showing the signed-in user's initials.
+
+**Bottom navigation** — icon-forward tabs whose glyphs reflect their action:
+- **Open Door** / **Top Door** — the door/roof icons animate open on the real
+  machine state (the door swings from the right; the top-cover "house" roof lifts
+  with rise-arrows).
+- **Materials** — per-feeder loading (Feeder 1 / 2, spool or drum feed), load /
+  unload and amount loaded; the spool icon spins and pays out filament when open.
+- **Files** — browse & slice STLs, then **Start print** to dock the job.
+- During a docked print the bar becomes **Stop / Pause / Slicer**.
+
+**Controls · Move** — an operator jog panel (permission-gated): X/Y/Z jog with a
+constant-velocity glide (no snapping), **Home XY** and **Home Z**, and a smooth
+**palpador** deploy/retract toggle.
+
+**Accounts & permissions** — credential sign-in (username + password) against the
+backend (hashed), which resolves a permission level (Operator, Operator+, Support,
+God). Motion-bearing controls (the Move panel, machine commands) are gated to the
+appropriate level, and the session auto-signs-out when idle.
+
+**Print flow** — Files → slice an STL → **Start print**: pre-print homing/probe
+routine, 3-axis bead tracing at real speed, pause/stop, plus a material gate and
+usage tracking. A docked **Slicer** panel and a fullscreen embedded slicer share
+one palette.
 
 ---
 
@@ -94,6 +135,10 @@ $env:AVIS_SLICER_UI_URL = "http://127.0.0.1:8765"
 ```
 Then open **http://127.0.0.1:8090/urdf**.
 
+> **Machine link** — the live-machine transport is **off by default**; append
+> `?machine=1` to the URL to enable it (otherwise the scene runs against the mock
+> machine state).
+
 ---
 
 ## Display — vertical 1080×1920 panel
@@ -102,8 +147,7 @@ The standard target is a **1920×1080 screen mounted vertically** (a 1080×1920
 portrait viewport), e.g. an HMI touch panel. The layout, bottom navigation, and
 slicer dock bar are tuned for that.
 
-- The bottom bars sit **60 px** above the viewport edge so the Windows taskbar
-  doesn't clip them when the browser isn't fullscreen.
+- The top and bottom bars span the full width of the frame (edge-to-edge).
 - For a true kiosk look (taskbar hidden, no wasted space), run the browser
   fullscreen: press **F11**, or launch with `--kiosk` /
   `--app=http://127.0.0.1:8090/urdf`. (To make the launcher do this by default,
@@ -118,9 +162,10 @@ slicer dock bar are tuned for that.
 ├─ Start-Viewer.bat        # one-click launcher (double-click this)
 ├─ Stop-Viewer.bat         # stops both services
 ├─ launch-viewer.ps1       # launcher logic (starts servers, opens browser)
+├─ docs/                   # README assets (ui-overview.svg, screenshot-viewer.png)
 ├─ urdf_viewer/            # the viewer app (avisualizer)
 │   └─ projects/avisualizer/
-│       ├─ src/            # Python backend + web/ (static JS/CSS: the UI)
+│       ├─ src/            # FastAPI backend + web/ (static JS/CSS: the UI)
 │       └─ assets/         # M600-PRO URDF + meshes (.glb/.obj)
 └─ _slicer_branch/         # the slicer backend (meltio-platform)
     └─ projects/platform/
@@ -137,11 +182,11 @@ tracked — they are created by the setup steps above.
 - **Port already in use** — a previous instance is still running. Run
   `Stop-Viewer.bat`, then start again. The launcher is idempotent: if a service
   is already up it just opens the browser.
-- **Bottom buttons cut off** — the browser isn't fullscreen and the taskbar is
-  taller than the 60 px clearance. Run fullscreen (F11 / `--kiosk`), or increase
-  the `bottom` value in `launch-viewer.ps1` / the CSS.
-- **I don't see my CSS/JS change** — the launcher appends a `?cb=` cache-bust on
-  every run; if opening the URL by hand, hard-reload (Ctrl+F5).
+- **Bottom buttons cut off** — the browser isn't fullscreen and the taskbar
+  overlaps the bar. Run fullscreen (F11 / `--kiosk`).
+- **I don't see my CSS/JS change** — the static assets are cache-busted with a
+  `?v=` query on every UI change; the launcher also appends a `?cb=` on the URL.
+  If opening the URL by hand, hard-reload (Ctrl+F5).
 - **`open3d` fails to install** — make sure the environment is Python **3.11**
   (newer/older versions may lack prebuilt wheels).
 
