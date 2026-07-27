@@ -109,6 +109,23 @@ def test_put_rejects_document_with_no_god_user(monkeypatch: pytest.MonkeyPatch, 
   assert not store.exists()
 
 
+def test_put_returns_generic_message_when_save_fails(
+  monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+  # Point the store under a *file* so mkdir(parents=True) raises OSError.
+  blocker = tmp_path / "blocker"
+  blocker.write_text("x", encoding="utf-8")
+  monkeypatch.setattr(app_module, "PERMISSIONS_STORE", blocker / "sub" / "permissions.json")
+  client = TestClient(app_module.create_app())
+
+  response = client.put("/api/permissions/config", json=_valid_document())
+
+  assert response.status_code == 500
+  detail = response.json()["detail"]
+  assert detail == "Could not save permissions."   # generic, no exception text
+  assert str(tmp_path) not in detail                # no internal path leaked
+
+
 def test_put_rejects_oversized_body(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
   client, store = _client(monkeypatch, tmp_path)
   document = _valid_document()

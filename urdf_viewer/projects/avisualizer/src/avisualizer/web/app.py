@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import mimetypes
 import os
 from pathlib import Path
@@ -22,6 +23,8 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 
 from .services.sensor_pointcloud import load_attribute_series, load_sensor_pointcloud
+
+logger = logging.getLogger(__name__)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -540,7 +543,10 @@ def create_app() -> FastAPI:
             PERMISSIONS_STORE.parent.mkdir(parents=True, exist_ok=True)
             PERMISSIONS_STORE.write_text(json.dumps(data, indent=2), encoding="utf-8")
         except OSError as exc:
-            raise HTTPException(status_code=500, detail=f"Could not save permissions: {exc}") from exc
+            # Keep the real reason (may include filesystem paths) in the log,
+            # not in the client response.
+            logger.exception("Failed to persist permissions document")
+            raise HTTPException(status_code=500, detail="Could not save permissions.") from exc
         return {"ok": True}
 
     # --- Sign-in --------------------------------------------------------------
@@ -663,7 +669,8 @@ def create_app() -> FastAPI:
         except urllib.error.URLError as exc:
             raise HTTPException(status_code=502, detail=f"Slicer unreachable: {exc.reason}") from exc
         except Exception as exc:  # noqa: BLE001 - surface as bad gateway, keep viewer usable
-            raise HTTPException(status_code=502, detail=f"Slicer profile lookup failed: {exc}") from exc
+            logger.exception("Slicer profile lookup failed")
+            raise HTTPException(status_code=502, detail="Slicer profile lookup failed.") from exc
 
         default: str | None = None
         entries: object = info
@@ -849,7 +856,8 @@ def create_app() -> FastAPI:
         except urllib.error.URLError as exc:
             raise HTTPException(status_code=502, detail=f"Slicer unreachable: {exc.reason}") from exc
         except Exception as exc:  # noqa: BLE001 - surface as bad gateway, keep viewer usable
-            raise HTTPException(status_code=502, detail=f"Slicer proxy failure: {exc}") from exc
+            logger.exception("Slicer proxy failure")
+            raise HTTPException(status_code=502, detail="Slicer proxy failure.") from exc
 
     return app
 
