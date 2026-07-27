@@ -14,7 +14,7 @@ import { createFeederPreviewController } from "./controllers/feederPreview.js?v=
 import { createAssemblyAnnotationManager } from "./controllers/annotationManager.js?v=1";
 import { createViewerScene } from "./core/viewerScene.js?v=1";
 import { createCloudLibrary } from "./cloud/cloudLibrary.js?v=1";
-import { createCloudStl3D } from "./cloud/cloudStl3D.js?v=1";
+import { createCloudStl3D } from "./cloud/cloudStl3D.js?v=2";
 // Notifications domain: one stateful factory owns the record map + all
 // notification UI (center, toasts, bell, details modal, history). The pure
 // format/catalog helpers live under ./notifications/ and are imported there.
@@ -599,9 +599,6 @@ const CLOUD_STL_PLACEMENT_SIDES = Object.freeze({
   right: { zDeg: -90, label: "Right (+X)" },
   left: { zDeg: 90, label: "Left (-X)" },
 });
-const CLOUD_STL_HEAD_CONTACT_MOVE_DURATION_SEC = 1.2;
-const CLOUD_STL_HEAD_CONTACT_WARN_MM = 2.0;
-const CLOUD_STL_HEAD_CONTACT_Z_MOVE_DURATION_SEC = 1.2;
 const CLOUD_PRINT_SIM_DEFAULT_SPEED_LAYERS_PER_SEC = 20.0;
 const CLOUD_PRINT_SIM_DEFAULT_AXIS = "z";
 const CLOUD_PRINT_SIM_DEFAULT_DIRECTION = "positive";
@@ -13066,15 +13063,11 @@ const cloudStl3D = createCloudStl3D({
   cloudFileLibraryEl,
   EJE_X_JOINT,
   EJE_Y_JOINT,
-  Z_AXIS_JOINT,
   CLOUD_STL_PLACEMENT_SIDES,
   CLOUD_STL_PARENT_LINK,
   CLOUD_POINT_PARENT_LINK,
   CLOUD_STL_TOP_CLEARANCE_M,
   CLOUD_STL_DROP_ALIGN_DURATION_SEC,
-  CLOUD_STL_HEAD_CONTACT_MOVE_DURATION_SEC,
-  CLOUD_STL_HEAD_CONTACT_Z_MOVE_DURATION_SEC,
-  CLOUD_STL_HEAD_CONTACT_WARN_MM,
   CLOUD_STL_ASSUME_REAL_SCALE_MAX_DIM_M,
   CLOUD_STL_UNIT_SCALE_CANDIDATES,
   CLOUD_STL_UNIT_SCALE_TARGET_DIM_M,

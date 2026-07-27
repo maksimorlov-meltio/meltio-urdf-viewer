@@ -50,15 +50,11 @@ export function createCloudStl3D(ctx) {
     cloudFileLibraryEl,
     EJE_X_JOINT,
     EJE_Y_JOINT,
-    Z_AXIS_JOINT,
     CLOUD_STL_PLACEMENT_SIDES,
     CLOUD_STL_PARENT_LINK,
     CLOUD_POINT_PARENT_LINK,
     CLOUD_STL_TOP_CLEARANCE_M,
     CLOUD_STL_DROP_ALIGN_DURATION_SEC,
-    CLOUD_STL_HEAD_CONTACT_MOVE_DURATION_SEC,
-    CLOUD_STL_HEAD_CONTACT_Z_MOVE_DURATION_SEC,
-    CLOUD_STL_HEAD_CONTACT_WARN_MM,
     CLOUD_STL_ASSUME_REAL_SCALE_MAX_DIM_M,
     CLOUD_STL_UNIT_SCALE_CANDIDATES,
     CLOUD_STL_UNIT_SCALE_TARGET_DIM_M,
@@ -831,91 +827,6 @@ export function createCloudStl3D(ctx) {
     setCloudStlStatus(
       `placed; aligning xy under head (eje_x ${appliedXDeltaMm.toFixed(1)} mm, eje_y ${appliedYDeltaMm.toFixed(1)} mm)`,
     );
-    return true;
-  }
-
-  function alignCloudStlToHeadContactViaEjeX(durationSeconds = CLOUD_STL_HEAD_CONTACT_MOVE_DURATION_SEC) {
-    if (!cloudStlObject || !getRobotRoot()) {
-      return false;
-    }
-    // During a docked print the gantry is positioned/centred by the print flow —
-    // don't let the STL→head preview alignment fight it (the STL is hidden anyway).
-    if (getIsDockedPrintActive()) {
-      return false;
-    }
-
-    const ejeXState = getJointStateByName(EJE_X_JOINT);
-    if (!ejeXState || ejeXState.kind !== "linear") {
-      setCloudStlStatus("contact sync unavailable (eje_x_joint missing)");
-      return false;
-    }
-
-    const headLowestPoint = getHeadLowestWorldPoint();
-    const stlTopPoint = getCloudStlWorldTopPoint();
-    if (!headLowestPoint || !stlTopPoint) {
-      setCloudStlStatus("contact sync unavailable (head/STL bounds)");
-      return false;
-    }
-
-    const axisWorld = getLinearJointWorldAxis(ejeXState);
-    if (!axisWorld) {
-      setCloudStlStatus("contact sync unavailable (eje_x axis)");
-      return false;
-    }
-
-    const deltaToHead = headLowestPoint.clone().sub(stlTopPoint);
-    const requiredAxisDelta = deltaToHead.dot(axisWorld);
-    const currentXValue = ejeXState.value;
-    const unclampedXTarget = currentXValue + requiredAxisDelta;
-    const clampedXTarget = clamp(unclampedXTarget, ejeXState.lower, ejeXState.upper);
-    const appliedXDelta = clampedXTarget - currentXValue;
-
-    moveJointToValue(ejeXState, clampedXTarget, durationSeconds);
-
-    const stlTopAfterX = stlTopPoint.clone().addScaledVector(axisWorld, appliedXDelta);
-    const deltaAfterX = headLowestPoint.clone().sub(stlTopAfterX);
-
-    const zAxisState = getJointStateByName(Z_AXIS_JOINT);
-    let appliedZDelta = 0;
-    let residualZMm = Math.abs(deltaAfterX.z) * 1000;
-    let zSyncEnabled = false;
-
-    if (zAxisState && zAxisState.kind === "linear") {
-      const zAxisWorld = getLinearJointWorldAxis(zAxisState);
-      const zAxisVertical = zAxisWorld ? zAxisWorld.z : 0;
-      if (Number.isFinite(zAxisVertical) && Math.abs(zAxisVertical) > 1e-5) {
-        const requiredZDelta = deltaAfterX.z / zAxisVertical;
-        const currentZValue = zAxisState.value;
-        const unclampedZTarget = currentZValue + requiredZDelta;
-        const clampedZTarget = clamp(unclampedZTarget, zAxisState.lower, zAxisState.upper);
-        appliedZDelta = clampedZTarget - currentZValue;
-        moveJointToValue(zAxisState, clampedZTarget, CLOUD_STL_HEAD_CONTACT_Z_MOVE_DURATION_SEC);
-        residualZMm = Math.abs(deltaAfterX.z - (appliedZDelta * zAxisVertical)) * 1000;
-        zSyncEnabled = true;
-      }
-    }
-
-    const xDeltaMm = appliedXDelta * 1000;
-    const zDeltaMm = appliedZDelta * 1000;
-
-    if (zSyncEnabled) {
-      if (residualZMm > CLOUD_STL_HEAD_CONTACT_WARN_MM) {
-        setCloudStlStatus(
-          `loaded, eje_x synced (${xDeltaMm.toFixed(1)} mm), z synced (${zDeltaMm.toFixed(1)} mm; z residual ${residualZMm.toFixed(1)} mm)`,
-        );
-      } else {
-        setCloudStlStatus(
-          `loaded, eje_x synced (${xDeltaMm.toFixed(1)} mm), z synced (${zDeltaMm.toFixed(1)} mm)`,
-        );
-      }
-    } else if (residualZMm > CLOUD_STL_HEAD_CONTACT_WARN_MM) {
-      setCloudStlStatus(
-        `loaded, eje_x synced (${xDeltaMm.toFixed(1)} mm; z residual ${residualZMm.toFixed(1)} mm)`,
-      );
-    } else {
-      setCloudStlStatus(`loaded, eje_x synced (${xDeltaMm.toFixed(1)} mm)`);
-    }
-
     return true;
   }
 

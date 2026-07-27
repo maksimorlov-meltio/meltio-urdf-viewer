@@ -338,8 +338,7 @@ cloudLibrary calls 4 cloudStl3D exports — `resolveCloudStlUnitScale`, `clearCl
 root: `let cloudLibrary`; create **cloudStl3D first** with late-bound thunks
 (`(...a) => cloudLibrary.X(...a)`) for the 9; then assign `cloudLibrary` with cloudStl3D's
 exports by direct reference. No import cycle, no TDZ (the only forward ref is lazy).
-`alignCloudStlToHeadContactViaEjeX` is dead code (0 callers) — moved byte-exact, not
-exported, flagged for deletion. No automated test — verified in-browser.
+No automated test — verified in-browser.
 
 ### 3.4 Sensor/utility modules — `static/modules/`
 Support the point-cloud viewer (unrelated to printing):
