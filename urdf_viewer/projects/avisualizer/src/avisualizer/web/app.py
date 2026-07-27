@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import mimetypes
 import os
 from pathlib import Path
 import re
+import secrets
 from typing import Literal
 import urllib.error
 import urllib.request
@@ -26,6 +29,13 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 DEFAULT_DATASET_NAME = "small-torture-test_1-0-0"
 # Roles/users/permission-matrix document (see /api/permissions/config).
 PERMISSIONS_STORE = DATABASE_ROOT / "permissions.json"
+# Sign-in credentials, kept separate from the (public) permissions document so
+# password material never travels with the roles/users matrix. Shape:
+#   {"<username>": {"salt": "<hex>", "hash": "<hex>", "iterations": <int>}}
+# Manage entries with tools/set_password.py. See /api/auth/login.
+CREDENTIALS_STORE = DATABASE_ROOT / "credentials.json"
+# PBKDF2-HMAC-SHA256 work factor for new credentials (hashlib, stdlib only).
+PBKDF2_ITERATIONS = 240_000
 # Engine/M600 error+warning code catalog (see /api/error-codes).
 ERROR_CODES_STORE = DATABASE_ROOT / "error_codes.json"
 
@@ -53,6 +63,41 @@ def _slicer_ui_url() -> str | None:
     if explicit:
         return explicit.rstrip("/")
     return _slicer_base_url()
+
+
+def _cors_allowed_origins() -> list[str]:
+    """Origins allowed to read our endpoints cross-origin.
+
+    Only the embedded slicer UI needs this (to fetch STL files for pre-load), so
+    we scope CORS to that single origin instead of "*". An origin is scheme +
+    host + port with no path, so we strip any path the URL env vars may carry.
+    Returns an empty list when no slicer is configured (no cross-origin needed).
+    """
+    ui = _slicer_ui_url()
+    if not ui:
+        return []
+    match = re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://[^/]+", ui)
+    return [match.group(0)] if match else []
+
+
+def _hash_password(password: str, *, salt: bytes | None = None,
+                   iterations: int = PBKDF2_ITERATIONS) -> dict[str, object]:
+    """Derive a PBKDF2-HMAC-SHA256 credential record for `password`."""
+    salt = salt if salt is not None else secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+    return {"salt": salt.hex(), "hash": digest.hex(), "iterations": iterations}
+
+
+def _verify_password(password: str, record: dict) -> bool:
+    """Constant-time check of `password` against a stored credential record."""
+    try:
+        salt = bytes.fromhex(str(record["salt"]))
+        expected = bytes.fromhex(str(record["hash"]))
+        iterations = int(record["iterations"])
+    except (KeyError, ValueError, TypeError):
+        return False
+    candidate = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+    return hmac.compare_digest(candidate, expected)
 
 
 def _http_json(url: str, *, method: str = "GET", data: bytes | None = None,
@@ -290,10 +335,12 @@ def _build_binary_sensor_response(
 def create_app() -> FastAPI:
     app = FastAPI(title="avisualizer web", version="0.1.0")
     # Allow the embedded slicer UI (a different origin) to fetch STL files from us
-    # so "Load to slicer" can pre-load the chosen model. Read-only GETs, no creds.
+    # so "Load to slicer" can pre-load the chosen model. Read-only GETs, no creds,
+    # and scoped to the configured slicer origin (not "*") so arbitrary local
+    # pages can't read our STL/sensor/roles endpoints. Empty when no slicer is set.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=_cors_allowed_origins(),
         allow_methods=["GET"],
         allow_headers=["*"],
     )
@@ -333,6 +380,52 @@ def create_app() -> FastAPI:
         except OSError as exc:
             raise HTTPException(status_code=500, detail=f"Could not save permissions: {exc}") from exc
         return {"ok": True}
+
+    # --- Sign-in --------------------------------------------------------------
+    # Validates {username, password} against the PBKDF2 credential store and
+    # returns {"user": {...}} for the client to elevate its role. Credentials
+    # (hashes) live in credentials.json, separate from the public permissions
+    # document; the user's role/name come from that permissions document. Note
+    # this authenticates identity for the operator console — the control gating
+    # it drives is still UI-level, not a security boundary for the machine.
+    @app.post("/api/auth/login")
+    def auth_login(payload: dict | None = Body(default=None)) -> dict:
+        data = payload if isinstance(payload, dict) else {}
+        username = str(data.get("username", "")).strip()
+        password = str(data.get("password", ""))
+        # Uniform 401 (never reveal whether the username exists).
+        invalid = HTTPException(status_code=401, detail="Username or password not recognised.")
+        if not username or not password:
+            raise invalid
+
+        try:
+            credentials = json.loads(CREDENTIALS_STORE.read_text(encoding="utf-8")) \
+                if CREDENTIALS_STORE.exists() else {}
+        except (OSError, ValueError):
+            credentials = {}
+        record = credentials.get(username) if isinstance(credentials, dict) else None
+        if not isinstance(record, dict) or not _verify_password(password, record):
+            raise invalid
+
+        # Look up the user's role/name in the (separate) permissions document.
+        try:
+            config = json.loads(PERMISSIONS_STORE.read_text(encoding="utf-8")) \
+                if PERMISSIONS_STORE.exists() else {}
+        except (OSError, ValueError):
+            config = {}
+        users = config.get("users", []) if isinstance(config, dict) else []
+        profile = next(
+            (u for u in users if isinstance(u, dict) and u.get("username") == username),
+            None,
+        )
+        user = {
+            "username": username,
+            "name": (profile or {}).get("name", username),
+            "roleId": (profile or {}).get("roleId"),
+        }
+        if profile and profile.get("avatar"):
+            user["avatar"] = profile["avatar"]
+        return {"user": user}
 
     # --- Machine error/warning code catalog -----------------------------------
     # Static reference catalog of Engine/M600 fault codes (descriptions, causes,

@@ -2,10 +2,10 @@ from pathlib import Path
 
 import pytest
 
-from avisualizer.web.services.sensor_pointcloud import _reservoir_sample_points, load_sensor_pointcloud
+from avisualizer.web.services.sensor_pointcloud import _iter_sensor_rows, load_sensor_pointcloud
 
 
-def test_reservoir_sample_points_reads_xyz_and_attribute(tmp_path: Path) -> None:
+def test_iter_sensor_rows_reads_xyz_and_attribute(tmp_path: Path) -> None:
     csv_path = tmp_path / "Sensors.csv"
     csv_path.write_text(
         "x,y,z,loadCell\n"
@@ -15,28 +15,22 @@ def test_reservoir_sample_points_reads_xyz_and_attribute(tmp_path: Path) -> None
         encoding="utf-8",
     )
 
-    coords, attrs, total, min_attr, max_attr = _reservoir_sample_points(
-        csv_path=csv_path,
-        attribute="loadCell",
-        max_points=10,
-    )
+    rows = list(_iter_sensor_rows(csv_path, "loadCell"))
 
-    assert total == 3
-    assert coords.shape == (3, 3)
-    assert attrs.shape == (3,)
-    assert min_attr == 100.0
-    assert max_attr == 300.0
+    assert len(rows) == 3
+    assert rows[0] == (1.0, 2.0, 3.0, 100.0)
+    assert [row[3] for row in rows] == [100.0, 200.0, 300.0]
 
 
-def test_reservoir_sample_points_raises_for_missing_columns(tmp_path: Path) -> None:
+def test_iter_sensor_rows_raises_for_missing_columns(tmp_path: Path) -> None:
     csv_path = tmp_path / "Sensors.csv"
     csv_path.write_text("x,y,z\n1,2,3\n", encoding="utf-8")
 
     with pytest.raises(ValueError, match="missing required columns"):
-        _reservoir_sample_points(csv_path=csv_path, attribute="loadCell", max_points=10)
+        list(_iter_sensor_rows(csv_path, "loadCell"))
 
 
-def test_reservoir_sample_points_skips_zero_laser_power_by_default(tmp_path: Path) -> None:
+def test_iter_sensor_rows_skips_zero_laser_power_by_default(tmp_path: Path) -> None:
     csv_path = tmp_path / "Sensors.csv"
     csv_path.write_text(
         "x,y,z,loadCell,laserPower\n"
@@ -46,18 +40,10 @@ def test_reservoir_sample_points_skips_zero_laser_power_by_default(tmp_path: Pat
         encoding="utf-8",
     )
 
-    coords, attrs, total, min_attr, max_attr = _reservoir_sample_points(
-        csv_path=csv_path,
-        attribute="loadCell",
-        max_points=10,
-    )
+    rows = list(_iter_sensor_rows(csv_path, "loadCell"))
 
-    assert total == 1
-    assert coords.shape == (1, 3)
-    assert attrs.shape == (1,)
-    assert attrs[0] == 200.0
-    assert min_attr == 200.0
-    assert max_attr == 200.0
+    assert len(rows) == 1
+    assert rows[0] == (2.0, 3.0, 4.0, 200.0)
 
 
 def test_load_sensor_pointcloud_voxel_mode(tmp_path: Path) -> None:

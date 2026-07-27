@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import csv
-import random
 import tempfile
 import threading
 from collections.abc import Iterator
@@ -48,13 +47,36 @@ class AttributeSeriesResult:
     max_value: float
 
 
+# In-memory cache of parsed CSV points, keyed by (path, attribute, mtime, size).
+# The mtime/size in the key mean a regenerated CSV produces a *new* entry, so the
+# cache is bounded on two axes: stale versions of the same (path, attribute) are
+# evicted on write, and the total entry count is capped LRU-style. Without this,
+# a long-running kiosk that periodically regenerates Sensors.csv would grow the
+# cache without limit (one full float32 array per version) until it exhausts RAM.
 _PARSED_DATA_CACHE: dict[tuple[str, str, int, int], tuple[np.ndarray, np.ndarray]] = {}
 _PARSED_DATA_CACHE_LOCK = threading.Lock()
+_PARSED_DATA_CACHE_MAX = 8
 
 
 def _get_cache_key(csv_path: Path, attribute: str) -> tuple[str, str, int, int]:
     stat = csv_path.stat()
     return (str(csv_path.resolve()), attribute, int(stat.st_mtime_ns), int(stat.st_size))
+
+
+def _store_cached_points(key: tuple[str, str, int, int], value: tuple[np.ndarray, np.ndarray]) -> None:
+    """Insert `value` under `key`, evicting stale versions and enforcing the cap.
+
+    Caller must hold `_PARSED_DATA_CACHE_LOCK`.
+    """
+    path, attribute = key[0], key[1]
+    # Drop any earlier version of the same (path, attribute) — different mtime/size.
+    for stale in [k for k in _PARSED_DATA_CACHE if k[0] == path and k[1] == attribute and k != key]:
+        del _PARSED_DATA_CACHE[stale]
+    _PARSED_DATA_CACHE[key] = value
+    # LRU cap: dict preserves insertion order, so the first key is the oldest.
+    while len(_PARSED_DATA_CACHE) > _PARSED_DATA_CACHE_MAX:
+        oldest = next(iter(_PARSED_DATA_CACHE))
+        del _PARSED_DATA_CACHE[oldest]
 
 
 def _get_npz_cache_path(csv_path: Path, attribute: str) -> Path:
@@ -150,7 +172,7 @@ def _load_or_build_cached_points(csv_path: Path, attribute: str) -> tuple[np.nda
             pass
 
     with _PARSED_DATA_CACHE_LOCK:
-        _PARSED_DATA_CACHE[key] = (coords, attrs)
+        _store_cached_points(key, (coords, attrs))
     return coords, attrs
 
 
@@ -186,50 +208,7 @@ def _parse_float(value: str) -> float | None:
         return None
 
 
-def _reservoir_sample_points(
-    csv_path: Path,
-    attribute: str,
-    max_points: int,
-) -> tuple[np.ndarray, np.ndarray, int, float, float]:
-    if max_points <= 0:
-        raise ValueError("max_points must be greater than 0")
-
-    coords = np.empty((max_points, 3), dtype=np.float32)
-    attrs = np.empty(max_points, dtype=np.float32)
-
-    attribute_min = float("inf")
-    attribute_max = float("-inf")
-    total_points = 0
-
-    for x, y, z, attr in _iter_sensor_rows(csv_path, attribute):
-        attribute_min = min(attribute_min, attr)
-        attribute_max = max(attribute_max, attr)
-
-        if total_points < max_points:
-            coords[total_points] = (x, y, z)
-            attrs[total_points] = attr
-        else:
-            replacement_index = random.randint(0, total_points)
-            if replacement_index < max_points:
-                coords[replacement_index] = (x, y, z)
-                attrs[replacement_index] = attr
-
-        total_points += 1
-
-    sampled = min(total_points, max_points)
-    if sampled == 0:
-        return np.empty((0, 3), dtype=np.float32), np.empty((0,), dtype=np.float32), 0, 0.0, 0.0
-
-    return (
-        coords[:sampled],
-        attrs[:sampled],
-        total_points,
-        float(attribute_min),
-        float(attribute_max),
-    )
-
-
-def _aggregate_voxels_open3d(
+def _aggregate_voxels(
     coords: np.ndarray,
     attrs: np.ndarray,
     point_indices: np.ndarray,
@@ -335,7 +314,7 @@ def load_sensor_pointcloud(
     render_coords = coords
     render_attrs = attrs
     if view_mode == "voxel":
-        render_coords, render_attrs, point_indices = _aggregate_voxels_open3d(
+        render_coords, render_attrs, point_indices = _aggregate_voxels(
             coords=coords,
             attrs=attrs,
             point_indices=point_indices,

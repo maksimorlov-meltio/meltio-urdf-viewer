@@ -1,11 +1,13 @@
 // Accounts, login & modes for the Meltio operator console.
 //
 // Users sign in with a username + password. The backend (/api/auth/login)
-// validates the credentials against the users table (salted PBKDF2 hashes that
-// never reach the browser) and returns the user's MODE LEVEL — one of the roles
-// in the permission matrix (Operator, Operator+, Meltio Support, God). The level
-// grants a set of capability keys; controls opt into gating via
+// validates the credentials against a PBKDF2 credential store (salted hashes
+// that never reach the browser, kept separate from the public users list) and
+// returns the signed-in user, whose roleId maps to one of the modes in the
+// permission matrix (Operator, Operator+, Meltio Support, God). The role grants
+// a set of capability keys; controls opt into gating via
 // `data-requires-permission="<key>"` (+ `data-perm-hide` to hide when denied).
+// NOTE: this gating is UI-level only, not a security boundary for the machine.
 //
 // Signed out = a locked/guest state (no elevated permissions). The console opens
 // signed out; tapping the account chip near the machine title (or the Settings
@@ -14,6 +16,7 @@
 //
 // Config (roles + public user list, NO password hashes) is served by
 // /api/permissions/config; God-level users can edit the matrix/modes there.
+// Credentials are managed out-of-band with tools/set_password.py.
 (function () {
   "use strict";
 
