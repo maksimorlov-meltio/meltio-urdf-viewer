@@ -63,6 +63,7 @@ PORT = 8765
 SESSION_HEADER = "X-Slicer-Session"
 _SESSION_TTL_S = 3600  # evict a session idle longer than this
 _MAX_SESSIONS = 128
+_MAX_UPLOAD_BYTES = 64 * 1024 * 1024  # reject mesh uploads larger than 64 MB
 
 
 def _median_layer_time_s(segments) -> float:
@@ -275,10 +276,19 @@ def create_app() -> FastAPI:
         mesh, name = sessions.get(_session_id(req)).state.get()
         return mesh_to_payload(mesh, name)
 
+    # Sync `def` (not `async`): reading the upload and load_mesh() are CPU/IO
+    # bound, so FastAPI runs this in its worker threadpool — keeping the event
+    # loop free to serve progress polls / other sessions during a slow parse.
+    # Upload is size-capped so a huge/malformed file can't exhaust process RAM.
     @app.post("/api/load")
-    async def load(req: Request, file: UploadFile = File(...)) -> dict:
+    def load(req: Request, file: UploadFile = File(...)) -> dict:
         suffix = Path(file.filename or "upload.stl").suffix or ".stl"
-        payload = await file.read()
+        payload = file.file.read(_MAX_UPLOAD_BYTES + 1)
+        if len(payload) > _MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Mesh upload exceeds the {_MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit.",
+            )
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as handle:
             handle.write(payload)
             temp_path = Path(handle.name)
