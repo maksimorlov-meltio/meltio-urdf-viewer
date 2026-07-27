@@ -1,7 +1,10 @@
+from collections import OrderedDict
 from pathlib import Path
 
+import numpy as np
 import pytest
 
+import avisualizer.web.services.sensor_pointcloud as spc
 from avisualizer.web.services.sensor_pointcloud import _iter_sensor_rows, load_sensor_pointcloud
 
 
@@ -124,3 +127,85 @@ def test_load_sensor_pointcloud_with_seed_is_deterministic(tmp_path: Path) -> No
     )
 
     assert result_a.points == result_b.points
+
+
+# --- Parsed-points cache bounding (REN-2 regression) ------------------------
+
+@pytest.fixture
+def isolated_cache(monkeypatch: pytest.MonkeyPatch) -> "OrderedDict":
+    """Swap the module-global parsed-points cache for a fresh, isolated one."""
+    cache: "OrderedDict" = OrderedDict()
+    monkeypatch.setattr(spc, "_PARSED_DATA_CACHE", cache)
+    return cache
+
+
+def _cache_value() -> tuple[np.ndarray, np.ndarray]:
+    return (np.zeros((1, 3), dtype=np.float32), np.zeros((1,), dtype=np.float32))
+
+
+def _write_sensor_csv(directory: Path) -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    csv_path = directory / "Sensors.csv"
+    csv_path.write_text(
+        "x,y,z,loadCell,laserPower\n"
+        "0,0,0,100,120\n"
+        "1,1,1,110,120\n"
+        "2,2,2,120,120\n",
+        encoding="utf-8",
+    )
+    return csv_path
+
+
+def _load(csv_path: Path) -> None:
+    load_sensor_pointcloud(
+        csv_path=csv_path,
+        dataset_name=csv_path.parent.name,
+        attribute="loadCell",
+        view_mode="point",
+        max_points=10,
+        random_seed=1,
+        include_points_list=False,
+    )
+
+
+def test_store_evicts_stale_version_of_same_path_attribute(isolated_cache: "OrderedDict") -> None:
+    with spc._PARSED_DATA_CACHE_LOCK:
+        spc._store_cached_points(("/a", "loadCell", 1, 10), _cache_value())
+        # A regenerated CSV changes mtime/size -> a *new* key for the same (path, attribute).
+        spc._store_cached_points(("/a", "loadCell", 2, 12), _cache_value())
+
+    # Only the latest version survives; the stale float32 arrays are dropped.
+    assert list(isolated_cache) == [("/a", "loadCell", 2, 12)]
+
+
+def test_store_caps_total_entries_evicting_oldest(
+    isolated_cache: "OrderedDict", monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(spc, "_PARSED_DATA_CACHE_MAX", 3)
+
+    with spc._PARSED_DATA_CACHE_LOCK:
+        for i in range(5):
+            spc._store_cached_points((f"/p{i}", "loadCell", 1, 1), _cache_value())
+
+    assert len(isolated_cache) == 3
+    assert [k[0] for k in isolated_cache] == ["/p2", "/p3", "/p4"]
+
+
+def test_cache_hit_reorders_so_reused_entry_survives_eviction(
+    isolated_cache: "OrderedDict", monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(spc, "_PARSED_DATA_CACHE_MAX", 2)
+    csv_a = _write_sensor_csv(tmp_path / "a")
+    csv_b = _write_sensor_csv(tmp_path / "b")
+    csv_c = _write_sensor_csv(tmp_path / "c")
+
+    _load(csv_a)              # cache: [A]
+    _load(csv_b)              # cache: [A, B]  (A is oldest)
+    _load(csv_a)              # HIT -> A moves to end: [B, A]
+    _load(csv_c)              # MISS -> store C, evict oldest (B): [A, C]
+
+    paths = {key[0] for key in isolated_cache}
+    assert str(csv_a.resolve()) in paths      # reused entry protected
+    assert str(csv_c.resolve()) in paths      # newest entry present
+    assert str(csv_b.resolve()) not in paths  # true LRU victim evicted
+    assert len(isolated_cache) == 2

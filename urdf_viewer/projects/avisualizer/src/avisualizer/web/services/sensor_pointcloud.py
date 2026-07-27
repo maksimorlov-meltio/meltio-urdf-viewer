@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import tempfile
 import threading
+from collections import OrderedDict
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -53,7 +54,7 @@ class AttributeSeriesResult:
 # evicted on write, and the total entry count is capped LRU-style. Without this,
 # a long-running kiosk that periodically regenerates Sensors.csv would grow the
 # cache without limit (one full float32 array per version) until it exhausts RAM.
-_PARSED_DATA_CACHE: dict[tuple[str, str, int, int], tuple[np.ndarray, np.ndarray]] = {}
+_PARSED_DATA_CACHE: "OrderedDict[tuple[str, str, int, int], tuple[np.ndarray, np.ndarray]]" = OrderedDict()
 _PARSED_DATA_CACHE_LOCK = threading.Lock()
 _PARSED_DATA_CACHE_MAX = 8
 
@@ -135,6 +136,10 @@ def _load_or_build_cached_points(csv_path: Path, attribute: str) -> tuple[np.nda
 
     with _PARSED_DATA_CACHE_LOCK:
         cached = _PARSED_DATA_CACHE.get(key)
+        if cached is not None:
+            # Mark most-recently-used: re-insert at the end so the true LRU
+            # entry stays at the front for the eviction in _store_cached_points.
+            _PARSED_DATA_CACHE.move_to_end(key)
     if cached is not None:
         return cached
 
