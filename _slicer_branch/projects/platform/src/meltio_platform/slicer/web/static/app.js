@@ -1,6 +1,12 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
+import {
+  modelOutOfBounds,
+  representativeMoveSpeedMmPerSec as representativeMoveSpeed,
+  flattenMoves,
+  detectTravels,
+} from "./slicerModel.js?v=1";
 
 // --- Per-session slicer state ---------------------------------------------
 // Tag this tab's calls to the slicer's own (relative "api/…") endpoints with a
@@ -221,19 +227,14 @@ let currentSlicerBannerType = null; // "error" | "warn" | null
 // (the baked bounds plus any un-committed drag offset on meshGroup).
 function computeModelOutOfBounds() {
   if (!currentBounds || !workingProfile || !meshGroup.children.length) return false;
-  const bx = workingProfile.build_volume_x_mm;
-  const by = workingProfile.build_volume_y_mm;
-  const bz = workingProfile.build_volume_z_mm ?? Infinity;
-  if (!(bx > 0) || !(by > 0)) return false;
-  const ox = meshGroup.position.x || 0;
-  const oy = meshGroup.position.y || 0;
-  const oz = meshGroup.position.z || 0;
-  const { min, max } = currentBounds;
-  const eps = 1e-3;
-  return (
-    min[0] + ox < -eps || max[0] + ox > bx + eps ||
-    min[1] + oy < -eps || max[1] + oy > by + eps ||
-    min[2] + oz < -eps || max[2] + oz > bz + eps
+  return modelOutOfBounds(
+    currentBounds,
+    {
+      x: workingProfile.build_volume_x_mm,
+      y: workingProfile.build_volume_y_mm,
+      z: workingProfile.build_volume_z_mm,
+    },
+    meshGroup.position,
   );
 }
 
@@ -1110,56 +1111,22 @@ function buildToolpath(payload) {
   // order so the slider reveals them as printed. Keep the FULL set here; the
   // legend toggles and layer isolation derive the visible subset (see
   // refreshVisibleData).
-  allSegments = [];
-  allMoves = [];
   toolpathStats = payload.stats;
-  const present = new Set();
-  for (const move of payload.moves || []) {
-    const flat = move.points;
-    const orient = move.orient || null;
-    const bead = move.bead || null;
-    const kind = move.kind || "outer_perimeter";
-    const layer = move.layer ?? 0;
-    const col = KIND_COLORS[kind] || PERIMETER_COLOR;
-    const segCount = Math.max(0, Math.floor(flat.length / 3) - 1);
-    if (segCount > 0) {
-      present.add(kind);
-      allMoves.push({ pts: flat, color: col, segCount, orient, bead, kind, layer });
-    }
-    for (let i = 0; i + 5 < flat.length; i += 3) {
-      const bIdx = i / 3 + 1; // orientation index of the segment's end point
-      allSegments.push({
-        a: [flat[i], flat[i + 1], flat[i + 2]],
-        b: [flat[i + 3], flat[i + 4], flat[i + 5]],
-        color: col,
-        kind,
-        layer,
-        orient: orient
-          ? [orient[bIdx * 3], orient[bIdx * 3 + 1], orient[bIdx * 3 + 2]]
-          : null,
-      });
-    }
-  }
+  // Pure flatten (see slicerModel.js): moves -> ordered segments + per-move
+  // records, coloured per kind, in deposition order so the slider reveals them
+  // as printed. The full set is kept here; the legend/layer isolation derive the
+  // visible subset (see refreshVisibleData).
+  const flattened = flattenMoves(payload.moves, KIND_COLORS, PERIMETER_COLOR);
+  allSegments = flattened.segments;
+  allMoves = flattened.moves;
+  const present = flattened.present;
 
   // Travel overlay setup: the hops themselves are derived per-refresh from the
   // visible moves (see rebuildTravelGeometry); here we only record the short/long
   // threshold and whether the full toolpath has any of each kind, so the legend
   // can offer the matching toggles.
   travelThreshold = toolpathStats?.maxTravelNoRetractMm ?? 2.0;
-  hasShortTravel = false;
-  hasLongTravel = false;
-  for (let i = 1; i < allMoves.length; i += 1) {
-    const prev = allMoves[i - 1].pts;
-    const cur = allMoves[i].pts;
-    const dx = cur[0] - prev[prev.length - 3];
-    const dy = cur[1] - prev[prev.length - 2];
-    const dz = cur[2] - prev[prev.length - 1];
-    const gap = Math.hypot(dx, dy, dz);
-    if (gap <= 1e-6) continue;
-    if (gap > travelThreshold) hasLongTravel = true;
-    else hasShortTravel = true;
-    if (hasShortTravel && hasLongTravel) break;
-  }
+  ({ hasShortTravel, hasLongTravel } = detectTravels(allMoves, travelThreshold));
 
   // Reset toggles for the new toolpath and rebuild the legend from the kinds
   // that are actually present (in canonical display order).
@@ -2746,21 +2713,7 @@ function profileCenter() {
  *  the perimeter/infill feed rate, falling back to travel speed. Used by the
  *  embedding viewer to play the print simulation at true 1x speed. */
 function representativeMoveSpeedMmPerSec() {
-  const p = workingProfile;
-  if (!p) return null;
-  const feats = p.features || {};
-  const preferred = ["outer_perimeter", "inner_perimeter", "infill"];
-  for (const key of preferred) {
-    const v = feats[key] && feats[key].feed_rate_mm_s;
-    if (Number.isFinite(v) && v > 0) return v;
-  }
-  for (const key of Object.keys(feats)) {
-    const v = feats[key] && feats[key].feed_rate_mm_s;
-    if (Number.isFinite(v) && v > 0) return v;
-  }
-  return Number.isFinite(p.travel_speed_mm_s) && p.travel_speed_mm_s > 0
-    ? p.travel_speed_mm_s
-    : null;
+  return representativeMoveSpeed(workingProfile);
 }
 
 /** Display label for a profile name: master profiles get a ★ marker. */

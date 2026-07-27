@@ -19,6 +19,11 @@ Include only high-signal sections:
 - Fixes
 - Migration notes (if needed)
 
+## Cached static assets
+- For static assets served with caching, bump an explicit version token (query
+  string or filename hash) whenever the asset changes, so clients never serve a
+  stale copy. Treat forgetting the bump as a defect.
+
 ## Stability rules
 - Do not release undocumented interface changes.
 - Keep changelog/release notes concise and user-impact oriented.

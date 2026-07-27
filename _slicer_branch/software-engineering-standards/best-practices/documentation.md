@@ -14,6 +14,10 @@
 - `docs/PROTOCOL.md` — externally consumed interfaces/contracts
 - `CONTRIBUTING.md` — contribution rules and validation expectations
 
+A canonical doc may live **next to the code it describes** (not only under
+`docs/`) — what matters is exactly one canonical location per topic, with
+everything else linking to it rather than restating it.
+
 ## Style rules
 - Prefer bullets over long prose.
 - Prefer explicit commands over narrative instructions.

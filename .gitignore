@@ -29,6 +29,9 @@ Sensors.csv
 *.env
 !*.env.example
 
+# --- Claude Code per-user local settings (machine-specific, not shared) ---
+.claude/settings.local.json
+
 # --- Editor / OS / tooling noise ---
 .vscode/
 .idea/
