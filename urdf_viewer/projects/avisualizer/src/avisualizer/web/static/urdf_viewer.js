@@ -15,6 +15,8 @@ import { createAssemblyAnnotationManager } from "./controllers/annotationManager
 import { createViewerScene } from "./core/viewerScene.js?v=1";
 import { createCloudLibrary } from "./cloud/cloudLibrary.js?v=1";
 import { createCloudStl3D } from "./cloud/cloudStl3D.js?v=2";
+import { createJointsCore } from "./kinematics/jointsCore.js?v=1";
+import { createTransparency } from "./robot/transparency.js?v=1";
 // Notifications domain: one stateful factory owns the record map + all
 // notification UI (center, toasts, bell, details modal, history). The pure
 // format/catalog helpers live under ./notifications/ and are imported there.
@@ -976,7 +978,6 @@ function escapeHtml(value) {
 // getNotificationSeverityLabel / getNotificationStatusLabel now live in
 // ./notifications/notificationCatalog.js (imported at the top).
 
-let palpadorSweepTimeoutId = null;
 let frontDoorSequenceStartTimeoutId = null;
 let frontDoorSequenceStage2TimeoutId = null;
 let frontDoorSequenceStage3TimeoutId = null;
@@ -1073,7 +1074,6 @@ const feederWheelEnabled = {
   right: true,
   left: true,
 };
-const jointControlTransitions = new Map();
 let previousAnimationMs = performance.now();
 let lastMainRenderMs = 0;
 let lastUserActivityMs = previousAnimationMs;
@@ -1581,28 +1581,6 @@ function updateAdaptiveRenderQuality(deltaSeconds, nowMs = performance.now()) {
       applyRenderPixelRatio(getPreferredRenderPixelRatio());
     }
   }
-}
-
-function startJointControlTransition(key, stepFn) {
-  jointControlTransitions.set(key, stepFn);
-}
-
-function clearJointControlTransitions() {
-  jointControlTransitions.clear();
-}
-
-function updateJointControlTransitions(deltaSeconds) {
-  for (const [key, stepFn] of Array.from(jointControlTransitions.entries())) {
-    const done = stepFn(deltaSeconds);
-    if (done) {
-      jointControlTransitions.delete(key);
-    }
-  }
-}
-
-function computeMotionSpeedForDuration(distanceRadians, durationSeconds) {
-  const safeDuration = Math.max(durationSeconds, MIN_CONTROL_DURATION_SEC);
-  return Math.max(distanceRadians, 0) / safeDuration;
 }
 
 function captureCameraState() {
@@ -2124,51 +2102,6 @@ function updateIdleReset(nowMs) {
   lastUserActivityMs = nowMs;
 }
 
-// Convert an internal joint value (meters / radians) to its display unit (mm / deg).
-function formatJointDisplay(state, value) {
-  return state.kind === "linear" ? value * 1000 : THREE.MathUtils.radToDeg(value);
-}
-
-// Convert a typed display value (mm / deg) back to the internal joint value.
-function jointDisplayToInternal(state, displayValue) {
-  return state.kind === "linear" ? displayValue / 1000 : THREE.MathUtils.degToRad(displayValue);
-}
-
-// Update the joint's value readout, whether it is a static label or an editable
-// number input. Skips the input while the operator is typing into it.
-function writeJointValueDisplay(state, value) {
-  if (!state.valueEl) {
-    return;
-  }
-  const display = formatJointDisplay(state, value).toFixed(1);
-  if (state.valueEl.tagName === "INPUT") {
-    if (document.activeElement !== state.valueEl) {
-      state.valueEl.value = display;
-    }
-  } else {
-    const unit = state.kind === "linear" ? "mm" : "deg";
-    state.valueEl.textContent = `${display} ${unit}`;
-  }
-}
-
-function setJointValue(state, value, options = {}) {
-  const syncSlider = options.syncSlider !== false;
-  state.value = value;
-
-  if (state.kind === "linear") {
-    state.motionGroup.position.set(0, 0, 0);
-    state.motionGroup.position.addScaledVector(state.axis, value);
-  } else {
-    state.motionGroup.setRotationFromAxisAngle(state.axis, value);
-  }
-
-  writeJointValueDisplay(state, value);
-
-  if (syncSlider && state.sliderEl && document.activeElement !== state.sliderEl) {
-    state.sliderEl.value = String(value);
-  }
-}
-
 function getCombinedHandleValue(primaryState, secondaryState) {
   return (primaryState.value - primaryState.lower) + (secondaryState.value - secondaryState.lower);
 }
@@ -2328,22 +2261,6 @@ function applySynchronizedTopCoverGasSpringValue(
   applyAlignedGasSpringState(rightGasSpringState, rightSecondaryGasSpringState, "right");
 
   return clampedTopCover;
-}
-
-function wrapJointValue(state, value) {
-  if (!Number.isFinite(state.lower) || !Number.isFinite(state.upper) || state.upper <= state.lower) {
-    return value;
-  }
-
-  const span = state.upper - state.lower;
-  let wrapped = value;
-  while (wrapped > state.upper) {
-    wrapped -= span;
-  }
-  while (wrapped < state.lower) {
-    wrapped += span;
-  }
-  return clamp(wrapped, state.lower, state.upper);
 }
 
 function getFeederWheelKeyForJointName(jointName) {
@@ -4717,161 +4634,6 @@ function animateFeederWheels(deltaSeconds) {
   }
 }
 
-function setMaterialOpacity(material, opacity) {
-  const clampedOpacity = clamp(opacity, 0, 1);
-  const nextTransparent = clampedOpacity < 0.999;
-  const nextDepthWrite = clampedOpacity >= 0.999;
-  const transparencyModeChanged =
-    material.transparent !== nextTransparent || material.depthWrite !== nextDepthWrite;
-
-  material.opacity = clampedOpacity;
-  material.transparent = nextTransparent;
-  material.depthWrite = nextDepthWrite;
-
-  if (transparencyModeChanged) {
-    material.needsUpdate = true;
-  }
-}
-
-function setTransparencyToggleState(buttonEl, enabled) {
-  if (!buttonEl) {
-    return;
-  }
-  buttonEl.setAttribute("aria-pressed", enabled ? "true" : "false");
-  buttonEl.classList.toggle("active", Boolean(enabled));
-}
-
-function applyUserStepTransparency() {
-  // Binary toggle: enabled = fully transparent (opacity 0), disabled = fully opaque.
-  const effectiveOpacity = userStepTransparencyEnabled ? 0 : 1;
-
-  for (const material of userStepMaterials) {
-    setMaterialOpacity(material, effectiveOpacity);
-  }
-
-  const hasUserStep = userStepMaterials.length > 0;
-
-  if (userStepTransparencyEnabledEl) {
-    setTransparencyToggleState(userStepTransparencyEnabledEl, userStepTransparencyEnabled);
-    userStepTransparencyEnabledEl.disabled = !hasUserStep;
-  }
-}
-
-function applyDisplayTransparency() {
-  // Binary toggle: enabled = fully transparent (opacity 0), disabled = fully opaque.
-  const effectiveOpacity = displayTransparencyEnabled ? 0 : 1;
-
-  for (const material of displayMaterials) {
-    setMaterialOpacity(material, effectiveOpacity);
-  }
-
-  const hasDisplay = displayMaterials.length > 0;
-
-  if (displayTransparencyEnabledEl) {
-    setTransparencyToggleState(displayTransparencyEnabledEl, displayTransparencyEnabled);
-    displayTransparencyEnabledEl.disabled = !hasDisplay;
-  }
-}
-
-function applyHeadTransparency() {
-  // Binary toggle: enabled = fully transparent (opacity 0), disabled = fully opaque.
-  const effectiveOpacity = headTransparencyEnabled ? 0 : 1;
-
-  for (const material of headMaterials) {
-    setMaterialOpacity(material, effectiveOpacity);
-  }
-
-  const effectiveHeadVisible = !headTransparencyEnabled || effectiveOpacity > 0.001;
-  for (const object3d of headVisuals) {
-    object3d.visible = effectiveHeadVisible;
-  }
-
-  const hasHead = headMaterials.length > 0;
-
-  if (headTransparencyEnabledEl) {
-    setTransparencyToggleState(headTransparencyEnabledEl, headTransparencyEnabled);
-    headTransparencyEnabledEl.disabled = !hasHead;
-  }
-}
-
-function resetInitialTransparencyState() {
-  userStepOpacity = 0;
-  displayOpacity = 0;
-  headTransparency = 0;
-
-  userStepTransparencyEnabled = false;
-  displayTransparencyEnabled = false;
-  headTransparencyEnabled = false;
-
-  if (userStepTransparencyEnabledEl) {
-    setTransparencyToggleState(userStepTransparencyEnabledEl, false);
-  }
-  if (displayTransparencyEnabledEl) {
-    setTransparencyToggleState(displayTransparencyEnabledEl, false);
-  }
-  if (headTransparencyEnabledEl) {
-    setTransparencyToggleState(headTransparencyEnabledEl, false);
-  }
-}
-
-function registerUserStepMaterials(object3d) {
-  const known = new Set(userStepMaterials);
-
-  object3d.traverse((node) => {
-    if (!node.isMesh || !node.material) {
-      return;
-    }
-
-    const materials = Array.isArray(node.material) ? node.material : [node.material];
-    for (const material of materials) {
-      if (!known.has(material)) {
-        known.add(material);
-        userStepMaterials.push(material);
-      }
-    }
-  });
-}
-
-function registerDisplayMaterials(object3d) {
-  const known = new Set(displayMaterials);
-
-  object3d.traverse((node) => {
-    if (!node.isMesh || !node.material) {
-      return;
-    }
-
-    const materials = Array.isArray(node.material) ? node.material : [node.material];
-    for (const material of materials) {
-      if (!known.has(material)) {
-        known.add(material);
-        displayMaterials.push(material);
-      }
-    }
-  });
-}
-
-function registerHeadMaterials(object3d) {
-  const known = new Set(headMaterials);
-
-  object3d.traverse((node) => {
-    if (!node.isMesh || !node.material) {
-      return;
-    }
-
-    const materials = Array.isArray(node.material) ? node.material : [node.material];
-    for (const material of materials) {
-      if (!known.has(material)) {
-        known.add(material);
-        headMaterials.push(material);
-      }
-    }
-  });
-}
-
-function registerHeadVisual(object3d) {
-  headVisuals.push(object3d);
-}
-
 // Give the feeder-wheel gears a proper machined-steel look. styleMeshTree tunes
 // every part to a low-metalness default; the feeder wheels are bare metal gears,
 // so with the scene environment now in place we push them to high metalness /
@@ -7129,13 +6891,6 @@ function getCanvasPointerNdc(event, target = cloudStlDragPointerNdc) {
   return target;
 }
 
-function clearPalpadorSweepTimeout() {
-  if (palpadorSweepTimeoutId !== null) {
-    window.clearTimeout(palpadorSweepTimeoutId);
-    palpadorSweepTimeoutId = null;
-  }
-}
-
 function disposeMaterialWithMaps(material) {
   if (!material) {
     return;
@@ -7151,20 +6906,6 @@ function disposeMaterialWithMaps(material) {
   if (typeof material.dispose === "function") {
     material.dispose();
   }
-}
-
-function getLinearJointWorldAxis(state) {
-  if (!state || state.kind !== "linear" || !state.motionGroup) {
-    return null;
-  }
-
-  state.motionGroup.updateWorldMatrix(true, true);
-  const axisWorld = state.axis.clone().transformDirection(state.motionGroup.matrixWorld);
-  if (axisWorld.lengthSq() <= 1e-10) {
-    return null;
-  }
-
-  return axisWorld.normalize();
 }
 
 // Centre the part under the nozzle in X/Y (no z move). Pass extraWorldOffset (a
@@ -7206,111 +6947,79 @@ function millimetersToMeters(valueMm) {
   return Number(valueMm) / 1000;
 }
 
-function moveJointToValue(state, targetValue, durationSeconds = MOTION_PRESET_DURATION_SEC) {
-  if (!state) {
-    return;
-  }
+// createJointsCore + createTransparency are instantiated HERE, right after their
+// last ctx dependency (millimetersToMeters), NOT beside the other factories lower
+// down: top-level init below (updateMoveReadout, door toggles, print-sim) calls
+// their API during module evaluation, so creating them later is a const-binding TDZ.
+const {
+  formatJointDisplay,
+  jointDisplayToInternal,
+  writeJointValueDisplay,
+  setJointValue,
+  wrapJointValue,
+  getJointStateByName,
+  getLinearJointStateByName,
+  getLinearJointWorldAxis,
+  clearPalpadorSweepTimeout,
+  startJointControlTransition,
+  clearJointControlTransitions,
+  updateJointControlTransitions,
+  computeMotionSpeedForDuration,
+  moveJointToValue,
+  runMaintenancePositionAction,
+  runPrintPositionAction,
+  runPalpadorSweepAction,
+  setPalpadorDeployed,
+  jointControlTransitions,
+} = createJointsCore({
+  getJointStates: () => jointStates,
+  clamp,
+  approachValue,
+  millimetersToMeters,
+  setMotionStatus,
+  palpadorSweepButtonEl,
+  MIN_CONTROL_DURATION_SEC,
+  MOTION_PRESET_DURATION_SEC,
+  Z_AXIS_JOINT,
+  EJE_X_JOINT,
+  EJE_Y_JOINT,
+  PRINT_POSITION_Z_MM,
+  PRINT_POSITION_X_MM,
+  PRINT_POSITION_Y_MM,
+  PALPADOR_PRO_JOINT,
+  PALPADOR_SWEEP_DURATION_SEC,
+  PALPADOR_TOGGLE_DURATION_SEC,
+});
 
-  const clampedTarget = clamp(targetValue, state.lower, state.upper);
-  const distance = Math.abs(clampedTarget - state.value);
-  if (distance <= 1e-6) {
-    setJointValue(state, clampedTarget);
-    return;
-  }
-
-  const speed = computeMotionSpeedForDuration(distance, durationSeconds);
-  const transitionKey = `joint-preset:${state.name}`;
-  startJointControlTransition(transitionKey, (deltaSeconds) => {
-    const next = approachValue(state.value, clampedTarget, speed * deltaSeconds);
-    setJointValue(state, next);
-    return Math.abs(next - clampedTarget) <= 1e-4;
-  });
-}
-
-function runMotionPreset(targetsByJointName, label) {
-  const missingLinearJoints = [];
-  for (const [jointName, targetMm] of Object.entries(targetsByJointName)) {
-    const state = getJointStateByName(jointName);
-    if (!state || state.kind !== "linear") {
-      missingLinearJoints.push(jointName);
-      continue;
-    }
-
-    moveJointToValue(state, millimetersToMeters(targetMm));
-  }
-
-  if (missingLinearJoints.length) {
-    setMotionStatus(`${label} unavailable (${missingLinearJoints.join(", ")})`);
-    return false;
-  }
-
-  setMotionStatus(`${label} running`);
-  return true;
-}
-
-function runMaintenancePositionAction() {
-  return runMotionPreset(
-    {
-      [Z_AXIS_JOINT]: 100,
-      [EJE_X_JOINT]: 0,
-      [EJE_Y_JOINT]: 0,
-    },
-    "Maintenance position",
-  );
-}
-
-function runPrintPositionAction() {
-  return runMotionPreset(
-    {
-      [Z_AXIS_JOINT]: PRINT_POSITION_Z_MM,
-      [EJE_X_JOINT]: PRINT_POSITION_X_MM,
-      [EJE_Y_JOINT]: PRINT_POSITION_Y_MM,
-    },
-    "Print position",
-  );
-}
-
-function runPalpadorSweepAction() {
-  const state = getJointStateByName(PALPADOR_PRO_JOINT);
-  if (!state || state.kind !== "linear") {
-    setMotionStatus("Palpador sweep unavailable");
-    return false;
-  }
-
-  clearPalpadorSweepTimeout();
-  const lower = Math.min(state.lower, state.upper);
-  const upper = Math.max(state.lower, state.upper);
-  moveJointToValue(state, upper, PALPADOR_SWEEP_DURATION_SEC);
-  setMotionStatus("Palpador sweep forward");
-
-  const forwardDurationMs = Math.max(PALPADOR_SWEEP_DURATION_SEC * 1000, 200);
-  palpadorSweepTimeoutId = window.setTimeout(() => {
-    moveJointToValue(state, lower, PALPADOR_SWEEP_DURATION_SEC);
-    setMotionStatus("Palpador sweep return");
-    palpadorSweepTimeoutId = null;
-  }, forwardDurationMs + 120);
-
-  return true;
-}
-
-// Palpador as a POSITION TOGGLE (not a one-shot sweep): deployed = glide to the
-// RIGHT limit, home = glide back to the LEFT limit. Slow + smooth via the shared
-// joint-motion tween. Returns the resulting deployed state (or null if the joint
-// is unavailable) so the caller can sync the button.
-function setPalpadorDeployed(deployed) {
-  const state = getJointStateByName(PALPADOR_PRO_JOINT);
-  if (!state || state.kind !== "linear") {
-    setMotionStatus("Palpador unavailable");
-    return null;
-  }
-  clearPalpadorSweepTimeout(); // cancel any legacy auto-return sweep still pending
-  const right = Math.max(state.lower, state.upper); // deployed (right)
-  const left = Math.min(state.lower, state.upper);  // home (left)
-  moveJointToValue(state, deployed ? right : left, PALPADOR_TOGGLE_DURATION_SEC);
-  setMotionStatus(deployed ? "Palpador → right (deployed)" : "Palpador → left (home)");
-  if (palpadorSweepButtonEl) palpadorSweepButtonEl.setAttribute("aria-pressed", deployed ? "true" : "false");
-  return deployed;
-}
+const {
+  setMaterialOpacity,
+  applyUserStepTransparency,
+  applyDisplayTransparency,
+  applyHeadTransparency,
+  resetInitialTransparencyState,
+  registerUserStepMaterials,
+  registerDisplayMaterials,
+  registerHeadMaterials,
+  registerHeadVisual,
+} = createTransparency({
+  clamp,
+  userStepTransparencyEnabledEl,
+  displayTransparencyEnabledEl,
+  headTransparencyEnabledEl,
+  getUserStepMaterials: () => userStepMaterials,
+  getDisplayMaterials: () => displayMaterials,
+  getHeadMaterials: () => headMaterials,
+  getHeadVisuals: () => headVisuals,
+  getUserStepTransparencyEnabled: () => userStepTransparencyEnabled,
+  getDisplayTransparencyEnabled: () => displayTransparencyEnabled,
+  getHeadTransparencyEnabled: () => headTransparencyEnabled,
+  setUserStepOpacity: (v) => { userStepOpacity = v; },
+  setDisplayOpacity: (v) => { displayOpacity = v; },
+  setHeadTransparency: (v) => { headTransparency = v; },
+  setUserStepTransparencyEnabled: (v) => { userStepTransparencyEnabled = v; },
+  setDisplayTransparencyEnabled: (v) => { displayTransparencyEnabled = v; },
+  setHeadTransparencyEnabled: (v) => { headTransparencyEnabled = v; },
+});
 
 function clearPendingFrontDoorSequence() {
   if (frontDoorSequenceStartTimeoutId !== null) {
@@ -7338,14 +7047,6 @@ function clearPendingFrontDoorSequence() {
     frontDoorSequenceStage6TimeoutId = null;
   }
   frontDoorSequenceToken += 1;
-}
-
-function getLinearJointStateByName(name) {
-  const state = getJointStateByName(name);
-  if (!state || state.kind !== "linear") {
-    return null;
-  }
-  return state;
 }
 
 function moveLinearJointToMm(jointName, targetMm, durationMs, sequenceToken) {
@@ -7879,10 +7580,6 @@ function applySceneTheme() {
   }
   updateBottomNavState();
   applyWireDrumAppearance();
-}
-
-function getJointStateByName(name) {
-  return jointStates.find((state) => state.name === name) || null;
 }
 
 function isCloserToOpenValue(value, closedValue, openValue) {
@@ -13019,6 +12716,7 @@ window.addEventListener("touchstart", () => {
 // unchanged; shared state is read via notifications.isCenterOpen /
 // .selectedDetailId, and window.MeltioNotifications delegates to it.
 let cloudLibrary;
+
 const cloudStl3D = createCloudStl3D({
   scene,
   camera,
