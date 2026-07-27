@@ -7,6 +7,11 @@ Use stable top-level folders with clear ownership:
 - `docs/` for canonical documentation
 - `scripts/` for reproducible setup/automation
 
+A monorepo may host several independent services, each with its own
+`src/`/`tests/`. When it does, keep boundaries explicit and remove superseded
+copies: **do not let dead or duplicated trees (old snapshots, forks) live beside
+the active code** — they mislead searches and edits.
+
 ## Change discipline
 - Keep one logical change per commit/PR when possible.
 - Keep changes small and reviewable.

@@ -68,12 +68,21 @@ export function buildLineSegmentBuffers(payload, options = {}) {
 
   let seg = 0;
   let pathLengthMm = 0; // total polyline length in the payload's native units (mm)
+  // The layer-reveal math below assumes moves arrive in print order (layer
+  // indices monotonic). The slicer emits them that way; if that contract ever
+  // breaks, flag it instead of silently mis-grouping the reveal.
+  let lastLayer = -Infinity;
+  let monotonicLayers = true;
   for (const move of moves) {
     const pts = move?.points;
     if (!Array.isArray(pts) || pts.length < 6) {
       continue;
     }
     const layer = Number.isFinite(move?.layer) ? move.layer : 0;
+    if (layer < lastLayer) {
+      monotonicLayers = false;
+    }
+    lastLayer = layer;
     const [r, g, b] = colorForKind(move?.kind);
     const vertexCount = Math.floor(pts.length / 3);
     for (let i = 0; i < vertexCount - 1; i += 1) {
@@ -95,6 +104,12 @@ export function buildLineSegmentBuffers(payload, options = {}) {
       pathLengthMm += Math.sqrt(dx * dx + dy * dy + dz * dz);
       seg += 1;
     }
+  }
+
+  if (!monotonicLayers) {
+    console.warn(
+      "[toolpathModel] moves are not in layer order; the layer-by-layer reveal may be inaccurate",
+    );
   }
 
   const layerCount = Math.max(
@@ -121,6 +136,7 @@ export function buildLineSegmentBuffers(payload, options = {}) {
     totalSegments,
     layerCount,
     pathLengthMm,
+    monotonicLayers,
     scale: 1,
   };
 }

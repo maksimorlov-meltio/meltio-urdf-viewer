@@ -7,8 +7,8 @@ Use this folder as a copy base for new repositories.
 This folder is the canonical location for generic standards in this repo.
 
 ## Template version
-- Template-Version: `1.0.1`
-- Last-Updated: `2026-04-07`
+- Template-Version: `1.1.0`
+- Last-Updated: `2026-07-24`
 
 Version bump rules:
 - `MAJOR`: breaking structure or policy changes requiring manual migration
@@ -37,3 +37,7 @@ Agent policy (automatic on standards changes):
 3. Replace placeholder commands with project-specific commands.
 4. Keep one canonical location per topic and link instead of duplicating.
 5. Keep `Template-Version` and `Last-Updated` in sync with your source template repo.
+
+These docs stay generic. Project-specific commands and conventions belong in the
+repo's own `CONTRIBUTING.md` (or `docs/DEVELOPMENT.md`), which links back here for
+the underlying principles.

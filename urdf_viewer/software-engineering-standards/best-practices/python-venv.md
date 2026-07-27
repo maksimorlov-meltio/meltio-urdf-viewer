@@ -1,7 +1,9 @@
 # Python Virtual Environment Standard
 
 ## Baseline
-- Use a repo-local virtual environment at `.venv/`.
+- Use repo-local virtual environment(s): one per independently-deployed service
+  or component (a single-service repo has one, e.g. `.venv/`).
+- Pin the interpreter version each environment targets.
 - Never rely on global Python packages for project execution.
 - Keep dependency installation scriptable.
 
@@ -14,7 +16,8 @@ python -m venv .venv
 ```
 
 ## Optional dependencies
-- Keep optional dependencies in a separate file (example: `requirements-optional.txt`).
+- Keep optional dependencies separate from required ones — a dedicated file
+  (example: `requirements-optional.txt`) or a package extra.
 - Install optional dependencies explicitly, not by default.
 
 ## Execution
