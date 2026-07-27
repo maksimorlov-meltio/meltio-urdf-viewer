@@ -5,10 +5,21 @@ import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
 import { fetchSensorData } from "./modules/api.js";
 import { buildSpriteObject, buildVoxelCubeObject } from "./modules/render.js";
-import { createPrintSimulation } from "./sim/printSimulation.js?v=11";
+import { createPrintSimulation } from "./sim/printSimulation.js?v=12";
 import { createSlicerClient } from "./sim/slicerClient.js";
 import { createMachineLink } from "./sim/machineLink.js";
 import { createPrePrintCheck } from "./sim/prePrintCheck.js";
+import { createViewCubeController } from "./controllers/viewCube.js?v=1";
+import { createFeederPreviewController } from "./controllers/feederPreview.js?v=1";
+import { createAssemblyAnnotationManager } from "./controllers/annotationManager.js?v=1";
+import { createViewerScene } from "./core/viewerScene.js?v=1";
+import { createCloudLibrary } from "./cloud/cloudLibrary.js?v=1";
+import { createCloudStl3D } from "./cloud/cloudStl3D.js?v=1";
+// Notifications domain: one stateful factory owns the record map + all
+// notification UI (center, toasts, bell, details modal, history). The pure
+// format/catalog helpers live under ./notifications/ and are imported there.
+import { createNotifications } from "./notifications/notifications.js?v=2";
+import { createCalendar } from "./calendar/calendar.js?v=1";
 
 // Print-simulation controller. Created at boot once the scene exists; declared
 // here so the camera-guard helpers below can reference it before assignment.
@@ -464,9 +475,6 @@ const INTERACTION_QUALITY_HOLD_MS = 220;
 // draw-call-submission bound. Disabled for performance; the scene stays legible
 // from the ambient + directional fill lighting.
 const ENABLE_REALTIME_SHADOWS = false;
-const ANNOTATION_OCCLUSION_MAX_STALE_MS = 220;
-const ANNOTATION_OCCLUSION_RAYCASTS_PER_FRAME = 0;
-const ANNOTATION_OCCLUSION_TOLERANCE = 0.025;
 const MIN_DYNAMIC_RENDER_PIXEL_RATIO = 1.0;
 const DYNAMIC_QUALITY_SAMPLE_ALPHA = 0.08;
 const DYNAMIC_QUALITY_DOWN_FRAME_MS = 24;
@@ -476,127 +484,21 @@ const DYNAMIC_QUALITY_UP_STEP = 0.05;
 const DYNAMIC_QUALITY_DOWN_COOLDOWN_MS = 260;
 const DYNAMIC_QUALITY_UP_COOLDOWN_MS = 900;
 
-const renderer = new THREE.WebGLRenderer({
+const {
+  scene,
+  camera,
+  renderer,
+  controls,
+  studioEnvironmentTexture,
+  grid,
+  groundShadowPlane,
+  topLight,
+  context: viewerCore,
+} = createViewerScene({
   canvas,
-  antialias: true,
-  powerPreference: "high-performance",
+  restRenderPixelRatio: REST_RENDER_PIXEL_RATIO,
+  enableRealtimeShadows: ENABLE_REALTIME_SHADOWS,
 });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, REST_RENDER_PIXEL_RATIO));
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setClearColor(0x0b0a09);
-renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.shadowMap.enabled = ENABLE_REALTIME_SHADOWS;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.35;
-
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0b0a09);
-scene.fog = new THREE.Fog(0x0b0a09, 400, 2200);
-
-const camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.05, 6000);
-camera.up.set(0, 0, 1);
-camera.position.set(1.5, 1.3, 1.1);
-
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true;
-controls.dampingFactor = 0.1;
-controls.rotateSpeed = 1.05;
-controls.panSpeed = 1.0;
-controls.zoomSpeed = 1.05;
-controls.target.set(0, 0, 0.45);
-
-const ambientLight = new THREE.AmbientLight(0xffffff, 0.66);
-scene.add(ambientLight);
-
-const topLight = new THREE.DirectionalLight(0xffffff, 1.0);
-topLight.position.set(0, 0, 5.0);
-topLight.castShadow = ENABLE_REALTIME_SHADOWS;
-topLight.shadow.mapSize.set(1024, 1024);
-topLight.shadow.camera.near = 0.1;
-topLight.shadow.camera.far = 25;
-topLight.shadow.camera.left = -4;
-topLight.shadow.camera.right = 4;
-topLight.shadow.camera.top = 4;
-topLight.shadow.camera.bottom = -4;
-topLight.shadow.bias = -0.00015;
-scene.add(topLight);
-scene.add(topLight.target);
-
-scene.add(camera);
-const viewerLight = new THREE.DirectionalLight(0xdfefff, 2.4);
-viewerLight.position.set(0.15, 0.2, 0.35);
-const viewerLightTarget = new THREE.Object3D();
-viewerLightTarget.position.set(0, 0, -1);
-camera.add(viewerLightTarget);
-viewerLight.target = viewerLightTarget;
-camera.add(viewerLight);
-
-// --- Image-based lighting (IBL) --------------------------------------------
-// The PBR materials throughout the model set envMapIntensity (see
-// styleMeshTree), which does NOTHING without an environment to reflect — that
-// missing env map is why metal parts (notably the feeder-wheel gears) rendered
-// flat and grey. Generate a soft studio environment procedurally (no external
-// HDR file → CSP-safe, works offline) and assign it to the scene so every metal
-// surface picks up reflections and reads with real depth. One-time cost.
-function buildStudioEnvironmentTexture(targetRenderer) {
-  const pmrem = new THREE.PMREMGenerator(targetRenderer);
-  const envScene = new THREE.Scene();
-
-  // Neutral "room" shell: soft grey surroundings that metals bounce off.
-  const shellMat = new THREE.MeshStandardMaterial({
-    side: THREE.BackSide, roughness: 1, metalness: 0,
-  });
-  shellMat.color.setHex(0x30373f);
-  const shell = new THREE.Mesh(new THREE.BoxGeometry(10, 10, 10), shellMat);
-  envScene.add(shell);
-
-  // Emissive planes act as soft area lights — a bright key overhead, a cool
-  // front fill, a warm back rim, and gentle side fills. This is what gives the
-  // gear teeth crisp highlights instead of a dull matte grey.
-  const planeGeo = new THREE.PlaneGeometry(4, 4);
-  const disposables = [shell.geometry, shellMat, planeGeo];
-  const addAreaLight = (hex, intensity, position, rotation) => {
-    const mat = new THREE.MeshStandardMaterial();
-    mat.color.setHex(0x000000);
-    mat.emissive.setHex(hex);
-    mat.emissiveIntensity = intensity;
-    const mesh = new THREE.Mesh(planeGeo, mat);
-    mesh.position.set(position[0], position[1], position[2]);
-    if (rotation) mesh.rotation.set(rotation[0], rotation[1], rotation[2]);
-    envScene.add(mesh);
-    disposables.push(mat);
-  };
-  addAreaLight(0xffffff, 3.4, [0, 4.7, 0], [Math.PI / 2, 0, 0]);   // key (top)
-  addAreaLight(0xc4d9ff, 1.1, [0, 0.5, 4.7], [0, 0, 0]);           // cool front fill
-  addAreaLight(0xffe1bd, 0.9, [0, 1.2, -4.7], [0, Math.PI, 0]);    // warm back rim
-  addAreaLight(0xffffff, 0.7, [4.7, 1.0, 0], [0, -Math.PI / 2, 0]);// right fill
-  addAreaLight(0xffffff, 0.5, [-4.7, 1.0, 0], [0, Math.PI / 2, 0]);// left fill
-
-  const renderTarget = pmrem.fromScene(envScene, 0.04);
-  for (const d of disposables) d.dispose();
-  pmrem.dispose();
-  return renderTarget.texture;
-}
-
-// Built once. Applied ONLY to the feeder-wheel materials (see
-// enhanceFeederWheelMaterials) — NOT as scene.environment. A global environment
-// map makes IBL run per-pixel across the whole 7.5M-tri model, which showed up
-// as camera-movement lag; scoping it to the three gear meshes keeps the metal
-// look the gears needed at effectively zero frame cost.
-const studioEnvironmentTexture = buildStudioEnvironmentTexture(renderer);
-
-const grid = new THREE.GridHelper(2.5, 18, 0x36322e, 0x1c1a17);
-grid.rotation.x = Math.PI * 0.5;
-scene.add(grid);
-
-const groundShadowPlane = new THREE.Mesh(
-  new THREE.PlaneGeometry(1, 1),
-  new THREE.ShadowMaterial({ color: 0x000000, opacity: 0.22 }),
-);
-groundShadowPlane.receiveShadow = true;
-groundShadowPlane.visible = ENABLE_REALTIME_SHADOWS;
-scene.add(groundShadowPlane);
 
 const gltfLoader = new GLTFLoader();
 const objLoader = new OBJLoader();
@@ -669,11 +571,6 @@ const CLOUD_STL_FILES_API_URL = "/api/stl/files";
 const CLOUD_STL_FILE_API_URL = "/api/stl/file";
 const CLOUD_STL_DATASET_API_URL = "/api/datasets/stl";
 const CLOUD_FILE_SOURCE_VALUES = Object.freeze(["usb", "cloud", "local"]);
-const CLOUD_THUMB_PREVIEW_SIZE_PX = 76;
-const CLOUD_THUMB_PREVIEW_BG_HEX = 0x0b121e;
-const CLOUD_THUMB_PREVIEW_TARGET_DIM_M = 0.18;
-const CLOUD_THUMB_PREVIEW_MIN_RADIUS = 0.03;
-const CLOUD_THUMB_PREVIEW_MAX_RADIUS = 2.2;
 const CLOUD_STL_PARENT_LINK = "eje_y_link";
 const CLOUD_POINT_PARENT_LINK = "eje_y_link";
 const CLOUD_POINT_WORLD_SCALE = 0.001;
@@ -681,11 +578,6 @@ const CLOUD_POINT_DEFAULT_SIZE = 1.6;
 const CLOUD_POINT_DEFAULT_MAX_POINTS = 150000;
 const CLOUD_POINT_DEFAULT_VOXEL_MM = 2.0;
 const CLOUD_POINT_DEFAULT_VOXEL_Z_MM = 1.2;
-const CLOUD_DATASET_ALIAS_BY_STL_FILE = Object.freeze({
-  "small torture test": "small-torture-test_1-0-0",
-  "small tortuer test": "small-torture-test_1-0-0",
-  "small torture test with buildplate": "small-torture-test_1-0-0",
-});
 const CLOUD_POINT_OUTLINE_COLOR = new THREE.Color(0xd7f3ff);
 const CLOUD_POINT_OUTLINE_START = 0.73;
 const CLOUD_STL_ASSUME_REAL_SCALE_MAX_DIM_M = 1.0;
@@ -771,11 +663,6 @@ const FRONT_DOOR_SEQUENCE_PALPADOR_JOINT = "palpador_pro_joint";
 const FRONT_DOOR_SEQUENCE_Z_JOINT = "z_axis_joint";
 const FRONT_DOOR_SEQUENCE_X_JOINT = "eje_x_joint";
 const FRONT_DOOR_SEQUENCE_Y_JOINT = "eje_y_joint";
-const VIEW_CUBE_TRANSITION_DURATION_MS = 860;
-const VIEW_CUBE_RENDER_PIXEL_RATIO = 1.25;
-const FEEDER_PREVIEW_RENDER_PIXEL_RATIO = 1.5;
-const FEEDER_PREVIEW_MIN_FRAME_MS = 16;
-const FEEDER_PREVIEW_WHEEL_LAYER = 7;
 const FEEDER_ANCHOR_CAMERA_DURATION_MS = 1600;
 const FEEDER_ANCHOR_DISTANCE_FACTOR = 0.15;
 const FEEDER_ANCHOR_MIN_DISTANCE = 0.26;
@@ -848,9 +735,6 @@ const TOP_DOOR_ICON_CLOSED_SVG =
 const TOP_DOOR_ICON_OPEN_SVG =
   '<path d="M4 7.5L12 1.5L20 7.5Z" /><path d="' + TOP_DOOR_ICON_WALLS + '" /><path d="' + TOP_DOOR_ICON_DOOR + '" />' +
   TOP_DOOR_ICON_ARROWS;
-const ANNOTATION_UPDATE_INTERVAL_MS = 0;
-const ANNOTATION_CLICK_ACTIVE_HOLD_MS = 2200;
-const ENABLE_ANNOTATION_OCCLUSION = false;
 const HOTSPOT_PANEL_FEEDER_ID = "feeder-drive";
 const HOTSPOT_PANEL_MATERIALS_ID = "spools-door";
 const SPOOL_ASSEMBLY_PICK_AREAS = Object.freeze([
@@ -903,195 +787,15 @@ const SPOOL_LOW_THRESHOLD_GRAMS = 500;
 const SPOOL_LOW_REQUIRED_MARGIN_RATIO = 1.2;
 const DEFAULT_PRINT_JOB_USAGE_GRAMS = 120;
 const MATERIALS_STORAGE_KEY = "avisualizer.materials.state.v1";
-const CALENDAR_VIEW_VALUES = Object.freeze(["month", "week", "day", "agenda"]);
-const CALENDAR_EVENT_TYPE_META = Object.freeze({
-  completed_print: Object.freeze({ label: "Printed job", className: "type-completed_print" }),
-  scheduled_print: Object.freeze({ label: "Scheduled print", className: "type-scheduled_print" }),
-  maintenance: Object.freeze({ label: "Maintenance", className: "type-maintenance" }),
-  completed_maintenance: Object.freeze({ label: "Completed maintenance", className: "type-completed_maintenance" }),
-  warning_maintenance: Object.freeze({ label: "Warning / overdue maintenance", className: "type-warning_maintenance" }),
-  unavailable: Object.freeze({ label: "Machine unavailable", className: "type-unavailable" }),
-});
 const ADVANCED_MODE_PIN_FALLBACK = "7391";
 const ADVANCED_MODE_MAX_ATTEMPTS = 5;
 const ADVANCED_MODE_LOCKOUT_MS = 5 * 60 * 1000;
 const ADVANCED_MODE_IDLE_TIMEOUT_MS = 20 * 60 * 1000;
 const ADVANCED_MODE_WARNING_LEAD_MS = 60 * 1000;
-const NOTIFICATION_FILTER_VALUES = Object.freeze(["all", "critical", "warning", "info"]);
-const NOTIFICATION_SEVERITY_PRIORITY = Object.freeze({
-  critical: 0,
-  warning: 1,
-  info: 2,
-});
-const NOTIFICATION_STATUS_LABELS = Object.freeze({
-  active: "Active",
-  acknowledged: "Acknowledged",
-  resolved: "Resolved",
-});
-const NOTIFICATION_SEVERITY_LABELS = Object.freeze({
-  critical: "Critical",
-  warning: "Warning",
-  info: "Info",
-});
-const NOTIFICATION_MAX_BADGE_COUNT = 99;
-const NOTIFICATION_DETAIL_CAUSES = Object.freeze({
-  emergency_estop: "Emergency stop latch is engaged, safety relay is open, or hardware safety loop is not closed.",
-  arm_machine_required: "Machine state requires an arm/enable transition before process continuation.",
-  inert_gas_filtration_required: "Inerting/filtration prerequisite is not satisfied for the current process phase.",
-  controller_board_not_connected: "Controller board is powered off, disconnected, or communication bus is unavailable.",
-  gas_flow_decreasing: "Gas supply pressure, valve state, or flow sensing path is below expected operating envelope.",
-  coolant_warning: "Coolant flow/temperature readings are outside the recommended range.",
-  external_security_closed_loop_warning: "External safety input or engine closed-loop monitoring is in a fault state.",
-  software_update_available: "Remote update metadata reports a newer software release.",
-  firmware_update_available: "Firmware catalog reports a newer compatible version.",
-  internet_connection_unavailable: "No network link or internet route is currently detected.",
-  preventive_maintenance_needed: "Maintenance schedule or usage counters indicate preventive service is due.",
-});
-const NOTIFICATION_TYPE_DEFINITIONS = Object.freeze({
-  emergency_estop: Object.freeze({
-    title: "Emergency E-Stop",
-    description: "Emergency stop is active. Machine operation is blocked until the E-Stop is released.",
-    severity: "critical",
-    recommendedAction: "Release the E-Stop and confirm machine safety before continuing.",
-    source: "Safety",
-    relatedScreen: "safety-status",
-    canAcknowledge: true,
-    canResolveManually: false,
-    persistWhileSignalActive: true,
-    icon: "emergency",
-    priority: 100,
-  }),
-  arm_machine_required: Object.freeze({
-    title: "Arm Machine Required",
-    description: "The machine must be armed before the process can continue.",
-    severity: "warning",
-    recommendedAction: "Arm the machine when the working area is safe.",
-    source: "Process",
-    relatedScreen: "machine-status",
-    canAcknowledge: true,
-    canResolveManually: false,
-    persistWhileSignalActive: true,
-    icon: "arm",
-    priority: 70,
-  }),
-  inert_gas_filtration_required: Object.freeze({
-    title: "Inert Gas / Filtration Action Required",
-    description: "The system is inerted. Activate filtration or close the required condition before continuing.",
-    severity: "warning",
-    recommendedAction: "Check inerting and filtration status.",
-    source: "Process",
-    relatedScreen: "process-control",
-    canAcknowledge: true,
-    canResolveManually: false,
-    persistWhileSignalActive: true,
-    icon: "gas",
-    priority: 65,
-  }),
-  controller_board_not_connected: Object.freeze({
-    title: "Controller Board Not Connected",
-    description: "The controller board connection is missing or not detected.",
-    severity: "critical",
-    recommendedAction: "Check controller board power, cable connection, and communication status.",
-    source: "Diagnostics",
-    relatedScreen: "diagnostics",
-    canAcknowledge: true,
-    canResolveManually: false,
-    persistWhileSignalActive: true,
-    icon: "controller",
-    priority: 96,
-  }),
-  gas_flow_decreasing: Object.freeze({
-    title: "Gas Flow Decreasing",
-    description: "Gas flow is decreasing and may not be sufficient for printing.",
-    severity: "warning",
-    recommendedAction: "Check gas supply, pressure, valves, and flow sensor.",
-    source: "Process",
-    relatedScreen: "gas-control",
-    canAcknowledge: true,
-    canResolveManually: false,
-    persistWhileSignalActive: true,
-    icon: "gas",
-    priority: 75,
-  }),
-  coolant_warning: Object.freeze({
-    title: "Coolant Warning",
-    description: "Coolant flow is decreasing, temperature is increasing, or temperature is above 60 C.",
-    severity: "warning",
-    recommendedAction: "Check coolant level, pump, flow path, and temperature before continuing.",
-    source: "Cooling",
-    relatedScreen: "coolant-control",
-    canAcknowledge: true,
-    canResolveManually: false,
-    persistWhileSignalActive: true,
-    icon: "coolant",
-    priority: 82,
-  }),
-  external_security_closed_loop_warning: Object.freeze({
-    title: "External Security / Closed Loop Warning",
-    description: "External security condition detected. Closed loop control issue in Engine.",
-    severity: "critical",
-    recommendedAction: "Check external safety signals and closed loop control state.",
-    source: "Safety",
-    relatedScreen: "machine-status",
-    canAcknowledge: true,
-    canResolveManually: false,
-    persistWhileSignalActive: true,
-    icon: "security",
-    priority: 93,
-  }),
-  software_update_available: Object.freeze({
-    title: "Software Update Available",
-    description: "A new software update is available.",
-    severity: "info",
-    recommendedAction: "Open update settings to review and install the update.",
-    source: "Software",
-    relatedScreen: "update-settings",
-    canAcknowledge: true,
-    canResolveManually: true,
-    persistWhileSignalActive: false,
-    icon: "software",
-    priority: 35,
-  }),
-  firmware_update_available: Object.freeze({
-    title: "Firmware Update Available",
-    description: "A new firmware update is available.",
-    severity: "info",
-    recommendedAction: "Open firmware update settings to review compatibility and install.",
-    source: "Firmware",
-    relatedScreen: "update-settings",
-    canAcknowledge: true,
-    canResolveManually: true,
-    persistWhileSignalActive: false,
-    icon: "firmware",
-    priority: 34,
-  }),
-  internet_connection_unavailable: Object.freeze({
-    title: "Internet Connection Not Available",
-    description: "The machine has no internet connection.",
-    severity: "warning",
-    recommendedAction: "Check network cable, Wi-Fi, router, or IT connection settings.",
-    source: "Connectivity",
-    relatedScreen: "network-settings",
-    canAcknowledge: true,
-    canResolveManually: false,
-    persistWhileSignalActive: true,
-    icon: "internet",
-    priority: 78,
-  }),
-  preventive_maintenance_needed: Object.freeze({
-    title: "Preventive Maintenance Needed",
-    description: "Preventive maintenance is required according to machine schedule or usage.",
-    severity: "warning",
-    recommendedAction: "Open maintenance calendar or maintenance checklist.",
-    source: "Maintenance",
-    relatedScreen: "maintenance",
-    canAcknowledge: true,
-    canResolveManually: true,
-    persistWhileSignalActive: true,
-    icon: "maintenance",
-    priority: 72,
-  }),
-});
+// NOTIFICATION_FILTER_VALUES / _SEVERITY_PRIORITY / _STATUS_LABELS /
+// _SEVERITY_LABELS now live in ./notifications/notificationCatalog.js.
+// NOTIFICATION_DETAIL_CAUSES — moved to ./notifications/notificationCatalog.js
+// NOTIFICATION_TYPE_DEFINITIONS — moved to ./notifications/notificationCatalog.js
 const ANNOTATION_DEFINITIONS = [
   {
     id: "front-door",
@@ -1170,7 +874,6 @@ let activeFeederCameraAnchorSide = null;
 let feederHeadRestoreTimeoutId = null;
 let feederSavedHeadTransparency = null;
 let feederSavedHeadTransparencyEnabled = null;
-let cloudStlObject = null;
 let cloudStlVisible = true;
 // When printing from a slicer toolpath we substitute the STL with the sliced
 // model, so the solid STL is force-hidden regardless of the user's visibility
@@ -1178,11 +881,6 @@ let cloudStlVisible = true;
 let printHideStl = false;
 let cloudStlOpacity = 1;
 let cloudStlPlacementSide = "top";
-let cloudStlLoadToken = 0;
-const cloudStlBaseQuaternion = new THREE.Quaternion();
-let cloudStlDragState = null;
-let cloudPointObject = null;
-let cloudPointSpriteMaterial = null;
 let cloudViewMode = "stl";
 let cloudPointSize = CLOUD_POINT_DEFAULT_SIZE;
 let cloudPointMaxPoints = CLOUD_POINT_DEFAULT_MAX_POINTS;
@@ -1214,12 +912,9 @@ const cloudFileSliceStatusByName = new Map();
 let loadedCloudLibraryFileName = "";
 let cloudFileMissingHighlightTimeoutId = null;
 let cloudFavoritesOnlyFilter = false;
-const cloudFavoriteEntryKeys = new Set();
 let isTopbarSettingsMenuOpen = false;
 let isSettingsAdvancedMenuOpen = false;
 let isSettingsCalibrateMenuOpen = false;
-let isNotificationCenterOpen = false;
-let notificationActiveFilter = "all";
 let isTopbarChillerEnabled = topbarChillerToggleEl
   ? topbarChillerToggleEl.getAttribute("aria-pressed") === "true"
   : true;
@@ -1237,58 +932,13 @@ let advancedModeLockUntilMs = 0;
 let advancedModeLastActivityMs = performance.now();
 let isAdvancedModeTimeoutWarningOpen = false;
 let lastAdvancedWarningRemainingSeconds = null;
-let isCalendarScreenOpen = false;
-let calendarCurrentView = "month";
-let calendarAnchorDate = new Date();
-let selectedCalendarEventId = null;
-let editingCalendarEventId = null;
-let activeCalendarDragEventId = null;
-let activeCalendarDragStartDateIso = null;
-let calendarEventIdCounter = 1;
-const calendarEvents = [];
 let numericKeypadRootEl = null;
 let numericKeypadInputEl = null;
 // Last position the operator dragged the numeric keypad to ({left,top} px), so it
 // reopens where they left it. Null → the default center-slightly-right spot (CSS).
 let numericKeypadPos = null;
-const cloudFileThumbPreviewCache = new Map();
-const cloudFileThumbPreviewPending = new Map();
-let cloudFileThumbPreviewRenderer = null;
-let cloudFileThumbPreviewScene = null;
-let cloudFileThumbPreviewCamera = null;
-let cloudFileThumbPreviewRoot = null;
-const cloudStlDragRaycaster = new THREE.Raycaster();
 const cloudStlDragPointerNdc = new THREE.Vector2();
-const cloudStlDragPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
-const cloudStlDragStartWorld = new THREE.Vector3();
-const cloudStlDragCurrentWorld = new THREE.Vector3();
 const cloudStlDragDeltaWorld = new THREE.Vector3();
-const cloudStlRelocateHitWorld = new THREE.Vector3();
-const notificationsById = new Map();
-const mockNotificationSignals = {
-  emergencyStopActive: false,
-  machineArmedRequired: false,
-  machineArmedState: null,
-  inertedSystemActive: false,
-  filtrationRequired: false,
-  controllerBoardConnected: true,
-  gasFlowLow: false,
-  gasFlowDecreasing: false,
-  coolantFlowLow: false,
-  coolantTemperature: null,
-  externalSecurityFault: false,
-  closedLoopFault: false,
-  softwareUpdateAvailable: false,
-  firmwareUpdateAvailable: false,
-  internetConnected: true,
-  preventiveMaintenanceDue: false,
-  // Pre-print interlock signals (consumed by the pre-print self-check). Nominal
-  // in the standalone demo; overridden by real telemetry when a machine is linked.
-  doorsClosed: true,
-  laserHeadReady: true,
-};
-let notificationMockTickCounter = 0;
-let selectedNotificationDetailId = null;
 const spoolAssemblyPickRaycaster = new THREE.Raycaster();
 const spoolAssemblyPickPointerNdc = new THREE.Vector2();
 const spoolAssemblyPickClosestPoint = new THREE.Vector3();
@@ -1313,37 +963,9 @@ const feederWheelFloatAnchorsBySide = {
   },
 };
 
-function getNotificationTimestampMs(value) {
-  const parsed = Date.parse(String(value || ""));
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function normalizeNotificationSeverity(value, fallback = "info") {
-  const normalized = String(value || fallback).toLowerCase();
-  if (normalized === "critical" || normalized === "warning" || normalized === "info") {
-    return normalized;
-  }
-  return fallback;
-}
-
-function normalizeNotificationStatus(value, fallback = "active") {
-  const normalized = String(value || fallback).toLowerCase();
-  if (normalized === "active" || normalized === "acknowledged" || normalized === "resolved") {
-    return normalized;
-  }
-  return fallback;
-}
-
-function formatNotificationTimestamp(value) {
-  const date = new Date(value || Date.now());
-  return date.toLocaleString([], {
-    month: "short",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-}
+// getNotificationTimestampMs, normalizeNotificationSeverity,
+// normalizeNotificationStatus and formatNotificationTimestamp now live in
+// ./notifications/notificationFormat.js (imported at the top).
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -1354,973 +976,9 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
-function getNotificationSeverityLabel(severity) {
-  return NOTIFICATION_SEVERITY_LABELS[severity] || "Info";
-}
+// getNotificationSeverityLabel / getNotificationStatusLabel now live in
+// ./notifications/notificationCatalog.js (imported at the top).
 
-function getNotificationStatusLabel(status) {
-  return NOTIFICATION_STATUS_LABELS[status] || "Active";
-}
-
-function getNotificationFilterButtons() {
-  return [
-    notificationFilterAllEl,
-    notificationFilterCriticalEl,
-    notificationFilterWarningEl,
-    notificationFilterInfoEl,
-  ].filter(Boolean);
-}
-
-function buildNotificationIconSvg(iconKey) {
-  switch (iconKey) {
-    case "emergency":
-      // Warning triangle with exclamation (E-stop / emergency).
-      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M12 3.6 21 19H3L12 3.6Z\"/><path d=\"M12 10v4\"/><path d=\"M12 16.6v.1\"/></svg>";
-    case "arm":
-      // Articulated robot arm with gripper (arm-the-machine).
-      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M4 20h6\"/><path d=\"M6.5 20v-4.5l4-4 3 3\"/><circle cx=\"6.5\" cy=\"15.5\" r=\"1.3\"/><circle cx=\"10.5\" cy=\"11.5\" r=\"1.3\"/><path d=\"M15 9.5l3.2-3.2M15 6.3l3.2 3.2\"/></svg>";
-    case "gas":
-      // Gas cylinder (inert-gas filtration).
-      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><rect x=\"8\" y=\"6\" width=\"8\" height=\"14\" rx=\"3\"/><path d=\"M10 6V4.5h4V6\"/><path d=\"M12 2.5V4.5\"/><path d=\"M9 11h6\"/></svg>";
-    case "controller":
-      // CPU / controller board with pins.
-      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><rect x=\"7\" y=\"7\" width=\"10\" height=\"10\" rx=\"1.5\"/><rect x=\"10\" y=\"10\" width=\"4\" height=\"4\" rx=\"0.5\"/><path d=\"M9.5 4v3M14.5 4v3M9.5 17v3M14.5 17v3M4 9.5h3M4 14.5h3M17 9.5h3M17 14.5h3\"/></svg>";
-    case "coolant":
-    case "chiller":
-      // Coolant droplet with a shine.
-      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M12 3.5c3.2 3.6 5.2 6 5.2 8.8a5.2 5.2 0 0 1-10.4 0C6.8 9.5 8.8 7.1 12 3.5Z\"/><path d=\"M9.2 13a3 3 0 0 0 2.8 2.8\"/></svg>";
-    case "thermometer":
-      // Thermometer (temperature / chiller readings).
-      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M14 13.6V5a2 2 0 0 0-4 0v8.6a4 4 0 1 0 4 0Z\"/><path d=\"M12 8.5v6\"/></svg>";
-    case "fan":
-      // Cooling-fan blades around a hub.
-      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"1.7\"/><path d=\"M12 10.3c-1-3.1-.6-6 1.4-6.2 1.9-.2 2.4 2.9.9 6.2\"/><path d=\"M13.7 12c3.1-1 6-.6 6.2 1.4.2 1.9-2.9 2.4-6.2.9\"/><path d=\"M12 13.7c1 3.1.6 6-1.4 6.2-1.9.2-2.4-2.9-.9-6.2\"/><path d=\"M10.3 12c-3.1 1-6 .6-6.2-1.4-.2-1.9 2.9-2.4 6.2-.9\"/></svg>";
-    case "nozzle":
-      // Deposition nozzle / extruder tip (heat block tapering to an orifice).
-      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M7.5 5h9l-1.2 6H8.7L7.5 5Z\"/><path d=\"M8.7 11l1.3 4.2h4l1.3-4.2\"/><path d=\"M11 15.2 12 20l1-4.8\"/></svg>";
-    case "glass":
-      // Protective cover glass / lens pane with reflection streaks.
-      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><rect x=\"4\" y=\"6\" width=\"16\" height=\"12\" rx=\"2\"/><path d=\"M8 9.5 11.5 14.5\"/><path d=\"M12 9.5 15.5 14.5\"/></svg>";
-    case "security":
-      // Shield with check (closed-loop security).
-      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M12 3 19 6v5c0 4.6-3 7.7-7 9.5-4-1.8-7-4.9-7-9.5V6l7-3Z\"/><path d=\"m9 11.5 2 2 4-4.5\"/></svg>";
-    case "software":
-      // Cloud with download arrow (software update).
-      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M7 16.5a4 4 0 0 1-.4-8 5.5 5.5 0 0 1 10.6 1.3A3.5 3.5 0 0 1 17 16.5\"/><path d=\"M12 10.5v6m0 0-2.4-2.4M12 16.5l2.4-2.4\"/></svg>";
-    case "firmware":
-      // Microchip with a flash bolt (firmware update).
-      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><rect x=\"6.5\" y=\"6.5\" width=\"11\" height=\"11\" rx=\"1.5\"/><path d=\"M12.4 9.2 10 12.6h3.2L11.4 15.6\"/><path d=\"M9 3.5v3M15 3.5v3M9 17.5v3M15 17.5v3M3.5 9h3M3.5 15h3M17.5 9h3M17.5 15h3\"/></svg>";
-    case "internet":
-      // Wi-Fi arcs with a slash (no connection).
-      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M4 4 20 20\"/><path d=\"M5 9.2a11 11 0 0 1 14 0\"/><path d=\"M8.4 12.6a6 6 0 0 1 7.2 0\"/><path d=\"M12 16.4v.1\"/></svg>";
-    case "maintenance":
-      // Wrench (preventive maintenance).
-      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M15.4 6.6a3.6 3.6 0 0 0 4.4 4.4L11 19.8 7.2 16 16 7.2a3.6 3.6 0 0 0-.6-.6Z\"/><path d=\"m8.5 14.5-1 1\"/></svg>";
-    default:
-      // Info bubble.
-      return "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"8\"/><path d=\"M12 11.2v5\"/><path d=\"M12 8v.1\"/></svg>";
-  }
-}
-
-function getNotificationListSorted(items) {
-  return [...items].sort((a, b) => {
-    const severityDelta = (NOTIFICATION_SEVERITY_PRIORITY[a.severity] ?? 9) - (NOTIFICATION_SEVERITY_PRIORITY[b.severity] ?? 9);
-    if (severityDelta !== 0) {
-      return severityDelta;
-    }
-
-    return getNotificationTimestampMs(b.timestamp) - getNotificationTimestampMs(a.timestamp);
-  });
-}
-
-function normalizeNotificationRecord(record) {
-  const severity = normalizeNotificationSeverity(record.severity, "info");
-  const status = normalizeNotificationStatus(record.status, "active");
-  const definition = NOTIFICATION_TYPE_DEFINITIONS[record.type] || null;
-  const title = String(record.title || definition?.title || "Notification");
-  const description = String(record.description || definition?.description || "");
-
-  return {
-    id: String(record.id || `${record.type || "notice"}-${Date.now()}`),
-    type: String(record.type || "unknown"),
-    title,
-    description,
-    severity,
-    status,
-    timestamp: String(record.timestamp || new Date().toISOString()),
-    recommendedAction: String(record.recommendedAction || definition?.recommendedAction || "Review machine state and follow standard procedure."),
-    source: String(record.source || definition?.source || "System"),
-    relatedScreen: String(record.relatedScreen || definition?.relatedScreen || ""),
-    canAcknowledge: Boolean(record.canAcknowledge ?? definition?.canAcknowledge ?? true),
-    canResolveManually: Boolean(record.canResolveManually ?? definition?.canResolveManually ?? false),
-    sensorValue: record.sensorValue == null ? null : String(record.sensorValue),
-    priority: Number.isFinite(Number(record.priority)) ? Number(record.priority) : Number(definition?.priority || 0),
-    persistWhileSignalActive: Boolean(record.persistWhileSignalActive ?? definition?.persistWhileSignalActive ?? false),
-    icon: String(record.icon || definition?.icon || "info"),
-    possibleCauses: String(record.possibleCauses || NOTIFICATION_DETAIL_CAUSES[record.type] || "Check related machine signals and diagnostics."),
-  };
-}
-
-function getNotificationSeverityCount(items, severity) {
-  return items.filter((item) => item.status !== "resolved" && item.severity === severity).length;
-}
-
-function getVisibleNotifications() {
-  const all = getNotificationListSorted([...notificationsById.values()]);
-  if (notificationActiveFilter === "all") {
-    return all;
-  }
-  return all.filter((item) => item.severity === notificationActiveFilter);
-}
-
-function openNotificationDetailsModal(notificationId) {
-  const notification = notificationsById.get(notificationId);
-  if (!notification || !notificationDetailsModalEl || !notificationDetailsBodyEl) {
-    return;
-  }
-
-  selectedNotificationDetailId = notification.id;
-  notificationDetailsModalEl.hidden = false;
-  notificationDetailsModalEl.setAttribute("aria-hidden", "false");
-
-  const sensorLine = notification.sensorValue
-    ? `<p><strong>Sensor/Status:</strong> ${escapeHtml(notification.sensorValue)}</p>`
-    : "";
-
-  notificationDetailsBodyEl.innerHTML = [
-    `<p><strong>Title:</strong> ${escapeHtml(notification.title)}</p>`,
-    `<p><strong>Severity:</strong> ${escapeHtml(getNotificationSeverityLabel(notification.severity))}</p>`,
-    `<p><strong>Status:</strong> ${escapeHtml(getNotificationStatusLabel(notification.status))}</p>`,
-    `<p><strong>Timestamp:</strong> ${escapeHtml(formatNotificationTimestamp(notification.timestamp))}</p>`,
-    `<p><strong>Description:</strong> ${escapeHtml(notification.description)}</p>`,
-    `<p><strong>Possible Causes:</strong> ${escapeHtml(notification.possibleCauses)}</p>`,
-    `<p><strong>Recommended Action:</strong> ${escapeHtml(notification.recommendedAction)}</p>`,
-    sensorLine,
-  ].join("");
-
-  if (notificationDetailsAcknowledgeEl) {
-    notificationDetailsAcknowledgeEl.disabled = !notification.canAcknowledge || notification.status === "resolved";
-    notificationDetailsAcknowledgeEl.title = "Mark as seen (keeps the issue in the list)";
-  }
-  if (notificationDetailsResolveEl) {
-    // "Resolve" leads to Settings where the fix is made (not a status toggle).
-    notificationDetailsResolveEl.hidden = false;
-    notificationDetailsResolveEl.disabled = false;
-    notificationDetailsResolveEl.title = "Open Settings to fix this";
-  }
-}
-
-function closeNotificationDetailsModal() {
-  if (!notificationDetailsModalEl) {
-    return;
-  }
-  notificationDetailsModalEl.hidden = true;
-  notificationDetailsModalEl.setAttribute("aria-hidden", "true");
-  selectedNotificationDetailId = null;
-}
-
-function setNotificationCenterOpen(isOpen) {
-  isNotificationCenterOpen = Boolean(isOpen);
-
-  // Opening the notification center clears the transient arrival toasts (the
-  // notifications live in the list now).
-  if (isNotificationCenterOpen && typeof clearNotificationToasts === "function") {
-    clearNotificationToasts();
-  }
-
-  document.body.classList.toggle("notification-center-open", isNotificationCenterOpen);
-
-  if (topbarNotificationCenterEl) {
-    topbarNotificationCenterEl.hidden = !isNotificationCenterOpen;
-    topbarNotificationCenterEl.setAttribute("aria-hidden", isNotificationCenterOpen ? "false" : "true");
-  }
-
-  if (topbarNotificationsToggleEl) {
-    topbarNotificationsToggleEl.setAttribute("aria-expanded", isNotificationCenterOpen ? "true" : "false");
-    topbarNotificationsToggleEl.classList.toggle("is-active", isNotificationCenterOpen);
-  }
-}
-
-function setNotificationFilter(nextFilter) {
-  const normalized = NOTIFICATION_FILTER_VALUES.includes(nextFilter) ? nextFilter : "all";
-  notificationActiveFilter = normalized;
-
-  for (const buttonEl of getNotificationFilterButtons()) {
-    const isSelected = buttonEl.dataset.filter === notificationActiveFilter;
-    buttonEl.setAttribute("aria-selected", isSelected ? "true" : "false");
-  }
-
-  renderNotificationCenter();
-}
-
-function updateNotificationBellState() {
-  if (!topbarNotificationsToggleEl) {
-    return;
-  }
-
-  const notifications = [...notificationsById.values()];
-  const activeNotifications = notifications.filter((item) => item.status !== "resolved");
-  // "Needs attention" = unacknowledged AND unresolved. The badge reflects this so
-  // acknowledging (marking seen) clears the count even while the issue persists.
-  const unacknowledged = notifications.filter((item) => item.status === "active");
-  const criticalCount = getNotificationSeverityCount(activeNotifications, "critical");
-  const warningCount = getNotificationSeverityCount(activeNotifications, "warning");
-
-  topbarNotificationsToggleEl.classList.toggle("has-active-notifications", activeNotifications.length > 0);
-  topbarNotificationsToggleEl.classList.toggle("has-critical-notifications", criticalCount > 0);
-  // Amber bell only when the top active severity is a warning (critical dominates).
-  topbarNotificationsToggleEl.classList.toggle("has-warning-notifications", criticalCount === 0 && warningCount > 0);
-
-  if (!topbarNotificationBadgeEl) {
-    return;
-  }
-
-  if (!unacknowledged.length) {
-    topbarNotificationBadgeEl.hidden = true;
-    topbarNotificationBadgeEl.textContent = "";
-    topbarNotificationBadgeEl.classList.remove("badge-critical", "badge-warning");
-    return;
-  }
-
-  topbarNotificationBadgeEl.hidden = false;
-  const showCount = unacknowledged.length <= NOTIFICATION_MAX_BADGE_COUNT;
-  topbarNotificationBadgeEl.classList.toggle("is-dot", !showCount);
-  topbarNotificationBadgeEl.textContent = showCount ? String(unacknowledged.length) : "";
-  // Colour the badge by the highest unacknowledged severity.
-  const hasCritU = unacknowledged.some((n) => n.severity === "critical");
-  const hasWarnU = unacknowledged.some((n) => n.severity === "warning");
-  topbarNotificationBadgeEl.classList.toggle("badge-critical", hasCritU);
-  topbarNotificationBadgeEl.classList.toggle("badge-warning", !hasCritU && hasWarnU);
-}
-
-// --- Arrival toasts (UX pass) ----------------------------------------------
-// Transient toasts when new critical/warning notifications arrive (so an
-// operator watching the 3D scene can't miss them). Reads notificationsById.
-const notificationToastedIds = new Set();
-let notificationToastInitialized = false;
-
-// Toast any newly-active critical/warning notification once. On first run we seed
-// the "already seen" set so the initial batch on load doesn't all pop at once.
-function syncNotificationToasts() {
-  const layer = document.getElementById("notificationToastLayer");
-  if (!layer) return;
-  const active = [...notificationsById.values()].filter(
-    (n) => n.status === "active" && (n.severity === "critical" || n.severity === "warning"),
-  );
-  if (!notificationToastInitialized) {
-    active.forEach((n) => notificationToastedIds.add(n.id));
-    notificationToastInitialized = true;
-    return;
-  }
-  for (const n of active) {
-    if (notificationToastedIds.has(n.id)) continue;
-    notificationToastedIds.add(n.id);
-    showNotificationToast(n);
-  }
-}
-
-// --- Bell arrival animation ------------------------------------------------
-// Swing the bell icon whenever a genuinely new (any-severity) notification
-// becomes active. Uses its own "seen" set, seeded on first run so the initial
-// batch on load doesn't ring. Resolved ids are pruned so a re-activation rings
-// again.
-const bellArrivalSeenIds = new Set();
-let bellArrivalInitialized = false;
-
-function ringNotificationBell() {
-  const el = topbarNotificationsToggleEl;
-  if (!el) {
-    return;
-  }
-  // Restart the one-shot animation even if it is already applied.
-  el.classList.remove("bell-ring");
-  void el.offsetWidth; // force reflow so re-adding the class replays it
-  el.classList.add("bell-ring");
-}
-
-function syncNotificationBellArrival() {
-  const activeIds = [...notificationsById.values()]
-    .filter((n) => n.status === "active")
-    .map((n) => n.id);
-  const activeIdSet = new Set(activeIds);
-
-  if (!bellArrivalInitialized) {
-    activeIds.forEach((id) => bellArrivalSeenIds.add(id));
-    bellArrivalInitialized = true;
-    return;
-  }
-
-  let hasNew = false;
-  for (const id of activeIds) {
-    if (!bellArrivalSeenIds.has(id)) {
-      bellArrivalSeenIds.add(id);
-      hasNew = true;
-    }
-  }
-  // Drop ids that are no longer active so they ring again if re-raised.
-  for (const id of [...bellArrivalSeenIds]) {
-    if (!activeIdSet.has(id)) {
-      bellArrivalSeenIds.delete(id);
-    }
-  }
-
-  if (hasNew) {
-    ringNotificationBell();
-  }
-}
-
-if (topbarNotificationsToggleEl) {
-  // Clear the one-shot class when the swing finishes so it can replay cleanly.
-  topbarNotificationsToggleEl.addEventListener("animationend", (event) => {
-    if (event.animationName === "bell-ring") {
-      topbarNotificationsToggleEl.classList.remove("bell-ring");
-    }
-  });
-}
-
-// --- Notification history log ----------------------------------------------
-// Persisted record of every notification "episode" (a raise → resolve span),
-// shown in the full-screen Notification History (opened from the Notification
-// Center's "View history"). Each entry: { hid, id, type, title, severity,
-// source, raisedAt (ISO), resolvedAt (ISO|null) }. An episode opens when a
-// notification becomes active and closes when it leaves the active set (resolved
-// or removed) — detected by diffing on every renderNotificationCenter().
-const NOTIFICATION_HISTORY_STORAGE_KEY = "avisualizer.notificationHistory.v1";
-const NOTIFICATION_HISTORY_MAX_ENTRIES = 300;
-let notificationHistoryLog = [];
-const notificationHistoryOpenByNotifId = new Map(); // notifId -> open episode hid
-let notificationHistorySeq = 0;
-let isNotificationHistoryScreenOpen = false;
-
-function loadNotificationHistory() {
-  try {
-    const raw = window.localStorage.getItem(NOTIFICATION_HISTORY_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : null;
-    if (Array.isArray(parsed)) {
-      notificationHistoryLog = parsed.filter((e) => e && e.raisedAt);
-    }
-  } catch {
-    notificationHistoryLog = [];
-  }
-  for (const entry of notificationHistoryLog) {
-    if (typeof entry.hid === "number" && entry.hid >= notificationHistorySeq) {
-      notificationHistorySeq = entry.hid + 1;
-    }
-    // Re-attach episodes that were still open when last persisted so a still-
-    // active issue keeps its original raised time across reloads.
-    if (!entry.resolvedAt) {
-      notificationHistoryOpenByNotifId.set(entry.id, entry.hid);
-    }
-  }
-}
-
-function saveNotificationHistory() {
-  try {
-    window.localStorage.setItem(
-      NOTIFICATION_HISTORY_STORAGE_KEY,
-      JSON.stringify(notificationHistoryLog.slice(-NOTIFICATION_HISTORY_MAX_ENTRIES)),
-    );
-  } catch {
-    /* storage unavailable / over quota — history is best-effort */
-  }
-}
-
-function syncNotificationHistory() {
-  const activeById = new Map();
-  for (const [id, n] of notificationsById.entries()) {
-    if (n.status !== "resolved") {
-      activeById.set(id, n);
-    }
-  }
-
-  let changed = false;
-
-  // Open an episode for each newly-active notification.
-  for (const [id, n] of activeById.entries()) {
-    if (notificationHistoryOpenByNotifId.has(id)) {
-      continue;
-    }
-    const hid = notificationHistorySeq++;
-    notificationHistoryLog.push({
-      hid,
-      id,
-      type: n.type,
-      title: n.title,
-      severity: n.severity,
-      source: n.source,
-      raisedAt: n.timestamp || new Date().toISOString(),
-      resolvedAt: null,
-    });
-    notificationHistoryOpenByNotifId.set(id, hid);
-    changed = true;
-  }
-
-  // Close episodes whose notification is no longer active.
-  for (const [id, hid] of [...notificationHistoryOpenByNotifId.entries()]) {
-    if (activeById.has(id)) {
-      continue;
-    }
-    const entry = notificationHistoryLog.find((e) => e.hid === hid);
-    if (entry && !entry.resolvedAt) {
-      entry.resolvedAt = new Date().toISOString();
-      changed = true;
-    }
-    notificationHistoryOpenByNotifId.delete(id);
-  }
-
-  if (changed) {
-    if (notificationHistoryLog.length > NOTIFICATION_HISTORY_MAX_ENTRIES) {
-      notificationHistoryLog = notificationHistoryLog.slice(-NOTIFICATION_HISTORY_MAX_ENTRIES);
-    }
-    saveNotificationHistory();
-    if (isNotificationHistoryScreenOpen) {
-      renderNotificationHistoryScreen();
-    }
-  }
-}
-
-// Human-readable span between two ISO instants: "45 s", "7 min", "2 h 5 min",
-// "1 d 3 h".
-function formatNotificationDuration(startIso, endIso) {
-  const start = new Date(startIso).getTime();
-  const end = new Date(endIso).getTime();
-  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) {
-    return "";
-  }
-  const totalSeconds = Math.round((end - start) / 1000);
-  if (totalSeconds < 60) {
-    return `${totalSeconds} s`;
-  }
-  const totalMinutes = Math.floor(totalSeconds / 60);
-  if (totalMinutes < 60) {
-    return `${totalMinutes} min`;
-  }
-  const totalHours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  if (totalHours < 24) {
-    return minutes ? `${totalHours} h ${minutes} min` : `${totalHours} h`;
-  }
-  const days = Math.floor(totalHours / 24);
-  const hours = totalHours % 24;
-  return hours ? `${days} d ${hours} h` : `${days} d`;
-}
-
-function renderNotificationHistoryScreen() {
-  if (!notificationHistoryListEl) {
-    return;
-  }
-  const entries = [...notificationHistoryLog].sort(
-    (a, b) => getNotificationTimestampMs(b.raisedAt) - getNotificationTimestampMs(a.raisedAt),
-  );
-
-  if (notificationHistoryCountEl) {
-    notificationHistoryCountEl.textContent = `${entries.length} ${entries.length === 1 ? "entry" : "entries"}`;
-  }
-
-  if (!entries.length) {
-    notificationHistoryListEl.innerHTML = "";
-    if (notificationHistoryEmptyEl) {
-      notificationHistoryEmptyEl.hidden = false;
-    }
-    return;
-  }
-  if (notificationHistoryEmptyEl) {
-    notificationHistoryEmptyEl.hidden = true;
-  }
-
-  notificationHistoryListEl.innerHTML = entries
-    .map((entry) => {
-      const severity = normalizeNotificationSeverity(entry.severity, "info");
-      const ongoing = !entry.resolvedAt;
-      const solvedText = ongoing
-        ? '<em class="notif-history-ongoing">Ongoing</em>'
-        : escapeHtml(formatCalendarDateTime(entry.resolvedAt));
-      const duration = ongoing ? "" : formatNotificationDuration(entry.raisedAt, entry.resolvedAt);
-      return `
-        <article class="notif-history-row severity-${severity} ${ongoing ? "is-ongoing" : "is-resolved"}" role="listitem">
-          <span class="notif-history-sev severity-${severity}">${escapeHtml(getNotificationSeverityLabel(severity))}</span>
-          <div class="notif-history-main">
-            <h4 class="notif-history-title">${escapeHtml(entry.title || "Notification")}</h4>
-            <p class="notif-history-source">${escapeHtml(entry.source || "System")}</p>
-          </div>
-          <div class="notif-history-times">
-            <span class="notif-history-time"><span class="nh-label">Raised</span> ${escapeHtml(formatCalendarDateTime(entry.raisedAt))}</span>
-            <span class="notif-history-time"><span class="nh-label">Solved</span> ${solvedText}</span>
-            ${duration ? `<span class="notif-history-duration">Active ${escapeHtml(duration)}</span>` : ""}
-          </div>
-        </article>`;
-    })
-    .join("");
-}
-
-function setNotificationHistoryScreenOpen(isOpen) {
-  isNotificationHistoryScreenOpen = Boolean(isOpen);
-  if (!notificationHistoryScreenEl) {
-    return;
-  }
-  notificationHistoryScreenEl.hidden = !isNotificationHistoryScreenOpen;
-  notificationHistoryScreenEl.setAttribute("aria-hidden", isNotificationHistoryScreenOpen ? "false" : "true");
-  if (isNotificationHistoryScreenOpen) {
-    setNotificationCenterOpen(false);
-    if (typeof isCalendarScreenOpen !== "undefined" && isCalendarScreenOpen) {
-      setCalendarScreenOpen(false);
-    }
-    renderNotificationHistoryScreen();
-  }
-}
-
-// Load persisted history before the first render diff runs.
-loadNotificationHistory();
-
-function showNotificationToast(notification) {
-  const layer = document.getElementById("notificationToastLayer");
-  if (!layer) return;
-  const isCritical = notification.severity === "critical";
-
-  const toast = document.createElement("div");
-  toast.className = `notification-toast severity-${notification.severity}`;
-  toast.setAttribute("role", isCritical ? "alert" : "status");
-
-  const dismiss = () => {
-    toast.classList.add("is-leaving");
-    window.setTimeout(() => toast.remove(), 220);
-  };
-
-  const icon = document.createElement("span");
-  icon.className = "notification-toast-icon";
-  icon.innerHTML = buildNotificationIconSvg(notification.icon);
-
-  const body = document.createElement("div");
-  body.className = "notification-toast-body";
-  const title = document.createElement("p");
-  title.className = "notification-toast-title";
-  title.textContent = notification.title;
-  const desc = document.createElement("p");
-  desc.className = "notification-toast-desc";
-  desc.textContent = notification.description;
-  body.append(title, desc);
-
-  const actions = document.createElement("div");
-  actions.className = "notification-toast-actions";
-  const viewBtn = document.createElement("button");
-  viewBtn.type = "button";
-  viewBtn.className = "notification-toast-view";
-  viewBtn.textContent = "View";
-  viewBtn.addEventListener("click", () => {
-    markUserActivity();
-    dismiss();
-    setNotificationCenterOpen(true);
-    openNotificationDetailsModal(notification.id);
-  });
-  actions.appendChild(viewBtn);
-  if (notification.canAcknowledge) {
-    const ackBtn = document.createElement("button");
-    ackBtn.type = "button";
-    ackBtn.className = "notification-toast-ack";
-    ackBtn.textContent = "Acknowledge";
-    ackBtn.addEventListener("click", () => {
-      markUserActivity();
-      acknowledgeNotification(notification.id);
-      dismiss();
-    });
-    actions.appendChild(ackBtn);
-  }
-  const closeBtn = document.createElement("button");
-  closeBtn.type = "button";
-  closeBtn.className = "notification-toast-close";
-  closeBtn.setAttribute("aria-label", "Dismiss");
-  closeBtn.textContent = "✕";
-  closeBtn.addEventListener("click", dismiss);
-
-  toast.append(icon, body, actions, closeBtn);
-  layer.appendChild(toast);
-
-  // Cap the stack; drop the oldest.
-  while (layer.children.length > 3) {
-    layer.firstElementChild.remove();
-  }
-
-  // All arrival toasts (incl. critical) auto-dismiss after 10s — or sooner when
-  // the operator switches menus (see clearNotificationToasts). The notification
-  // itself stays in the notification center list either way.
-  toast._dismissToast = dismiss;
-  window.setTimeout(dismiss, 10000);
-}
-
-// Dismiss every visible arrival toast (used on a 10s timeout per-toast, and when
-// the operator opens/switches a menu). Does NOT remove the underlying
-// notifications — they remain in the notification center.
-function clearNotificationToasts() {
-  const layer = document.getElementById("notificationToastLayer");
-  if (!layer) return;
-  [...layer.children].forEach((el) => {
-    if (typeof el._dismissToast === "function") el._dismissToast();
-    else el.remove();
-  });
-}
-
-function getNotificationSignalsSnapshot() {
-  const globalSignals = (typeof window !== "undefined" && typeof window.PRINTER_NOTIFICATION_SIGNALS === "object")
-    ? window.PRINTER_NOTIFICATION_SIGNALS
-    : null;
-
-  const statusText = String(topbarConnectionEl?.textContent || "").toLowerCase();
-  const internetConnectedFromUi = statusText.includes("connected") && !statusText.includes("not");
-
-  const snapshot = {
-    ...mockNotificationSignals,
-    ...(globalSignals || {}),
-  };
-
-  if (globalSignals == null) {
-    snapshot.internetConnected = internetConnectedFromUi;
-  }
-
-  if (typeof snapshot.machineArmedState === "boolean" && snapshot.machineArmedRequired == null) {
-    snapshot.machineArmedRequired = !snapshot.machineArmedState;
-  }
-
-  if (Number.isFinite(Number(snapshot.coolantTemperature)) && Number(snapshot.coolantTemperature) > 60) {
-    snapshot.coolantFlowLow = true;
-  }
-
-  return snapshot;
-}
-
-function buildSignalDrivenNotificationRecords(signals) {
-  const isProcessRunning = Boolean(signals.processRunning);
-  const armSeverity = isProcessRunning ? "warning" : "info";
-  const inertSeverity = isProcessRunning ? "warning" : "info";
-  const coolantSeverity = Number(signals.coolantTemperature) > 60 ? "critical" : "warning";
-
-  const candidates = [
-    {
-      type: "emergency_estop",
-      active: Boolean(signals.emergencyStopActive),
-    },
-    {
-      type: "arm_machine_required",
-      active: Boolean(signals.machineArmedRequired),
-      severity: armSeverity,
-      description: armSeverity === "warning"
-        ? "The machine must be armed before the process can continue. Printing blocked."
-        : "The machine must be armed before the process can continue.",
-    },
-    {
-      type: "inert_gas_filtration_required",
-      active: Boolean(signals.inertedSystemActive || signals.filtrationRequired),
-      severity: inertSeverity,
-      description: inertSeverity === "warning"
-        ? "The system is inerted. Filtration condition is required before continuing. Action required."
-        : undefined,
-    },
-    {
-      type: "controller_board_not_connected",
-      active: signals.controllerBoardConnected === false,
-    },
-    {
-      type: "gas_flow_decreasing",
-      active: Boolean(signals.gasFlowLow || signals.gasFlowDecreasing),
-      sensorValue: Number.isFinite(Number(signals.gasFlowLpm)) ? `${Number(signals.gasFlowLpm).toFixed(1)} L/min` : null,
-    },
-    {
-      type: "coolant_warning",
-      active: Boolean(signals.coolantFlowLow) || Number.isFinite(Number(signals.coolantTemperature)),
-      severity: coolantSeverity,
-      sensorValue: Number.isFinite(Number(signals.coolantTemperature)) ? `${Number(signals.coolantTemperature).toFixed(1)} C` : null,
-    },
-    {
-      type: "external_security_closed_loop_warning",
-      active: Boolean(signals.externalSecurityFault || signals.closedLoopFault),
-    },
-    {
-      type: "software_update_available",
-      active: Boolean(signals.softwareUpdateAvailable),
-    },
-    {
-      type: "firmware_update_available",
-      active: Boolean(signals.firmwareUpdateAvailable),
-    },
-    {
-      type: "internet_connection_unavailable",
-      active: signals.internetConnected === false,
-    },
-    {
-      type: "preventive_maintenance_needed",
-      active: Boolean(signals.preventiveMaintenanceDue),
-    },
-  ];
-
-  const nowIso = new Date().toISOString();
-
-  return candidates
-    .filter((candidate) => candidate.active)
-    .map((candidate) => {
-      const definition = NOTIFICATION_TYPE_DEFINITIONS[candidate.type];
-      return normalizeNotificationRecord({
-        id: `signal-${candidate.type}`,
-        type: candidate.type,
-        title: definition.title,
-        description: candidate.description || definition.description,
-        severity: candidate.severity || definition.severity,
-        status: "active",
-        timestamp: nowIso,
-        recommendedAction: definition.recommendedAction,
-        source: definition.source,
-        relatedScreen: definition.relatedScreen,
-        canAcknowledge: definition.canAcknowledge,
-        canResolveManually: definition.canResolveManually,
-        sensorValue: candidate.sensorValue,
-        priority: definition.priority,
-        persistWhileSignalActive: definition.persistWhileSignalActive,
-        icon: definition.icon,
-      });
-    });
-}
-
-function mergeSignalNotifications(signalRecords) {
-  const activeSignalIds = new Set(signalRecords.map((record) => record.id));
-
-  for (const record of signalRecords) {
-    const existing = notificationsById.get(record.id);
-    if (!existing) {
-      notificationsById.set(record.id, record);
-      continue;
-    }
-
-    const nextStatus = existing.status === "resolved" ? "active" : existing.status;
-    notificationsById.set(record.id, {
-      ...existing,
-      ...record,
-      status: nextStatus,
-      timestamp: existing.timestamp || record.timestamp,
-    });
-  }
-
-  for (const [id, notification] of notificationsById.entries()) {
-    if (!String(id).startsWith("signal-")) {
-      continue;
-    }
-
-    if (activeSignalIds.has(id)) {
-      continue;
-    }
-
-    if (notification.persistWhileSignalActive) {
-      notificationsById.set(id, {
-        ...notification,
-        status: "resolved",
-        timestamp: new Date().toISOString(),
-      });
-      continue;
-    }
-
-    notificationsById.delete(id);
-  }
-}
-
-function renderNotificationCard(notification) {
-  const statusClass = `status-${notification.status}`;
-  const severityClass = `severity-${notification.severity}`;
-  const acknowledgeDisabled = !notification.canAcknowledge || notification.status === "resolved";
-
-  return `
-    <article class="notification-card ${severityClass} is-${notification.status}" role="listitem" data-notification-id="${escapeHtml(notification.id)}">
-      <div class="notification-card-header">
-        <span class="notification-severity-icon">${buildNotificationIconSvg(notification.icon)}</span>
-        <div class="notification-card-title-wrap">
-          <h4 class="notification-card-title">${escapeHtml(notification.title)}</h4>
-          <p class="notification-card-description">${escapeHtml(notification.description)}</p>
-        </div>
-        <div class="notification-meta">
-          <span class="notification-severity-label ${severityClass}">${escapeHtml(getNotificationSeverityLabel(notification.severity))}</span>
-          <span class="notification-status-label ${statusClass}">${escapeHtml(getNotificationStatusLabel(notification.status))}</span>
-          <span>${escapeHtml(formatNotificationTimestamp(notification.timestamp))}</span>
-        </div>
-      </div>
-
-      <p class="notification-recommended-action"><strong>Action required:</strong> ${escapeHtml(notification.recommendedAction)}</p>
-
-      <div class="notification-card-actions">
-        <button type="button" title="Mark as seen (keeps the issue in the list)" data-notification-action="acknowledge" data-notification-id="${escapeHtml(notification.id)}"${acknowledgeDisabled ? " disabled" : ""}>Acknowledge</button>
-        <button type="button" data-notification-action="details" data-notification-id="${escapeHtml(notification.id)}">View details</button>
-        <button type="button" class="notification-resolve-btn" title="Open Settings to fix this" data-notification-action="resolve" data-notification-id="${escapeHtml(notification.id)}">Resolve</button>
-      </div>
-    </article>
-  `;
-}
-
-function renderNotificationCenter() {
-  const allNotifications = getNotificationListSorted([...notificationsById.values()]);
-  const filteredNotifications = getVisibleNotifications();
-  const activeNotifications = allNotifications.filter((item) => item.status !== "resolved");
-
-  if (notificationActiveCountEl) {
-    const label = activeNotifications.length === 1 ? "notification" : "notifications";
-    notificationActiveCountEl.textContent = `${activeNotifications.length} active ${label}`;
-  }
-
-  if (notificationListEl) {
-    notificationListEl.innerHTML = filteredNotifications.length
-      ? filteredNotifications.map(renderNotificationCard).join("")
-      : "";
-  }
-
-  if (notificationEmptyStateEl) {
-    notificationEmptyStateEl.hidden = filteredNotifications.length !== 0;
-  }
-
-  updateNotificationFilterCounts(activeNotifications);
-  updateNotificationBellState();
-  syncNotificationToasts();
-  syncNotificationBellArrival();
-  syncNotificationHistory();
-}
-
-// Show a per-severity count on each filter chip (All / Critical / Warning / Info)
-// so the operator sees the mix at a glance without opening each filter.
-function updateNotificationFilterCounts(activeNotifications) {
-  const counts = {
-    all: activeNotifications.length,
-    critical: getNotificationSeverityCount(activeNotifications, "critical"),
-    warning: getNotificationSeverityCount(activeNotifications, "warning"),
-    info: getNotificationSeverityCount(activeNotifications, "info"),
-  };
-  const labels = { all: "All", critical: "Critical", warning: "Warning", info: "Info" };
-  for (const buttonEl of getNotificationFilterButtons()) {
-    const key = buttonEl.dataset.filter;
-    const base = labels[key] || buttonEl.textContent;
-    const n = counts[key] ?? 0;
-    buttonEl.innerHTML = `${base}<span class="notification-chip-count">${n}</span>`;
-  }
-}
-
-function acknowledgeNotification(notificationId) {
-  const current = notificationsById.get(notificationId);
-  if (!current || !current.canAcknowledge || current.status === "resolved") {
-    return false;
-  }
-
-  notificationsById.set(notificationId, {
-    ...current,
-    status: "acknowledged",
-  });
-  renderNotificationCenter();
-  return true;
-}
-
-function resolveNotification(notificationId) {
-  const current = notificationsById.get(notificationId);
-  if (!current || !current.canResolveManually) {
-    return false;
-  }
-
-  if (current.persistWhileSignalActive && current.status !== "resolved") {
-    return false;
-  }
-
-  notificationsById.set(notificationId, {
-    ...current,
-    status: "resolved",
-    timestamp: new Date().toISOString(),
-  });
-  renderNotificationCenter();
-  return true;
-}
-
-function goToNotificationIssue(notificationId) {
-  const notification = notificationsById.get(notificationId);
-  if (!notification) {
-    return false;
-  }
-
-  const target = notification.relatedScreen;
-  if (target === "maintenance") {
-    setCalendarScreenOpen(true);
-    setNotificationCenterOpen(false);
-    return true;
-  }
-
-  // Everything else opens Settings — the place where fixes live. Certain targets
-  // additionally open the relevant submenu (Calibrate / Advanced). This is what
-  // the "Resolve" button uses to take the operator to where they make the change.
-  setTopbarSettingsMenuOpen(true);
-  setNotificationCenterOpen(false);
-  if (target === "settings-calibrate" && typeof setSettingsCalibrateMenuOpen === "function") {
-    setSettingsCalibrateMenuOpen(true);
-  }
-  if (target === "settings-advanced" && typeof setSettingsAdvancedMenuOpen === "function") {
-    setSettingsAdvancedMenuOpen(true);
-  }
-  return true;
-}
-
-function handleNotificationAction(action, notificationId) {
-  if (!notificationId) {
-    return;
-  }
-
-  markUserActivity();
-
-  if (action === "acknowledge") {
-    acknowledgeNotification(notificationId);
-    return;
-  }
-
-  if (action === "details") {
-    openNotificationDetailsModal(notificationId);
-    return;
-  }
-
-  // "Resolve" now takes the operator into Settings, to the area where they make
-  // the change that fixes the fault (replaces the old separate "Go to issue").
-  if (action === "resolve" || action === "goto") {
-    goToNotificationIssue(notificationId);
-  }
-}
-
-function clearResolvedNotifications() {
-  for (const [id, notification] of notificationsById.entries()) {
-    if (notification.status === "resolved") {
-      notificationsById.delete(id);
-    }
-  }
-  renderNotificationCenter();
-}
-
-function updateMockNotificationSignals(nowMs = performance.now()) {
-  const isMockEnabled = typeof window !== "undefined" && window.ENABLE_NOTIFICATION_MOCK_SIGNALS === true;
-  if (!isMockEnabled) {
-    return;
-  }
-
-  const tick = Math.floor(nowMs / 15000);
-  if (tick === notificationMockTickCounter) {
-    return;
-  }
-
-  notificationMockTickCounter = tick;
-  const hasExternalSignals = typeof window !== "undefined" && typeof window.PRINTER_NOTIFICATION_SIGNALS === "object";
-  if (hasExternalSignals) {
-    return;
-  }
-
-  mockNotificationSignals.internetConnected = !(tick % 6 === 2);
-  mockNotificationSignals.machineArmedRequired = tick % 7 === 3;
-  mockNotificationSignals.gasFlowDecreasing = tick % 5 === 2;
-  mockNotificationSignals.coolantTemperature = tick % 8 === 4 ? 62 : 48;
-  mockNotificationSignals.preventiveMaintenanceDue = tick % 9 === 5;
-  mockNotificationSignals.softwareUpdateAvailable = tick % 11 === 3;
-  mockNotificationSignals.firmwareUpdateAvailable = tick % 13 === 5;
-}
-
-function updateNotificationCenterFromSignals(nowMs = performance.now()) {
-  updateMockNotificationSignals(nowMs);
-  const snapshot = getNotificationSignalsSnapshot();
-  const records = buildSignalDrivenNotificationRecords(snapshot);
-  mergeSignalNotifications(records);
-  renderNotificationCenter();
-}
 let palpadorSweepTimeoutId = null;
 let frontDoorSequenceStartTimeoutId = null;
 let frontDoorSequenceStage2TimeoutId = null;
@@ -2439,9 +1097,65 @@ const GAS_SPRING_GEOMETRY = {
 };
 const gasSpringRotatedLocalXY = new THREE.Vector2();
 const gasSpringSecondaryWorldXY = new THREE.Vector2();
-const assemblyAnnotationManager = createAssemblyAnnotationManager(annotationLayerEl);
-const viewCubeController = createViewCubeController();
-const feederPreviewController = createFeederPreviewController();
+const assemblyAnnotationManager = createAssemblyAnnotationManager({
+  layerEl: annotationLayerEl,
+  ...viewerCore,
+  getRobotRoot: () => robotRoot,
+  getActiveHotspotPanelId: () => activeHotspotPanelId,
+  getIsCloudModelMenuOpen: () => isCloudModelMenuOpen,
+  getKeepHotspotContextPanelVisible: () => keepHotspotContextPanelVisible,
+  getLeftFeederWheelState: () => leftFeederWheelState,
+  getRightFeederWheelState: () => rightFeederWheelState,
+  ANNOTATION_DEFINITIONS,
+  HOTSPOT_PANEL_MATERIALS_ID,
+  annotationNavButtonsById,
+  clamp,
+  closeHotspotContextPanel,
+  computeObjectLocalBounds,
+  getFrontDoorControlData,
+  getOverlayVerticalSafeBounds,
+  getSpoolsDoorControlData,
+  getTopCoverControlData,
+  isFrontDoorOpen,
+  isSpoolsDoorOpen,
+  isTopCoverOpen,
+  markUserActivity,
+  runFrontDoorButtonAction,
+  runSpoolsDoorButtonAction,
+  runTopCoverButtonAction,
+  setFrontDoorOpenState,
+  setHotspotMaterialsFocusSpool,
+  setHotspotTriggerRailVisible,
+  setSpoolsDoorOpenState,
+  setTopCoverOpenState,
+  toggleHotspotContextPanel,
+});
+const viewCubeController = createViewCubeController({
+  viewCubeOverlayEl,
+  viewCubeCanvasEl,
+  viewCubeHomeButtonEl,
+  ...viewerCore,
+  buildViewCubeCameraState,
+  beginCameraTransition,
+  resetCameraToRobotView,
+  createViewCubeLabelTexture,
+  markUserActivity,
+});
+const feederPreviewController = createFeederPreviewController({
+  hotspotFeederCameraViewportEl,
+  scene,
+  getRobotRoot: () => robotRoot,
+  getActiveHotspotPanelId: () => activeHotspotPanelId,
+  getFeederDriveSide: () => feederDriveSide,
+  getFeederDriveVertical: () => feederDriveVertical,
+  setFeederCameraPreviewPlaceholder,
+  setFeederCameraPreviewContent,
+  buildFeederPanelPreviewCameraState,
+  LEFT_FEEDER_WHEEL_LINK,
+  RIGHT_FEEDER_WHEEL_LINK,
+  CENTRAL_FEEDER_WHEEL_LINK,
+  HOTSPOT_PANEL_MATERIALS_ID,
+});
 
 function createAxisLabelSprite(text, color) {
   const canvasEl = document.createElement("canvas");
@@ -2555,670 +1269,6 @@ function markUserActivity(nowMs = performance.now(), options = {}) {
   }
 }
 
-function toLocalDateTimeInputValue(dateLike) {
-  const date = new Date(dateLike);
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  const hours = String(date.getHours()).padStart(2, "0");
-  const minutes = String(date.getMinutes()).padStart(2, "0");
-  return `${year}-${month}-${day}T${hours}:${minutes}`;
-}
-
-function formatCalendarDateTime(dateLike) {
-  const date = new Date(dateLike);
-  return date.toLocaleString([], {
-    year: "numeric",
-    month: "short",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-}
-
-function formatCalendarTime(dateLike) {
-  const date = new Date(dateLike);
-  return date.toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-}
-
-function formatCalendarDurationHours(startTime, endTime) {
-  const startMs = Number(new Date(startTime).getTime());
-  const endMs = Number(new Date(endTime).getTime());
-  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
-    return "0.0h";
-  }
-
-  const hours = (endMs - startMs) / (1000 * 60 * 60);
-  return `${hours.toFixed(1)}h`;
-}
-
-function normalizeCalendarView(view) {
-  const normalized = String(view || "").trim().toLowerCase();
-  return CALENDAR_VIEW_VALUES.includes(normalized) ? normalized : "month";
-}
-
-function normalizeCalendarEventType(type) {
-  const normalized = String(type || "").trim().toLowerCase();
-  return Object.prototype.hasOwnProperty.call(CALENDAR_EVENT_TYPE_META, normalized)
-    ? normalized
-    : "scheduled_print";
-}
-
-function createCalendarEvent(event) {
-  const nowIso = new Date().toISOString();
-  const id = event.id || `evt-${calendarEventIdCounter++}`;
-  return {
-    id,
-    title: String(event.title || "Untitled event").trim() || "Untitled event",
-    type: normalizeCalendarEventType(event.type),
-    startTime: new Date(event.startTime).toISOString(),
-    endTime: new Date(event.endTime).toISOString(),
-    status: String(event.status || "planned").trim() || "planned",
-    relatedPrintFile: String(event.relatedPrintFile || "").trim(),
-    material: String(event.material || "").trim(),
-    estimatedPrintTime: Number.isFinite(Number(event.estimatedPrintTime)) ? Number(event.estimatedPrintTime) : null,
-    actualPrintTime: Number.isFinite(Number(event.actualPrintTime)) ? Number(event.actualPrintTime) : null,
-    materialUsedGrams: Number.isFinite(Number(event.materialUsedGrams)) ? Number(event.materialUsedGrams) : null,
-    machineName: String(event.machineName || "M600-PRO-1").trim() || "M600-PRO-1",
-    notes: String(event.notes || "").trim(),
-    createdAt: event.createdAt || nowIso,
-    updatedAt: nowIso,
-  };
-}
-
-function seedCalendarEventsIfNeeded() {
-  if (calendarEvents.length) {
-    return;
-  }
-
-  const now = new Date();
-  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 8, 0, 0, 0);
-  const inHours = (hours) => new Date(startOfDay.getTime() + (hours * 60 * 60 * 1000));
-
-  calendarEvents.push(
-    createCalendarEvent({
-      title: "Small Torture Test - Scheduled",
-      type: "scheduled_print",
-      startTime: inHours(2),
-      endTime: inHours(5),
-      status: "scheduled",
-      relatedPrintFile: "Small Torture Test.stl",
-      material: "316L Stainless Steel",
-      estimatedPrintTime: 3,
-      materialUsedGrams: 120,
-      notes: "Priority queue",
-    }),
-    createCalendarEvent({
-      title: "Filter Neck Printing - Completed",
-      type: "completed_print",
-      startTime: inHours(-10),
-      endTime: inHours(-6),
-      status: "completed",
-      relatedPrintFile: "0110908_Filter Neck Printing.stl",
-      material: "17-4PH Stainless Steel",
-      estimatedPrintTime: 4,
-      actualPrintTime: 3.8,
-      materialUsedGrams: 95,
-      notes: "Completed without alarms",
-    }),
-    createCalendarEvent({
-      title: "Nozzle Cleaning",
-      type: "maintenance",
-      startTime: inHours(28),
-      endTime: inHours(30),
-      status: "scheduled",
-      notes: "Auto-suggested from print load",
-    }),
-    createCalendarEvent({
-      title: "Bed Alignment - Overdue",
-      type: "warning_maintenance",
-      startTime: inHours(-30),
-      endTime: inHours(-29),
-      status: "overdue",
-      notes: "Overdue by schedule placeholder rule",
-    }),
-  );
-}
-
-function suggestMaintenanceEventsFromSchedule() {
-  const scheduledPrintCount = calendarEvents.filter((event) => event.type === "scheduled_print").length;
-  const existingSuggested = calendarEvents.some((event) => event.notes.includes("Auto-suggested from print load"));
-
-  if (scheduledPrintCount >= 2 && !existingSuggested) {
-    const maintenanceStart = new Date(calendarAnchorDate);
-    maintenanceStart.setDate(maintenanceStart.getDate() + 3);
-    maintenanceStart.setHours(9, 0, 0, 0);
-    const maintenanceEnd = new Date(maintenanceStart.getTime() + (2 * 60 * 60 * 1000));
-
-    calendarEvents.push(createCalendarEvent({
-      title: "Preventive Maintenance Window",
-      type: "maintenance",
-      startTime: maintenanceStart,
-      endTime: maintenanceEnd,
-      status: "scheduled",
-      notes: "Auto-suggested from print load",
-    }));
-  }
-}
-
-function getCalendarEventsSorted() {
-  return [...calendarEvents].sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
-}
-
-function isSameCalendarDay(dateA, dateB) {
-  return dateA.getFullYear() === dateB.getFullYear()
-    && dateA.getMonth() === dateB.getMonth()
-    && dateA.getDate() === dateB.getDate();
-}
-
-function getCalendarWeekStart(dateLike) {
-  const date = new Date(dateLike);
-  date.setHours(0, 0, 0, 0);
-  date.setDate(date.getDate() - date.getDay());
-  return date;
-}
-
-function buildCalendarRangeLabel() {
-  const anchor = new Date(calendarAnchorDate);
-
-  if (calendarCurrentView === "month") {
-    return anchor.toLocaleDateString([], { month: "long", year: "numeric" });
-  }
-
-  if (calendarCurrentView === "day") {
-    return anchor.toLocaleDateString([], {
-      weekday: "short",
-      month: "short",
-      day: "2-digit",
-      year: "numeric",
-    });
-  }
-
-  const start = getCalendarWeekStart(anchor);
-  const end = new Date(start);
-  end.setDate(start.getDate() + 6);
-  return `${start.toLocaleDateString([], { month: "short", day: "2-digit" })} - ${end.toLocaleDateString([], { month: "short", day: "2-digit", year: "numeric" })}`;
-}
-
-function clearCalendarGrid() {
-  if (!calendarGridEl) {
-    return;
-  }
-  calendarGridEl.textContent = "";
-}
-
-function getEventsForCalendarDay(dayDate) {
-  const dayStartMs = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate(), 0, 0, 0, 0).getTime();
-  const dayEndMs = dayStartMs + (24 * 60 * 60 * 1000);
-  return getCalendarEventsSorted().filter((event) => {
-    const startMs = new Date(event.startTime).getTime();
-    const endMs = new Date(event.endTime).getTime();
-    return startMs < dayEndMs && endMs >= dayStartMs;
-  });
-}
-
-function renderCalendarEventDetails() {
-  if (!calendarEventDetailsBodyEl) {
-    return;
-  }
-
-  const selectedEvent = calendarEvents.find((event) => event.id === selectedCalendarEventId) || null;
-  if (!selectedEvent) {
-    calendarEventDetailsBodyEl.innerHTML = "<p class=\"calendar-empty-state\">Select an event to review details.</p>";
-    return;
-  }
-
-  const typeMeta = CALENDAR_EVENT_TYPE_META[selectedEvent.type] || CALENDAR_EVENT_TYPE_META.scheduled_print;
-  const details = [
-    `<p><strong>Title:</strong> ${escapeHtml(selectedEvent.title)}</p>`,
-    `<p><strong>Type:</strong> ${escapeHtml(typeMeta.label)}</p>`,
-    `<p><strong>Start:</strong> ${escapeHtml(formatCalendarDateTime(selectedEvent.startTime))}</p>`,
-    `<p><strong>End:</strong> ${escapeHtml(formatCalendarDateTime(selectedEvent.endTime))}</p>`,
-    `<p><strong>Duration:</strong> ${escapeHtml(formatCalendarDurationHours(selectedEvent.startTime, selectedEvent.endTime))}</p>`,
-    `<p><strong>Status:</strong> ${escapeHtml(selectedEvent.status || "planned")}</p>`,
-    `<p><strong>Print File:</strong> ${escapeHtml(selectedEvent.relatedPrintFile || "-")}</p>`,
-    `<p><strong>Material:</strong> ${escapeHtml(selectedEvent.material || "-")}</p>`,
-    `<p><strong>Estimated Print Time:</strong> ${escapeHtml(selectedEvent.estimatedPrintTime != null ? `${selectedEvent.estimatedPrintTime}h` : "-")}</p>`,
-    `<p><strong>Actual Print Time:</strong> ${escapeHtml(selectedEvent.actualPrintTime != null ? `${selectedEvent.actualPrintTime}h` : "-")}</p>`,
-    `<p><strong>Material Used:</strong> ${escapeHtml(selectedEvent.materialUsedGrams != null ? `${Math.round(selectedEvent.materialUsedGrams)}g` : "-")}</p>`,
-    `<p><strong>Machine:</strong> ${escapeHtml(selectedEvent.machineName || "M600-PRO-1")}</p>`,
-    `<p><strong>Maintenance Notes:</strong> ${escapeHtml(selectedEvent.notes || "-")}</p>`,
-  ];
-
-  calendarEventDetailsBodyEl.innerHTML = details.join("");
-}
-
-function openCalendarEventModal(eventId = null, anchorDate = null) {
-  if (!calendarEventModalEl) {
-    return;
-  }
-
-  populateCalendarEventFormOptions();
-  const event = eventId ? calendarEvents.find((entry) => entry.id === eventId) : null;
-  editingCalendarEventId = event ? event.id : null;
-
-  if (calendarEventModalTitleEl) {
-    calendarEventModalTitleEl.textContent = event ? "Edit Event" : "Add Event";
-  }
-
-  const startDate = event
-    ? new Date(event.startTime)
-    : (anchorDate ? new Date(anchorDate) : new Date());
-  const endDate = event
-    ? new Date(event.endTime)
-    : new Date(startDate.getTime() + (60 * 60 * 1000));
-
-  if (calendarEventTitleInputEl) {
-    calendarEventTitleInputEl.value = event ? event.title : "";
-  }
-  if (calendarEventTypeInputEl) {
-    calendarEventTypeInputEl.value = event ? event.type : "scheduled_print";
-  }
-  if (calendarEventStartInputEl) {
-    calendarEventStartInputEl.value = toLocalDateTimeInputValue(startDate);
-  }
-  if (calendarEventEndInputEl) {
-    calendarEventEndInputEl.value = toLocalDateTimeInputValue(endDate);
-  }
-  if (calendarEventFileInputEl) {
-    calendarEventFileInputEl.value = event ? (event.relatedPrintFile || "") : "";
-  }
-  if (calendarEventMaterialInputEl) {
-    calendarEventMaterialInputEl.value = event ? (event.material || "") : "";
-  }
-  if (calendarEventEstimatedHoursInputEl) {
-    calendarEventEstimatedHoursInputEl.value = event && event.estimatedPrintTime != null ? String(event.estimatedPrintTime) : "";
-  }
-  if (calendarEventActualHoursInputEl) {
-    calendarEventActualHoursInputEl.value = event && event.actualPrintTime != null ? String(event.actualPrintTime) : "";
-  }
-  if (calendarEventMaterialUsedInputEl) {
-    calendarEventMaterialUsedInputEl.value = event && event.materialUsedGrams != null ? String(Math.round(event.materialUsedGrams)) : "";
-  }
-  if (calendarEventMachineInputEl) {
-    calendarEventMachineInputEl.value = event ? (event.machineName || "M600-PRO-1") : "M600-PRO-1";
-  }
-  if (calendarEventNotesInputEl) {
-    calendarEventNotesInputEl.value = event ? (event.notes || "") : "";
-  }
-
-  if (calendarEventDeleteEl) {
-    calendarEventDeleteEl.hidden = !event;
-  }
-  if (calendarEventValidationEl) {
-    calendarEventValidationEl.hidden = true;
-    calendarEventValidationEl.textContent = "";
-  }
-
-  calendarEventModalEl.hidden = false;
-  calendarEventModalEl.setAttribute("aria-hidden", "false");
-}
-
-function closeCalendarEventModal() {
-  if (!calendarEventModalEl) {
-    return;
-  }
-
-  calendarEventModalEl.hidden = true;
-  calendarEventModalEl.setAttribute("aria-hidden", "true");
-  editingCalendarEventId = null;
-  if (calendarEventValidationEl) {
-    calendarEventValidationEl.hidden = true;
-    calendarEventValidationEl.textContent = "";
-  }
-}
-
-function populateCalendarEventFormOptions() {
-  if (calendarEventFileInputEl) {
-    const previous = calendarEventFileInputEl.value;
-    calendarEventFileInputEl.textContent = "";
-    const emptyFileOption = document.createElement("option");
-    emptyFileOption.value = "";
-    emptyFileOption.textContent = "Not linked";
-    calendarEventFileInputEl.appendChild(emptyFileOption);
-
-    const names = Array.from(new Set(cloudFileLibraryEntries.map((entry) => entry.name)))
-      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
-
-    for (const name of names) {
-      const option = document.createElement("option");
-      option.value = name;
-      option.textContent = name;
-      calendarEventFileInputEl.appendChild(option);
-    }
-
-    if (previous && names.includes(previous)) {
-      calendarEventFileInputEl.value = previous;
-    }
-  }
-
-  if (calendarEventMaterialInputEl) {
-    const previous = calendarEventMaterialInputEl.value;
-    calendarEventMaterialInputEl.textContent = "";
-    const emptyMaterialOption = document.createElement("option");
-    emptyMaterialOption.value = "";
-    emptyMaterialOption.textContent = "Not specified";
-    calendarEventMaterialInputEl.appendChild(emptyMaterialOption);
-
-    for (const material of MELTIO_MATERIAL_LIBRARY) {
-      const option = document.createElement("option");
-      option.value = material.label;
-      option.textContent = material.label;
-      calendarEventMaterialInputEl.appendChild(option);
-    }
-
-    if (previous) {
-      calendarEventMaterialInputEl.value = previous;
-    }
-  }
-}
-
-function saveCalendarEventFromModal() {
-  if (!calendarEventTitleInputEl || !calendarEventTypeInputEl || !calendarEventStartInputEl || !calendarEventEndInputEl) {
-    return;
-  }
-
-  const title = String(calendarEventTitleInputEl.value || "").trim();
-  const type = normalizeCalendarEventType(calendarEventTypeInputEl.value);
-  const startTime = new Date(String(calendarEventStartInputEl.value || "").trim());
-  const endTime = new Date(String(calendarEventEndInputEl.value || "").trim());
-
-  if (!title || Number.isNaN(startTime.getTime()) || Number.isNaN(endTime.getTime()) || endTime <= startTime) {
-    if (calendarEventValidationEl) {
-      calendarEventValidationEl.hidden = false;
-      calendarEventValidationEl.textContent = "Please provide a title and valid start/end times.";
-    }
-    return;
-  }
-
-  const patch = {
-    title,
-    type,
-    startTime: startTime.toISOString(),
-    endTime: endTime.toISOString(),
-    status: type === "completed_print" || type === "completed_maintenance" ? "completed" : "scheduled",
-    relatedPrintFile: String(calendarEventFileInputEl?.value || "").trim(),
-    material: String(calendarEventMaterialInputEl?.value || "").trim(),
-    estimatedPrintTime: Number.isFinite(Number(calendarEventEstimatedHoursInputEl?.value))
-      ? Number(calendarEventEstimatedHoursInputEl.value)
-      : null,
-    actualPrintTime: Number.isFinite(Number(calendarEventActualHoursInputEl?.value))
-      ? Number(calendarEventActualHoursInputEl.value)
-      : null,
-    materialUsedGrams: Number.isFinite(Number(calendarEventMaterialUsedInputEl?.value))
-      ? Number(calendarEventMaterialUsedInputEl.value)
-      : null,
-    machineName: String(calendarEventMachineInputEl?.value || "M600-PRO-1").trim() || "M600-PRO-1",
-    notes: String(calendarEventNotesInputEl?.value || "").trim(),
-    updatedAt: new Date().toISOString(),
-  };
-
-  if (editingCalendarEventId) {
-    const index = calendarEvents.findIndex((event) => event.id === editingCalendarEventId);
-    if (index >= 0) {
-      calendarEvents[index] = {
-        ...calendarEvents[index],
-        ...patch,
-      };
-      selectedCalendarEventId = editingCalendarEventId;
-    }
-  } else {
-    const created = createCalendarEvent(patch);
-    calendarEvents.push(created);
-    selectedCalendarEventId = created.id;
-  }
-
-  suggestMaintenanceEventsFromSchedule();
-  closeCalendarEventModal();
-  renderCalendarScreen();
-}
-
-function deleteCalendarEventFromModal() {
-  if (!editingCalendarEventId) {
-    return;
-  }
-
-  const index = calendarEvents.findIndex((event) => event.id === editingCalendarEventId);
-  if (index >= 0) {
-    calendarEvents.splice(index, 1);
-  }
-  if (selectedCalendarEventId === editingCalendarEventId) {
-    selectedCalendarEventId = null;
-  }
-  closeCalendarEventModal();
-  renderCalendarScreen();
-}
-
-function createCalendarEventChip(event) {
-  const button = document.createElement("button");
-  const typeMeta = CALENDAR_EVENT_TYPE_META[event.type] || CALENDAR_EVENT_TYPE_META.scheduled_print;
-  button.type = "button";
-  button.className = `calendar-event-chip ${typeMeta.className}`;
-  button.textContent = `${event.title} (${formatCalendarTime(event.startTime)})`;
-  button.setAttribute("draggable", "true");
-
-  if (selectedCalendarEventId === event.id) {
-    button.classList.add("is-selected");
-  }
-
-  button.addEventListener("click", () => {
-    markUserActivity();
-    selectedCalendarEventId = event.id;
-    renderCalendarScreen();
-  });
-
-  button.addEventListener("dblclick", () => {
-    markUserActivity();
-    openCalendarEventModal(event.id);
-  });
-
-  button.addEventListener("dragstart", () => {
-    activeCalendarDragEventId = event.id;
-    activeCalendarDragStartDateIso = event.startTime;
-  });
-
-  button.addEventListener("dragend", () => {
-    activeCalendarDragEventId = null;
-    activeCalendarDragStartDateIso = null;
-  });
-
-  return button;
-}
-
-function renderCalendarMonthOrWeekView({ isWeek = false } = {}) {
-  if (!calendarGridEl) {
-    return;
-  }
-
-  const grid = document.createElement("div");
-  grid.className = `calendar-grid-layout ${isWeek ? "week-view" : "month-view"}`;
-
-  const anchor = new Date(calendarAnchorDate);
-  const start = isWeek
-    ? getCalendarWeekStart(anchor)
-    : new Date(anchor.getFullYear(), anchor.getMonth(), 1);
-  if (!isWeek) {
-    start.setDate(start.getDate() - start.getDay());
-  }
-
-  const today = new Date();
-  const totalDays = isWeek ? 7 : 42;
-  for (let offset = 0; offset < totalDays; offset += 1) {
-    const dayDate = new Date(start);
-    dayDate.setDate(start.getDate() + offset);
-
-    const dayCell = document.createElement("div");
-    dayCell.className = "calendar-day-cell";
-    if (isSameCalendarDay(dayDate, today)) {
-      dayCell.classList.add("is-today");
-    }
-    if (!isWeek && dayDate.getMonth() !== anchor.getMonth()) {
-      dayCell.classList.add("is-outside-month");
-    }
-
-    dayCell.addEventListener("dblclick", () => {
-      markUserActivity();
-      openCalendarEventModal(null, dayDate);
-    });
-
-    dayCell.addEventListener("dragover", (domEvent) => {
-      domEvent.preventDefault();
-    });
-
-    dayCell.addEventListener("drop", () => {
-      if (!activeCalendarDragEventId || !activeCalendarDragStartDateIso) {
-        return;
-      }
-
-      const draggedEvent = calendarEvents.find((entry) => entry.id === activeCalendarDragEventId);
-      if (!draggedEvent) {
-        return;
-      }
-
-      const originalStart = new Date(activeCalendarDragStartDateIso);
-      const originalEnd = new Date(draggedEvent.endTime);
-      const durationMs = Math.max(originalEnd.getTime() - originalStart.getTime(), 30 * 60 * 1000);
-      const nextStart = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate(), originalStart.getHours(), originalStart.getMinutes(), 0, 0);
-      const nextEnd = new Date(nextStart.getTime() + durationMs);
-
-      draggedEvent.startTime = nextStart.toISOString();
-      draggedEvent.endTime = nextEnd.toISOString();
-      draggedEvent.updatedAt = new Date().toISOString();
-      selectedCalendarEventId = draggedEvent.id;
-      renderCalendarScreen();
-    });
-
-    const header = document.createElement("div");
-    header.className = "calendar-day-header";
-    header.innerHTML = `<span>${dayDate.toLocaleDateString([], { weekday: "short" })}</span><span>${dayDate.getDate()}</span>`;
-    dayCell.appendChild(header);
-
-    const dayEvents = getEventsForCalendarDay(dayDate);
-    for (const event of dayEvents.slice(0, 4)) {
-      dayCell.appendChild(createCalendarEventChip(event));
-    }
-
-    if (dayEvents.length > 4) {
-      const overflow = document.createElement("p");
-      overflow.className = "calendar-empty-state";
-      overflow.textContent = `+${dayEvents.length - 4} more`;
-      dayCell.appendChild(overflow);
-    }
-
-    grid.appendChild(dayCell);
-  }
-
-  calendarGridEl.appendChild(grid);
-}
-
-function renderCalendarDayView() {
-  if (!calendarGridEl) {
-    return;
-  }
-
-  const wrapper = document.createElement("div");
-  wrapper.className = "calendar-grid-layout day-view";
-  const events = getEventsForCalendarDay(new Date(calendarAnchorDate));
-  if (!events.length) {
-    wrapper.innerHTML = "<p class=\"calendar-empty-state\">No events for this day. Double-click to add one.</p>";
-  } else {
-    for (const event of events) {
-      wrapper.appendChild(createCalendarEventChip(event));
-    }
-  }
-
-  calendarGridEl.appendChild(wrapper);
-}
-
-function renderCalendarAgendaView() {
-  if (!calendarGridEl) {
-    return;
-  }
-
-  const wrapper = document.createElement("div");
-  wrapper.className = "calendar-grid-layout agenda-view";
-  const events = getCalendarEventsSorted();
-  if (!events.length) {
-    wrapper.innerHTML = "<p class=\"calendar-empty-state\">No events planned.</p>";
-  } else {
-    for (const event of events) {
-      wrapper.appendChild(createCalendarEventChip(event));
-    }
-  }
-
-  calendarGridEl.appendChild(wrapper);
-}
-
-function renderCalendarScreen() {
-  if (!calendarScreenEl || !calendarGridEl) {
-    return;
-  }
-
-  if (calendarRangeLabelEl) {
-    calendarRangeLabelEl.textContent = buildCalendarRangeLabel();
-  }
-
-  const viewButtons = [calendarViewMonthEl, calendarViewWeekEl, calendarViewDayEl, calendarViewAgendaEl];
-  for (const buttonEl of viewButtons) {
-    if (!buttonEl) {
-      continue;
-    }
-    const isActive = buttonEl.dataset.view === calendarCurrentView;
-    buttonEl.setAttribute("aria-pressed", isActive ? "true" : "false");
-  }
-
-  clearCalendarGrid();
-  if (calendarCurrentView === "month") {
-    renderCalendarMonthOrWeekView({ isWeek: false });
-  } else if (calendarCurrentView === "week") {
-    renderCalendarMonthOrWeekView({ isWeek: true });
-  } else if (calendarCurrentView === "day") {
-    renderCalendarDayView();
-  } else {
-    renderCalendarAgendaView();
-  }
-
-  renderCalendarEventDetails();
-}
-
-function setCalendarScreenOpen(isOpen) {
-  isCalendarScreenOpen = Boolean(isOpen);
-
-  if (!calendarScreenEl) {
-    return;
-  }
-
-  calendarScreenEl.hidden = !isCalendarScreenOpen;
-  calendarScreenEl.setAttribute("aria-hidden", isCalendarScreenOpen ? "false" : "true");
-
-  if (topbarCalendarToggleEl) {
-    topbarCalendarToggleEl.setAttribute("aria-pressed", isCalendarScreenOpen ? "true" : "false");
-    topbarCalendarToggleEl.classList.toggle("is-active", isCalendarScreenOpen);
-  }
-
-  if (isCalendarScreenOpen) {
-    setNotificationCenterOpen(false);
-    if (isControlsPanelOpen) {
-      setControlsPanelOpen(false);
-    }
-    if (isCloudModelMenuOpen) {
-      setCloudModelMenuOpen(false, { skipResetOnClose: true });
-    }
-    if (isMaterialsMenuOpen) {
-      setMaterialsMenuOpen(false, { skipBottomNavUpdate: true });
-    }
-    closeHotspotContextPanel();
-    setTopbarSettingsMenuOpen(false);
-    setNotificationHistoryScreenOpen(false);
-    renderCalendarScreen();
-  }
-}
-
 function getAdvancedRequiredControls() {
   return [
     settingsFixturesButtonEl,
@@ -3291,7 +1341,7 @@ function setAdvancedTimeoutWarningOpen(isOpen, remainingSeconds = ADVANCED_MODE_
 }
 
 function returnToViewerMainScreen() {
-  if (isCalendarScreenOpen) {
+  if (calendar.isScreenOpen) {
     setCalendarScreenOpen(false);
   }
 }
@@ -3951,418 +2001,9 @@ function createViewCubeLabelTexture(label) {
   return texture;
 }
 
-function createViewCubeController() {
-  if (!viewCubeOverlayEl || !viewCubeCanvasEl) {
-    return null;
-  }
 
-  const cubeRenderer = new THREE.WebGLRenderer({
-    canvas: viewCubeCanvasEl,
-    antialias: true,
-    alpha: true,
-    powerPreference: "low-power",
-  });
-  cubeRenderer.setClearColor(0x000000, 0);
-  cubeRenderer.outputColorSpace = THREE.SRGBColorSpace;
-  cubeRenderer.setPixelRatio(Math.min(window.devicePixelRatio, VIEW_CUBE_RENDER_PIXEL_RATIO));
 
-  const cubeScene = new THREE.Scene();
-  const cubeCamera = new THREE.OrthographicCamera(-2, 2, 2, -2, 0.1, 20);
-  cubeCamera.position.set(0, 0, 6);
-  cubeCamera.lookAt(0, 0, 0);
 
-  const ambient = new THREE.AmbientLight(0xffffff, 0.85);
-  cubeScene.add(ambient);
-
-  const keyLight = new THREE.DirectionalLight(0xffffff, 0.9);
-  keyLight.position.set(2.1, 1.5, 3.1);
-  cubeScene.add(keyLight);
-
-  const cubeRoot = new THREE.Group();
-  cubeScene.add(cubeRoot);
-
-  const cubeMesh = new THREE.Mesh(
-    new THREE.BoxGeometry(1.3, 1.3, 1.3),
-    new THREE.MeshStandardMaterial({
-      color: 0x5878a0,
-      roughness: 0.36,
-      metalness: 0.12,
-      transparent: true,
-      opacity: 0.92,
-    }),
-  );
-  cubeRoot.add(cubeMesh);
-
-  const cubeEdges = new THREE.LineSegments(
-    new THREE.EdgesGeometry(cubeMesh.geometry),
-    new THREE.LineBasicMaterial({ color: 0xe4f4ff, transparent: true, opacity: 0.94 }),
-  );
-  cubeRoot.add(cubeEdges);
-
-  const faceDefinitions = [
-    { label: "Front", direction: new THREE.Vector3(0, 1, 0) },
-    { label: "Back", direction: new THREE.Vector3(0, -1, 0) },
-    { label: "Left", direction: new THREE.Vector3(-1, 0, 0) },
-    { label: "Right", direction: new THREE.Vector3(1, 0, 0) },
-    { label: "Top", direction: new THREE.Vector3(0, 0, 1) },
-    { label: "Bottom", direction: new THREE.Vector3(0, 0, -1) },
-  ];
-
-  const pickableObjects = [];
-
-  const facePickMaterial = new THREE.MeshBasicMaterial({
-    transparent: true,
-    opacity: 0.01,
-    side: THREE.DoubleSide,
-    depthWrite: false,
-  });
-
-  const edgePickMaterial = new THREE.MeshBasicMaterial({
-    color: 0x9ec4eb,
-    transparent: true,
-    opacity: 0.16,
-    depthWrite: false,
-  });
-
-  const cornerPickMaterial = new THREE.MeshBasicMaterial({
-    color: 0xc7e2ff,
-    transparent: true,
-    opacity: 0.23,
-    depthWrite: false,
-  });
-
-  const zAxis = new THREE.Vector3(0, 0, 1);
-  for (const face of faceDefinitions) {
-    const labelTexture = createViewCubeLabelTexture(face.label);
-    if (labelTexture) {
-      const labelMesh = new THREE.Mesh(
-        new THREE.PlaneGeometry(0.76, 0.28),
-        new THREE.MeshBasicMaterial({
-          map: labelTexture,
-          transparent: true,
-          depthWrite: false,
-        }),
-      );
-      labelMesh.position.copy(face.direction).multiplyScalar(0.78);
-      labelMesh.quaternion.setFromUnitVectors(zAxis, face.direction);
-      cubeRoot.add(labelMesh);
-    }
-
-    const facePick = new THREE.Mesh(new THREE.PlaneGeometry(1.16, 1.16), facePickMaterial.clone());
-    facePick.position.copy(face.direction).multiplyScalar(0.68);
-    facePick.quaternion.setFromUnitVectors(zAxis, face.direction);
-    facePick.userData.direction = face.direction.clone();
-    facePick.userData.type = "face";
-    cubeRoot.add(facePick);
-    pickableObjects.push(facePick);
-  }
-
-  const edgeCenters = [
-    new THREE.Vector3(1, 1, 0),
-    new THREE.Vector3(1, -1, 0),
-    new THREE.Vector3(-1, 1, 0),
-    new THREE.Vector3(-1, -1, 0),
-    new THREE.Vector3(1, 0, 1),
-    new THREE.Vector3(1, 0, -1),
-    new THREE.Vector3(-1, 0, 1),
-    new THREE.Vector3(-1, 0, -1),
-    new THREE.Vector3(0, 1, 1),
-    new THREE.Vector3(0, 1, -1),
-    new THREE.Vector3(0, -1, 1),
-    new THREE.Vector3(0, -1, -1),
-  ];
-
-  for (const edgeCenter of edgeCenters) {
-    const edgePick = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 12), edgePickMaterial.clone());
-    edgePick.position.copy(edgeCenter).multiplyScalar(0.7);
-    edgePick.userData.direction = edgeCenter.clone().normalize();
-    edgePick.userData.type = "edge";
-    cubeRoot.add(edgePick);
-    pickableObjects.push(edgePick);
-  }
-
-  for (const xSign of [-1, 1]) {
-    for (const ySign of [-1, 1]) {
-      for (const zSign of [-1, 1]) {
-        const corner = new THREE.Vector3(xSign, ySign, zSign);
-        const cornerPick = new THREE.Mesh(new THREE.SphereGeometry(0.19, 12, 12), cornerPickMaterial.clone());
-        cornerPick.position.copy(corner).multiplyScalar(0.71);
-        cornerPick.userData.direction = corner.clone().normalize();
-        cornerPick.userData.type = "corner";
-        cubeRoot.add(cornerPick);
-        pickableObjects.push(cornerPick);
-      }
-    }
-  }
-
-  const raycaster = new THREE.Raycaster();
-  const pointerNdc = new THREE.Vector2();
-  const inverseMainCameraQuat = new THREE.Quaternion();
-  const lastMainCameraQuat = new THREE.Quaternion();
-  let hasRendered = false;
-  let forceRender = true;
-
-  const resize = () => {
-    const rect = viewCubeCanvasEl.getBoundingClientRect();
-    const width = Math.max(1, Math.round(rect.width));
-    const height = Math.max(1, Math.round(rect.height));
-
-    cubeRenderer.setPixelRatio(Math.min(window.devicePixelRatio, VIEW_CUBE_RENDER_PIXEL_RATIO));
-    cubeRenderer.setSize(width, height, false);
-
-    const aspect = width / Math.max(height, 1);
-    const halfSpan = 1.85;
-    cubeCamera.left = -halfSpan * aspect;
-    cubeCamera.right = halfSpan * aspect;
-    cubeCamera.top = halfSpan;
-    cubeCamera.bottom = -halfSpan;
-    cubeCamera.updateProjectionMatrix();
-    forceRender = true;
-  };
-
-  const getPointerDirection = (event) => {
-    const rect = viewCubeCanvasEl.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) {
-      return null;
-    }
-
-    pointerNdc.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-    pointerNdc.y = -((((event.clientY - rect.top) / rect.height) * 2) - 1);
-    raycaster.setFromCamera(pointerNdc, cubeCamera);
-    const hits = raycaster.intersectObjects(pickableObjects, false);
-    const direction = hits[0]?.object?.userData?.direction;
-    return direction ? direction.clone() : null;
-  };
-
-  const navigateDirection = (direction) => {
-    const targetState = buildViewCubeCameraState(direction);
-    beginCameraTransition(targetState, VIEW_CUBE_TRANSITION_DURATION_MS, {
-      distanceLock: null,
-    });
-  };
-
-  viewCubeCanvasEl.addEventListener("pointerdown", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-  });
-
-  viewCubeCanvasEl.addEventListener("click", (event) => {
-    const direction = getPointerDirection(event);
-    if (!direction) {
-      return;
-    }
-
-    markUserActivity();
-    navigateDirection(direction);
-    forceRender = true;
-  });
-
-  viewCubeCanvasEl.addEventListener("mousemove", (event) => {
-    const direction = getPointerDirection(event);
-    viewCubeCanvasEl.style.cursor = direction ? "pointer" : "default";
-  });
-
-  viewCubeCanvasEl.addEventListener("mouseleave", () => {
-    viewCubeCanvasEl.style.cursor = "default";
-  });
-
-  if (viewCubeHomeButtonEl) {
-    viewCubeHomeButtonEl.addEventListener("click", () => {
-      markUserActivity();
-      resetCameraToRobotView({ smooth: true });
-      forceRender = true;
-    });
-  }
-
-  resize();
-
-  return {
-    onResize: resize,
-    update: () => {
-      inverseMainCameraQuat.copy(camera.quaternion).invert();
-      cubeRoot.quaternion.copy(inverseMainCameraQuat);
-
-      const quaternionChanged = !hasRendered
-        || (1 - Math.abs(lastMainCameraQuat.dot(camera.quaternion))) > 1e-7;
-      if (!quaternionChanged && !forceRender) {
-        return;
-      }
-
-      cubeRenderer.render(cubeScene, cubeCamera);
-      lastMainCameraQuat.copy(camera.quaternion);
-      hasRendered = true;
-      forceRender = false;
-    },
-  };
-}
-
-function createFeederPreviewController() {
-  if (!hotspotFeederCameraViewportEl) {
-    return null;
-  }
-
-  const previewCanvas = document.createElement("canvas");
-  previewCanvas.className = "feeder-camera-canvas";
-
-  let previewRenderer = null;
-  try {
-    const contextOptions = {
-      antialias: true,
-      alpha: false,
-      powerPreference: "high-performance",
-    };
-    const previewContext = previewCanvas.getContext("webgl2", contextOptions)
-      || previewCanvas.getContext("webgl", contextOptions);
-    if (!previewContext) {
-      throw new Error("WebGL not available for feeder preview canvas");
-    }
-
-    previewRenderer = new THREE.WebGLRenderer({
-      canvas: previewCanvas,
-      context: previewContext,
-      antialias: true,
-      alpha: false,
-      powerPreference: "high-performance",
-    });
-  } catch (error) {
-    setFeederCameraPreviewPlaceholder("Feeder Camera");
-    return null;
-  }
-
-  previewRenderer.setClearColor(0x141312, 1);
-  previewRenderer.outputColorSpace = THREE.SRGBColorSpace;
-  previewRenderer.toneMapping = THREE.ACESFilmicToneMapping;
-  previewRenderer.toneMappingExposure = 1.35;
-  previewRenderer.shadowMap.enabled = false;
-  previewRenderer.setPixelRatio(Math.min(window.devicePixelRatio, FEEDER_PREVIEW_RENDER_PIXEL_RATIO));
-
-  const previewCamera = new THREE.PerspectiveCamera(20, 1, 0.02, 80);
-  previewCamera.layers.disableAll();
-  previewCamera.layers.enable(FEEDER_PREVIEW_WHEEL_LAYER);
-
-  const lastPosition = new THREE.Vector3();
-  const lastTarget = new THREE.Vector3();
-  let previewLayerBoundRoot = null;
-  let previewLightLayersBound = false;
-
-  const syncPreviewWheelLayers = () => {
-    if (!previewLightLayersBound) {
-      // Keep preview isolated to wheel layer while ensuring lights still affect it.
-      scene.traverse((object) => {
-        if (object?.isLight) {
-          object.layers.enable(FEEDER_PREVIEW_WHEEL_LAYER);
-        }
-      });
-      previewLightLayersBound = true;
-    }
-
-    if (!robotRoot || previewLayerBoundRoot === robotRoot) {
-      return;
-    }
-
-    previewLayerBoundRoot = robotRoot;
-    let configuredAny = false;
-    for (const linkName of [LEFT_FEEDER_WHEEL_LINK, RIGHT_FEEDER_WHEEL_LINK, CENTRAL_FEEDER_WHEEL_LINK]) {
-      const linkObject = robotRoot.getObjectByName(`link:${linkName}`);
-      if (!linkObject) {
-        continue;
-      }
-
-      configuredAny = true;
-      linkObject.traverse((object) => {
-        object.layers.enable(FEEDER_PREVIEW_WHEEL_LAYER);
-      });
-    }
-
-    if (!configuredAny) {
-      // Fallback for unexpected models without feeder wheel links.
-      previewCamera.layers.enable(0);
-    } else {
-      previewCamera.layers.disable(0);
-      previewCamera.layers.enable(FEEDER_PREVIEW_WHEEL_LAYER);
-    }
-  };
-
-  let hasLastPose = false;
-  let forceRender = true;
-  let lastRenderMs = -Infinity;
-
-  const resize = () => {
-    const rect = hotspotFeederCameraViewportEl.getBoundingClientRect();
-    const width = Math.max(1, Math.round(rect.width));
-    const height = Math.max(1, Math.round(rect.height));
-
-    previewRenderer.setPixelRatio(Math.min(window.devicePixelRatio, FEEDER_PREVIEW_RENDER_PIXEL_RATIO));
-    previewRenderer.setSize(width, height, false);
-
-    previewCamera.aspect = width / Math.max(height, 1);
-    previewCamera.updateProjectionMatrix();
-    forceRender = true;
-  };
-
-  const onPanelStateChange = (panelId) => {
-    if (panelId === HOTSPOT_PANEL_MATERIALS_ID) {
-      resize();
-      forceRender = true;
-    }
-  };
-
-  const update = (nowMs = performance.now()) => {
-    if (activeHotspotPanelId !== HOTSPOT_PANEL_MATERIALS_ID || !robotRoot) {
-      return;
-    }
-
-    syncPreviewWheelLayers();
-
-    const wheelsAnimating = Boolean(feederDriveSide && feederDriveVertical);
-
-    if (!forceRender && (nowMs - lastRenderMs) < FEEDER_PREVIEW_MIN_FRAME_MS) {
-      return;
-    }
-
-    if (previewCanvas.width <= 2 || previewCanvas.height <= 2) {
-      resize();
-    }
-
-    const previewState = buildFeederPanelPreviewCameraState();
-    if (!previewState) {
-      return;
-    }
-
-    previewCamera.position.copy(previewState.position);
-    previewCamera.up.copy(previewState.up || new THREE.Vector3(0, 0, 1));
-    previewCamera.near = previewState.near ?? 0.02;
-    previewCamera.far = previewState.far ?? 80;
-    previewCamera.lookAt(previewState.target);
-    previewCamera.updateProjectionMatrix();
-    previewCamera.updateMatrixWorld();
-
-    const poseChanged = !hasLastPose
-      || lastPosition.distanceToSquared(previewCamera.position) > 1e-8
-      || lastTarget.distanceToSquared(previewState.target) > 1e-8;
-
-    if (!wheelsAnimating && !poseChanged && !forceRender && (nowMs - lastRenderMs) < (FEEDER_PREVIEW_MIN_FRAME_MS * 2)) {
-      return;
-    }
-
-    previewRenderer.render(scene, previewCamera);
-
-    lastPosition.copy(previewCamera.position);
-    lastTarget.copy(previewState.target);
-    hasLastPose = true;
-    forceRender = false;
-    lastRenderMs = nowMs;
-  };
-
-  setFeederCameraPreviewContent(previewCanvas);
-  resize();
-
-  return {
-    onResize: resize,
-    onPanelStateChange,
-    update,
-  };
-}
 
 function beginCameraTransition(targetState, durationMs = RESET_VIEW_TRANSITION_MS, options = {}) {
   const distanceLock = Number.isFinite(options.distanceLock)
@@ -6862,7 +4503,7 @@ function buildSpoolAssemblyPickAreas() {
 }
 
 function resolveClickedSpoolAssembly(event) {
-  if (!event || !robotRoot || cloudStlDragState) {
+  if (!event || !robotRoot || getCloudStlDragState()) {
     return null;
   }
 
@@ -7356,7 +4997,7 @@ function setCloudStlStatus(text) {
 function hasLoadedCloudFileForPrint() {
   const selectedFileName = String(selectedCloudLibraryFileName || cloudStlFileSelectEl?.value || "").trim();
   const loadedFileName = String(loadedCloudLibraryFileName || "").trim();
-  return Boolean(selectedFileName && loadedFileName && selectedFileName === loadedFileName && cloudStlObject);
+  return Boolean(selectedFileName && loadedFileName && selectedFileName === loadedFileName && getCloudStlObject());
 }
 
 function highlightFilesSelectionArea() {
@@ -7480,11 +5121,11 @@ function updateCloudControlVisibility() {
 }
 
 function getCloudPointLayerSimulationMeta() {
-  if (!cloudPointObject || !cloudPointObject.userData) {
+  if (!getCloudPointObject() || !getCloudPointObject().userData) {
     return null;
   }
 
-  return cloudPointObject.userData.layerSimMeta || null;
+  return getCloudPointObject().userData.layerSimMeta || null;
 }
 
 function setCloudPrintSimulationPlaying(isPlaying) {
@@ -7497,7 +5138,7 @@ function updateCloudPrintSimulationControls() {
   const selectedGlobalStl = cloudStlFileSelectEl
     ? String(cloudStlFileSelectEl.value || "").trim()
     : "";
-  const canStartFromStl = Boolean(cloudStlObject) || Boolean(selectedGlobalStl);
+  const canStartFromStl = Boolean(getCloudStlObject()) || Boolean(selectedGlobalStl);
   const canPrint = hasLayerMeta || canStartFromStl;
 
   if (cloudPrintSimPlayEl) {
@@ -7587,23 +5228,23 @@ function getCloudPrintSimVisibleCount(meta, progress) {
 
 function applyCloudPrintSimulationVisibility() {
   const meta = getCloudPointLayerSimulationMeta();
-  if (!meta || !cloudPointObject) {
+  if (!meta || !getCloudPointObject()) {
     return;
   }
 
   const visibleCount = getCloudPrintSimVisibleCount(meta, cloudPrintSimProgress);
 
-  if (cloudPointObject.isPoints && cloudPointObject.geometry) {
-    cloudPointObject.geometry.setDrawRange(0, visibleCount);
+  if (getCloudPointObject().isPoints && getCloudPointObject().geometry) {
+    getCloudPointObject().geometry.setDrawRange(0, visibleCount);
     return;
   }
 
-  if (cloudPointObject.isInstancedMesh) {
-    cloudPointObject.count = visibleCount;
+  if (getCloudPointObject().isInstancedMesh) {
+    getCloudPointObject().count = visibleCount;
     return;
   }
 
-  cloudPointObject.traverse((node) => {
+  getCloudPointObject().traverse((node) => {
     if (node.isInstancedMesh) {
       node.count = visibleCount;
     }
@@ -8377,14 +6018,10 @@ let bridgedSliceData = null;
 // so a reorient + re-slice actually prints the NEW geometry. See startDockedPrint.
 let bridgedToolpathFresh = false;
 
-window.addEventListener("message", (event) => {
-  if (!isTrustedSlicerMessage(event)) {
-    return;
-  }
-  const data = event && event.data;
-  if (!data || data.source !== "meltio-slicer" || data.type !== "slice-data") {
-    return;
-  }
+// Handle a fresh slice pushed by the embedded slicer. Invoked by the unified
+// message dispatcher (defined below, near applyChamberAtmosphere) once the
+// slicer origin gate has passed, so `data` is already trusted here.
+function handleSliceData(data) {
   bridgedSliceData = {
     toolpath: data.toolpath || null,
     thermal: data.thermal || null,
@@ -8442,13 +6079,13 @@ window.addEventListener("message", (event) => {
   // Live-match the preview to where the operator just placed the part on the
   // slicer plate (only while a preview is shown, not during a docked print —
   // that flow positions the gantry itself).
-  if (cloudStlObject && !isDockedPrintActive) {
+  if (getCloudStlObject() && !isDockedPrintActive) {
     const placement = getSlicerPlacementWorldOffset();
     if (placement) {
       alignCloudStlUnderHeadViaXY(0.6, placement);
     }
   }
-});
+}
 
 // Reflect the sliced part's exact orientation/placement in the "main model": when
 // a real toolpath is prepared and no print is running, show the placed slicer
@@ -9336,7 +6973,7 @@ function openStartPrintPreview(fileName) {
   // Reframe onto the print position (nozzle tip / the placed part) so the
   // operator sees where the part will sit while printing.
   const focus = (typeof getNozzleTipWorldPoint === "function" ? getNozzleTipWorldPoint() : null)
-    || (cloudStlObject ? getLinkWorldCenter(HEAD_LINK) : null);
+    || (getCloudStlObject() ? getLinkWorldCenter(HEAD_LINK) : null);
   const cameraState = buildFilesMenuCameraState(focus);
   if (cameraState) {
     beginCameraTransition(cameraState, FRONT_DOOR_BUTTON_CAMERA_DURATION_MS, { distanceLock: null });
@@ -9401,21 +7038,13 @@ if (slicerLoadToViewerEl) {
 // us to run the print (the viewer owns the sim + material gate). It also signals
 // when the dock bar is present, so we hand our own Start-print button over to it.
 let slicerDockReady = false;
-window.addEventListener("message", (event) => {
-  if (!isTrustedSlicerMessage(event)) {
-    return;
-  }
-  const data = event && event.data;
-  if (!data || data.source !== "meltio-slicer") {
-    return;
-  }
-  if (data.type === "start-print") {
-    runStartPrintAction();
-  } else if (data.type === "dock-ready") {
-    slicerDockReady = true;
-    document.body.classList.add("slicer-dock-ready");
-  }
-});
+// slice-data / start-print / dock-ready (slicer) and the M600 O2 bridge are all
+// routed by the single message dispatcher defined near applyChamberAtmosphere
+// (see handleSliceData / handleSlicerDockReady).
+function handleSlicerDockReady() {
+  slicerDockReady = true;
+  document.body.classList.add("slicer-dock-ready");
+}
 
 window.addEventListener("resize", () => {
   if (isSlicerMenuOpen) {
@@ -9485,51 +7114,6 @@ function setCloudModelMenuOpen(isOpen, options = {}) {
   updateBottomNavState();
 }
 
-function resolveCloudStlPlacementSide(sideValue) {
-  const normalized = typeof sideValue === "string"
-    ? sideValue.trim().toLowerCase()
-    : "";
-
-  return Object.prototype.hasOwnProperty.call(CLOUD_STL_PLACEMENT_SIDES, normalized)
-    ? normalized
-    : "top";
-}
-
-function getCloudStlPlacementConfig(sideValue = cloudStlPlacementSide) {
-  const sideKey = resolveCloudStlPlacementSide(sideValue);
-  return CLOUD_STL_PLACEMENT_SIDES[sideKey] || CLOUD_STL_PLACEMENT_SIDES.top;
-}
-
-function applyCloudStlSideRotation() {
-  if (!cloudStlObject) {
-    return;
-  }
-
-  const sideConfig = getCloudStlPlacementConfig(cloudStlPlacementSide);
-  const zRotation = new THREE.Quaternion().setFromAxisAngle(
-    new THREE.Vector3(0, 0, 1),
-    THREE.MathUtils.degToRad(sideConfig.zDeg),
-  );
-
-  cloudStlObject.quaternion.copy(cloudStlBaseQuaternion).multiply(zRotation);
-  cloudStlObject.updateMatrixWorld(true);
-}
-
-function applyCloudPointStandaloneSideRotation() {
-  if (!cloudPointObject || cloudStlObject) {
-    return;
-  }
-
-  const sideConfig = getCloudStlPlacementConfig(cloudStlPlacementSide);
-  const zRotation = new THREE.Quaternion().setFromAxisAngle(
-    new THREE.Vector3(0, 0, 1),
-    THREE.MathUtils.degToRad(sideConfig.zDeg),
-  );
-
-  cloudPointObject.quaternion.copy(zRotation);
-  cloudPointObject.updateMatrixWorld(true);
-}
-
 function getCanvasPointerNdc(event, target = cloudStlDragPointerNdc) {
   if (!canvas || !event) {
     return null;
@@ -9546,186 +7130,6 @@ function getCanvasPointerNdc(event, target = cloudStlDragPointerNdc) {
   );
 
   return target;
-}
-
-function tryStartCloudStlDrag(event) {
-  if (!event || event.button !== 0 || !cloudStlObject) {
-    return false;
-  }
-
-  if (typeof event.isPrimary === "boolean" && !event.isPrimary) {
-    return false;
-  }
-
-  if (cloudStlDragState) {
-    return false;
-  }
-
-  const pointerNdc = getCanvasPointerNdc(event);
-  if (!pointerNdc) {
-    return false;
-  }
-
-  cloudStlDragRaycaster.setFromCamera(pointerNdc, camera);
-  const hits = cloudStlDragRaycaster.intersectObject(cloudStlObject, true);
-  let hitPoint = hits.length ? hits[0].point : null;
-  if (!hitPoint) {
-    cloudStlObject.updateWorldMatrix(true, true);
-    const stlBounds = new THREE.Box3().setFromObject(cloudStlObject);
-    if (!stlBounds.isEmpty()) {
-      const boxHit = cloudStlDragRaycaster.ray.intersectBox(stlBounds, cloudStlRelocateHitWorld);
-      if (boxHit) {
-        hitPoint = cloudStlRelocateHitWorld;
-      }
-    }
-  }
-
-  if (!hitPoint) {
-    cloudStlObject.updateWorldMatrix(true, true);
-    const stlBounds = new THREE.Box3().setFromObject(cloudStlObject);
-    if (!stlBounds.isEmpty()) {
-      hitPoint = stlBounds.getCenter(cloudStlDragStartWorld);
-    }
-  }
-
-  if (!hitPoint) {
-    return false;
-  }
-
-  cloudStlDragStartWorld.copy(hitPoint);
-  cloudStlDragPlane.setFromNormalAndCoplanarPoint(new THREE.Vector3(0, 0, 1), cloudStlDragStartWorld);
-
-  const ejeXState = getJointStateByName(EJE_X_JOINT);
-  const ejeYState = getJointStateByName(EJE_Y_JOINT);
-  cloudStlObject.updateWorldMatrix(true, true);
-  const stlBounds = new THREE.Box3().setFromObject(cloudStlObject);
-  const startCenterWorld = !stlBounds.isEmpty()
-    ? stlBounds.getCenter(new THREE.Vector3())
-    : cloudStlDragStartWorld.clone();
-  const hitOffsetWorld = startCenterWorld.clone().sub(cloudStlDragStartWorld);
-
-  cloudStlDragState = {
-    attached: true,
-    startCenterWorld,
-    startLocalPosition: cloudStlObject.position.clone(),
-    hitOffsetWorld,
-    startXValue: (ejeXState && ejeXState.kind === "linear") ? ejeXState.value : null,
-    startYValue: (ejeYState && ejeYState.kind === "linear") ? ejeYState.value : null,
-  };
-
-  controls.enabled = false;
-  setCloudStlStatus("attached to cursor; move mouse and click to place");
-  markUserActivity();
-  beginInteractionQuality();
-  event.preventDefault();
-  event.stopPropagation();
-  return true;
-}
-
-function updateCloudStlDrag(event) {
-  if (!cloudStlDragState || !event) {
-    return false;
-  }
-
-  const pointerNdc = getCanvasPointerNdc(event);
-  if (!pointerNdc) {
-    return false;
-  }
-
-  cloudStlDragRaycaster.setFromCamera(pointerNdc, camera);
-  const hit = cloudStlDragRaycaster.ray.intersectPlane(cloudStlDragPlane, cloudStlDragCurrentWorld);
-  if (!hit) {
-    return false;
-  }
-
-  const desiredCenter = cloudStlDragCurrentWorld.clone().add(
-    cloudStlDragState.hitOffsetWorld || new THREE.Vector3(),
-  );
-
-  relocateCloudStlToWorldXY(desiredCenter.x, desiredCenter.y, {
-    updateStatus: false,
-    syncAxes: false,
-  });
-  setCloudStlStatus("attached to cursor; click to place");
-  markUserActivity();
-  beginInteractionQuality();
-  event.preventDefault();
-  return true;
-}
-
-function tryPlaceCloudStlDrag(event) {
-  if (!cloudStlDragState || !event || event.button !== 0) {
-    return false;
-  }
-
-  let targetWorldPoint = null;
-  const pointerNdc = getCanvasPointerNdc(event);
-  if (pointerNdc) {
-    cloudStlDragRaycaster.setFromCamera(pointerNdc, camera);
-    const hit = cloudStlDragRaycaster.ray.intersectPlane(cloudStlDragPlane, cloudStlDragCurrentWorld);
-    if (hit) {
-      targetWorldPoint = cloudStlDragCurrentWorld;
-    }
-  }
-
-  if (!targetWorldPoint && cloudStlObject) {
-    cloudStlObject.updateWorldMatrix(true, true);
-    const stlBounds = new THREE.Box3().setFromObject(cloudStlObject);
-    if (!stlBounds.isEmpty()) {
-      targetWorldPoint = stlBounds.getCenter(cloudStlDragCurrentWorld);
-    }
-  }
-
-  if (!targetWorldPoint) {
-    return false;
-  }
-
-  const desiredCenter = targetWorldPoint.clone().add(
-    cloudStlDragState.hitOffsetWorld || new THREE.Vector3(),
-  );
-
-  const previewPlaced = relocateCloudStlToWorldXY(desiredCenter.x, desiredCenter.y, {
-    updateStatus: false,
-    syncAxes: false,
-  });
-  if (!previewPlaced) {
-    return false;
-  }
-
-  cloudStlObject.updateWorldMatrix(true, true);
-  const placedBounds = new THREE.Box3().setFromObject(cloudStlObject);
-  const placedCenter = !placedBounds.isEmpty()
-    ? placedBounds.getCenter(new THREE.Vector3())
-    : targetWorldPoint.clone();
-
-  const placedXmm = placedCenter.x * 1000;
-  const placedYmm = placedCenter.y * 1000;
-  setCloudStlStatus(`placed on print area (x ${placedXmm.toFixed(1)} mm, y ${placedYmm.toFixed(1)} mm)`);
-
-  stopCloudStlDrag(null, { silent: true });
-  alignCloudStlUnderHeadViaXY(CLOUD_STL_DROP_ALIGN_DURATION_SEC);
-  markUserActivity();
-  beginInteractionQuality();
-  event.preventDefault();
-  event.stopPropagation();
-  return true;
-}
-
-function stopCloudStlDrag(pointerId = null, options = {}) {
-  if (!cloudStlDragState) {
-    return false;
-  }
-
-  const { silent = false } = options;
-  cloudStlDragState = null;
-
-  controls.enabled = true;
-
-  if (!silent) {
-    setCloudStlStatus("placement canceled");
-  }
-
-  return true;
 }
 
 function clearPalpadorSweepTimeout() {
@@ -9752,444 +7156,6 @@ function disposeMaterialWithMaps(material) {
   }
 }
 
-function clearCloudStlObject() {
-  stopCloudStlDrag(null, { silent: true });
-  // Return the bed to where it was before any print simulation.
-  teardownPrintBedSimulation();
-  // Drop any slicer-solid preview so the next loaded part starts from the cloud
-  // STL (not a stale hidden STL / leftover preview).
-  if (printSim && typeof printSim.setSolidPreview === "function") {
-    printSim.setSolidPreview(false);
-  }
-  printHideStl = false;
-
-  if (!cloudStlObject) {
-    if (loadedCloudLibraryFileName) {
-      loadedCloudLibraryFileName = "";
-      if (cloudFileLibraryEl) {
-        renderCloudFileLibrary();
-      }
-      updateBottomNavState();
-    }
-    return;
-  }
-
-  if (cloudStlObject.parent) {
-    cloudStlObject.parent.remove(cloudStlObject);
-  }
-
-  if (cloudStlObject.geometry) {
-    cloudStlObject.geometry.dispose();
-  }
-
-  if (Array.isArray(cloudStlObject.material)) {
-    for (const material of cloudStlObject.material) {
-      disposeMaterialWithMaps(material);
-    }
-  } else {
-    disposeMaterialWithMaps(cloudStlObject.material);
-  }
-
-  cloudStlObject = null;
-  cloudStlBaseQuaternion.identity();
-
-  if (loadedCloudLibraryFileName) {
-    loadedCloudLibraryFileName = "";
-    if (cloudFileLibraryEl) {
-      renderCloudFileLibrary();
-    }
-    updateBottomNavState();
-  }
-}
-
-function clearCloudPointObject() {
-  if (!cloudPointObject) {
-    cloudPointSpriteMaterial = null;
-    setCloudPrintSimulationPlaying(false);
-    setCloudPrintSimulationProgress(0);
-    return;
-  }
-
-  if (cloudPointObject.parent) {
-    cloudPointObject.parent.remove(cloudPointObject);
-  }
-
-  cloudPointObject.traverse((node) => {
-    if (node.geometry && typeof node.geometry.dispose === "function") {
-      node.geometry.dispose();
-    }
-
-    if (!node.material) {
-      return;
-    }
-
-    if (Array.isArray(node.material)) {
-      for (const material of node.material) {
-        disposeMaterialWithMaps(material);
-      }
-      return;
-    }
-
-    disposeMaterialWithMaps(node.material);
-  });
-
-  cloudPointObject = null;
-  cloudPointSpriteMaterial = null;
-  setCloudPrintSimulationPlaying(false);
-  setCloudPrintSimulationProgress(0);
-}
-
-function getCloudStlParentObject() {
-  if (!robotRoot) {
-    return null;
-  }
-
-  return robotRoot.getObjectByName(`link:${CLOUD_STL_PARENT_LINK}`) || robotRoot;
-}
-
-function attachCloudStlToParent() {
-  if (!cloudStlObject) {
-    return;
-  }
-
-  const parentObject = getCloudStlParentObject();
-  if (!parentObject) {
-    if (!cloudStlObject.parent) {
-      scene.add(cloudStlObject);
-    }
-    return;
-  }
-
-  parentObject.add(cloudStlObject);
-}
-
-function getCloudPointParentObject() {
-  if (!robotRoot) {
-    return null;
-  }
-
-  return robotRoot.getObjectByName(`link:${CLOUD_POINT_PARENT_LINK}`) || robotRoot;
-}
-
-function attachCloudPointToParent() {
-  if (!cloudPointObject) {
-    return;
-  }
-
-  const parentObject = getCloudPointParentObject();
-  if (!parentObject) {
-    if (!cloudPointObject.parent) {
-      scene.add(cloudPointObject);
-    }
-    return;
-  }
-
-  parentObject.add(cloudPointObject);
-}
-
-function alignCloudPointToCloudStlTransform() {
-  if (!cloudPointObject || !cloudStlObject) {
-    return;
-  }
-
-  const preservedPointScale = cloudPointObject.scale.clone();
-  cloudStlObject.updateMatrixWorld(true);
-  const pointParent = cloudPointObject.parent || scene;
-  pointParent.updateMatrixWorld(true);
-
-  const stlWorldMatrix = cloudStlObject.matrixWorld.clone();
-  const parentInverse = new THREE.Matrix4().copy(pointParent.matrixWorld).invert();
-  const localMatrix = new THREE.Matrix4().multiplyMatrices(parentInverse, stlWorldMatrix);
-
-  const nextPosition = new THREE.Vector3();
-  const nextQuaternion = new THREE.Quaternion();
-  const nextScale = new THREE.Vector3();
-  localMatrix.decompose(nextPosition, nextQuaternion, nextScale);
-
-  cloudPointObject.position.copy(nextPosition);
-  cloudPointObject.quaternion.copy(nextQuaternion);
-  cloudPointObject.scale.copy(preservedPointScale);
-  cloudPointObject.updateMatrixWorld(true);
-}
-
-function hasAncestorNamePrefix(node, rootObject, prefixes) {
-  let cursor = node?.parent || null;
-  while (cursor && cursor !== rootObject) {
-    const name = String(cursor.name || "");
-    if (prefixes.some((prefix) => name.startsWith(prefix))) {
-      return true;
-    }
-    cursor = cursor.parent;
-  }
-  return false;
-}
-
-function computeCloudStlParentLocalBounds(parentObject) {
-  if (!parentObject) {
-    return null;
-  }
-
-  const parentName = String(parentObject.name || "");
-  const parentIsLink = parentName.startsWith("link:");
-
-  const filteredBounds = computeObjectLocalBounds(parentObject, {
-    includeMeshPredicate: (meshNode, rootObject) => {
-      const meshName = String(meshNode.name || "");
-      if (meshName.startsWith("cloud-")) {
-        return false;
-      }
-
-      if (!parentIsLink) {
-        return true;
-      }
-
-      return !hasAncestorNamePrefix(meshNode, rootObject, ["joint_frame:", "motion_group:", "link:"]);
-    },
-  });
-
-  if (filteredBounds && !filteredBounds.isEmpty()) {
-    return filteredBounds;
-  }
-
-  return computeObjectLocalBounds(parentObject, {
-    includeMeshPredicate: (meshNode) => {
-      const meshName = String(meshNode.name || "");
-      return !meshName.startsWith("cloud-");
-    },
-  });
-}
-
-function computeWorldBoundsFromLocalBounds(object3d, localBounds) {
-  if (!object3d || !localBounds || localBounds.isEmpty()) {
-    return null;
-  }
-
-  object3d.updateWorldMatrix(true, true);
-  const localCorner = new THREE.Vector3();
-  const worldCorner = new THREE.Vector3();
-  const worldBounds = new THREE.Box3();
-  worldBounds.makeEmpty();
-
-  for (let cornerIndex = 0; cornerIndex < 8; cornerIndex += 1) {
-    localCorner.set(
-      (cornerIndex & 1) ? localBounds.max.x : localBounds.min.x,
-      (cornerIndex & 2) ? localBounds.max.y : localBounds.min.y,
-      (cornerIndex & 4) ? localBounds.max.z : localBounds.min.z,
-    );
-    worldCorner.copy(localCorner).applyMatrix4(object3d.matrixWorld);
-    worldBounds.expandByPoint(worldCorner);
-  }
-
-  return worldBounds.isEmpty() ? null : worldBounds;
-}
-
-function placeCloudStlAboveParentMesh(parentObject, parentLocalBounds = null, options = {}) {
-  if (!cloudStlObject || !parentObject || !cloudStlObject.geometry) {
-    return;
-  }
-
-  const preservePlanarPosition = Boolean(options.preservePlanarPosition);
-
-  if (!cloudStlObject.geometry.boundingBox) {
-    cloudStlObject.geometry.computeBoundingBox();
-  }
-
-  const geometryBounds = cloudStlObject.geometry.boundingBox;
-  if (!geometryBounds || geometryBounds.isEmpty()) {
-    return;
-  }
-
-  const resolvedParentBounds = (parentLocalBounds && !parentLocalBounds.isEmpty())
-    ? parentLocalBounds
-    : computeCloudStlParentLocalBounds(parentObject);
-
-  let parentWorldBounds = computeWorldBoundsFromLocalBounds(parentObject, resolvedParentBounds);
-  if (!parentWorldBounds || parentWorldBounds.isEmpty()) {
-    parentWorldBounds = new THREE.Box3().setFromObject(parentObject);
-  }
-  if (!parentWorldBounds || parentWorldBounds.isEmpty()) {
-    return;
-  }
-
-  cloudStlObject.updateWorldMatrix(true, true);
-  const stlWorldBounds = new THREE.Box3().setFromObject(cloudStlObject);
-  if (stlWorldBounds.isEmpty()) {
-    return;
-  }
-
-  const deltaWorld = new THREE.Vector3(0, 0, 0);
-  if (!preservePlanarPosition) {
-    const parentCenter = parentWorldBounds.getCenter(new THREE.Vector3());
-    const stlCenter = stlWorldBounds.getCenter(new THREE.Vector3());
-    deltaWorld.copy(parentCenter).sub(stlCenter);
-  }
-  const targetBottomWorldZ = parentWorldBounds.max.z + CLOUD_STL_TOP_CLEARANCE_M;
-  const stlBottomWorldZ = stlWorldBounds.min.z;
-  deltaWorld.z = targetBottomWorldZ - stlBottomWorldZ;
-
-  if (cloudStlObject.parent) {
-    const targetWorldPosition = cloudStlObject.getWorldPosition(new THREE.Vector3());
-    targetWorldPosition.add(deltaWorld);
-    cloudStlObject.parent.worldToLocal(targetWorldPosition);
-    cloudStlObject.position.copy(targetWorldPosition);
-  } else {
-    cloudStlObject.position.add(deltaWorld);
-  }
-
-  cloudStlObject.updateMatrixWorld(true);
-}
-
-function syncCloudStlPlacementToXYJoints(deltaWorld, options = {}) {
-  if (!deltaWorld || deltaWorld.lengthSq() <= 1e-12) {
-    return null;
-  }
-
-  const ejeXState = getJointStateByName(EJE_X_JOINT);
-  const ejeYState = getJointStateByName(EJE_Y_JOINT);
-  if (!ejeXState || ejeXState.kind !== "linear" || !ejeYState || ejeYState.kind !== "linear") {
-    return null;
-  }
-
-  const ejeXAxisWorld = getLinearJointWorldAxis(ejeXState);
-  const ejeYAxisWorld = getLinearJointWorldAxis(ejeYState);
-  if (!ejeXAxisWorld || !ejeYAxisWorld) {
-    return null;
-  }
-
-  const xAxisDelta = deltaWorld.dot(ejeXAxisWorld);
-  const yAxisDelta = deltaWorld.dot(ejeYAxisWorld);
-
-  const baseXValue = Number.isFinite(options.baseXValue)
-    ? Number(options.baseXValue)
-    : ejeXState.value;
-  const baseYValue = Number.isFinite(options.baseYValue)
-    ? Number(options.baseYValue)
-    : ejeYState.value;
-  const currentXValue = ejeXState.value;
-  const currentYValue = ejeYState.value;
-
-  const targetXValue = clamp(baseXValue + xAxisDelta, ejeXState.lower, ejeXState.upper);
-  const targetYValue = clamp(baseYValue + yAxisDelta, ejeYState.lower, ejeYState.upper);
-
-  const appliedXDelta = targetXValue - currentXValue;
-  const appliedYDelta = targetYValue - currentYValue;
-  const moved = Math.abs(appliedXDelta) > 1e-9 || Math.abs(appliedYDelta) > 1e-9;
-  if (!moved) {
-    return {
-      ejeXValue: targetXValue,
-      ejeYValue: targetYValue,
-    };
-  }
-
-  setJointValue(ejeXState, targetXValue);
-  setJointValue(ejeYState, targetYValue);
-
-  return {
-    ejeXValue: targetXValue,
-    ejeYValue: targetYValue,
-  };
-}
-
-function relocateCloudStlToWorldXY(targetWorldX, targetWorldY, options = {}) {
-  if (!cloudStlObject) {
-    return false;
-  }
-
-  const updateStatus = options.updateStatus !== false;
-  const syncAxes = options.syncAxes !== false;
-  const externalAxisSyncResult = options.axisSyncResult || null;
-
-  const parentObject = getCloudStlParentObject();
-  if (!parentObject) {
-    return false;
-  }
-
-  const parentLocalBounds = computeCloudStlParentLocalBounds(parentObject);
-  let parentWorldBounds = computeWorldBoundsFromLocalBounds(parentObject, parentLocalBounds);
-  if (!parentWorldBounds || parentWorldBounds.isEmpty()) {
-    parentWorldBounds = new THREE.Box3().setFromObject(parentObject);
-  }
-  if (!parentWorldBounds || parentWorldBounds.isEmpty()) {
-    return false;
-  }
-
-  cloudStlObject.updateWorldMatrix(true, true);
-  const stlWorldBounds = new THREE.Box3().setFromObject(cloudStlObject);
-  if (stlWorldBounds.isEmpty()) {
-    return false;
-  }
-
-  const halfSizeX = Math.max((stlWorldBounds.max.x - stlWorldBounds.min.x) * 0.5, 0);
-  const halfSizeY = Math.max((stlWorldBounds.max.y - stlWorldBounds.min.y) * 0.5, 0);
-
-  const minX = parentWorldBounds.min.x + halfSizeX;
-  const maxX = parentWorldBounds.max.x - halfSizeX;
-  const minY = parentWorldBounds.min.y + halfSizeY;
-  const maxY = parentWorldBounds.max.y - halfSizeY;
-
-  const targetCenterX = clamp(targetWorldX, minX, maxX);
-  const targetCenterY = clamp(targetWorldY, minY, maxY);
-
-  const stlCenter = stlWorldBounds.getCenter(new THREE.Vector3());
-  const deltaWorld = new THREE.Vector3(
-    targetCenterX - stlCenter.x,
-    targetCenterY - stlCenter.y,
-    0,
-  );
-
-  const targetWorldPosition = cloudStlObject.getWorldPosition(new THREE.Vector3()).add(deltaWorld);
-  if (cloudStlObject.parent) {
-    cloudStlObject.parent.worldToLocal(targetWorldPosition);
-  }
-  cloudStlObject.position.copy(targetWorldPosition);
-
-  const jointSyncResult = syncAxes ? syncCloudStlPlacementToXYJoints(deltaWorld) : null;
-  const resolvedAxisSyncResult = externalAxisSyncResult || jointSyncResult;
-  placeCloudStlAboveParentMesh(parentObject, parentLocalBounds, { preservePlanarPosition: true });
-  alignCloudPointToCloudStlTransform();
-
-  if (updateStatus) {
-    const xMm = targetCenterX * 1000;
-    const yMm = targetCenterY * 1000;
-    if (resolvedAxisSyncResult) {
-      const ejeXMm = resolvedAxisSyncResult.ejeXValue * 1000;
-      const ejeYMm = resolvedAxisSyncResult.ejeYValue * 1000;
-      setCloudStlStatus(
-        `placed on print area (x ${xMm.toFixed(1)} mm, y ${yMm.toFixed(1)} mm), axis synced (eje_x ${ejeXMm.toFixed(1)} mm, eje_y ${ejeYMm.toFixed(1)} mm)`,
-      );
-    } else {
-      setCloudStlStatus(`placed on print area (x ${xMm.toFixed(1)} mm, y ${yMm.toFixed(1)} mm)`);
-    }
-  }
-  return true;
-}
-
-function tryRelocateCloudStlByDoubleClick(event) {
-  if (cloudStlDragState) {
-    return false;
-  }
-
-  return tryStartCloudStlDrag(event);
-}
-
-function getCloudStlWorldTopPoint() {
-  if (!cloudStlObject) {
-    return null;
-  }
-
-  cloudStlObject.updateWorldMatrix(true, true);
-  const stlWorldBounds = new THREE.Box3().setFromObject(cloudStlObject);
-  if (stlWorldBounds.isEmpty()) {
-    return null;
-  }
-
-  return new THREE.Vector3(
-    (stlWorldBounds.min.x + stlWorldBounds.max.x) * 0.5,
-    (stlWorldBounds.min.y + stlWorldBounds.max.y) * 0.5,
-    stlWorldBounds.max.z,
-  );
-}
-
 function getLinearJointWorldAxis(state) {
   if (!state || state.kind !== "linear" || !state.motionGroup) {
     return null;
@@ -10209,300 +7175,6 @@ function getLinearJointWorldAxis(state) {
 // the nozzle — used to mirror the operator's placement on the slicer plate so
 // the preview matches the slicer. The offset is projected onto the eje_x/eje_y
 // world axes, so axis identity + sign are handled automatically.
-function alignCloudStlUnderHeadViaXY(durationSeconds = CLOUD_STL_DROP_ALIGN_DURATION_SEC, extraWorldOffset = null) {
-  if (!cloudStlObject || !robotRoot) {
-    return false;
-  }
-
-  const ejeXState = getJointStateByName(EJE_X_JOINT);
-  const ejeYState = getJointStateByName(EJE_Y_JOINT);
-  if (!ejeXState || ejeXState.kind !== "linear" || !ejeYState || ejeYState.kind !== "linear") {
-    setCloudStlStatus("xy align unavailable (eje_x/eje_y joint missing)");
-    return false;
-  }
-
-  const headLowestPoint = getHeadLowestWorldPoint();
-  const stlTopPoint = getCloudStlWorldTopPoint();
-  if (!headLowestPoint || !stlTopPoint) {
-    setCloudStlStatus("xy align unavailable (head/STL bounds)");
-    return false;
-  }
-
-  const ejeXAxisWorld = getLinearJointWorldAxis(ejeXState);
-  const ejeYAxisWorld = getLinearJointWorldAxis(ejeYState);
-  if (!ejeXAxisWorld || !ejeYAxisWorld) {
-    setCloudStlStatus("xy align unavailable (eje_x/eje_y axis)");
-    return false;
-  }
-
-  const deltaToHead = headLowestPoint.clone().sub(stlTopPoint);
-  if (extraWorldOffset) {
-    deltaToHead.add(extraWorldOffset);
-  }
-  const requiredXDelta = deltaToHead.dot(ejeXAxisWorld);
-  const requiredYDelta = deltaToHead.dot(ejeYAxisWorld);
-
-  const currentXValue = ejeXState.value;
-  const currentYValue = ejeYState.value;
-  const targetXValue = clamp(currentXValue + requiredXDelta, ejeXState.lower, ejeXState.upper);
-  const targetYValue = clamp(currentYValue + requiredYDelta, ejeYState.lower, ejeYState.upper);
-
-  const appliedXDeltaMm = (targetXValue - currentXValue) * 1000;
-  const appliedYDeltaMm = (targetYValue - currentYValue) * 1000;
-
-  moveJointToValue(ejeXState, targetXValue, durationSeconds);
-  moveJointToValue(ejeYState, targetYValue, durationSeconds);
-
-  setCloudStlStatus(
-    `placed; aligning xy under head (eje_x ${appliedXDeltaMm.toFixed(1)} mm, eje_y ${appliedYDeltaMm.toFixed(1)} mm)`,
-  );
-  return true;
-}
-
-function alignCloudStlToHeadContactViaEjeX(durationSeconds = CLOUD_STL_HEAD_CONTACT_MOVE_DURATION_SEC) {
-  if (!cloudStlObject || !robotRoot) {
-    return false;
-  }
-  // During a docked print the gantry is positioned/centred by the print flow —
-  // don't let the STL→head preview alignment fight it (the STL is hidden anyway).
-  if (isDockedPrintActive) {
-    return false;
-  }
-
-  const ejeXState = getJointStateByName(EJE_X_JOINT);
-  if (!ejeXState || ejeXState.kind !== "linear") {
-    setCloudStlStatus("contact sync unavailable (eje_x_joint missing)");
-    return false;
-  }
-
-  const headLowestPoint = getHeadLowestWorldPoint();
-  const stlTopPoint = getCloudStlWorldTopPoint();
-  if (!headLowestPoint || !stlTopPoint) {
-    setCloudStlStatus("contact sync unavailable (head/STL bounds)");
-    return false;
-  }
-
-  const axisWorld = getLinearJointWorldAxis(ejeXState);
-  if (!axisWorld) {
-    setCloudStlStatus("contact sync unavailable (eje_x axis)");
-    return false;
-  }
-
-  const deltaToHead = headLowestPoint.clone().sub(stlTopPoint);
-  const requiredAxisDelta = deltaToHead.dot(axisWorld);
-  const currentXValue = ejeXState.value;
-  const unclampedXTarget = currentXValue + requiredAxisDelta;
-  const clampedXTarget = clamp(unclampedXTarget, ejeXState.lower, ejeXState.upper);
-  const appliedXDelta = clampedXTarget - currentXValue;
-
-  moveJointToValue(ejeXState, clampedXTarget, durationSeconds);
-
-  const stlTopAfterX = stlTopPoint.clone().addScaledVector(axisWorld, appliedXDelta);
-  const deltaAfterX = headLowestPoint.clone().sub(stlTopAfterX);
-
-  const zAxisState = getJointStateByName(Z_AXIS_JOINT);
-  let appliedZDelta = 0;
-  let residualZMm = Math.abs(deltaAfterX.z) * 1000;
-  let zSyncEnabled = false;
-
-  if (zAxisState && zAxisState.kind === "linear") {
-    const zAxisWorld = getLinearJointWorldAxis(zAxisState);
-    const zAxisVertical = zAxisWorld ? zAxisWorld.z : 0;
-    if (Number.isFinite(zAxisVertical) && Math.abs(zAxisVertical) > 1e-5) {
-      const requiredZDelta = deltaAfterX.z / zAxisVertical;
-      const currentZValue = zAxisState.value;
-      const unclampedZTarget = currentZValue + requiredZDelta;
-      const clampedZTarget = clamp(unclampedZTarget, zAxisState.lower, zAxisState.upper);
-      appliedZDelta = clampedZTarget - currentZValue;
-      moveJointToValue(zAxisState, clampedZTarget, CLOUD_STL_HEAD_CONTACT_Z_MOVE_DURATION_SEC);
-      residualZMm = Math.abs(deltaAfterX.z - (appliedZDelta * zAxisVertical)) * 1000;
-      zSyncEnabled = true;
-    }
-  }
-
-  const xDeltaMm = appliedXDelta * 1000;
-  const zDeltaMm = appliedZDelta * 1000;
-
-  if (zSyncEnabled) {
-    if (residualZMm > CLOUD_STL_HEAD_CONTACT_WARN_MM) {
-      setCloudStlStatus(
-        `loaded, eje_x synced (${xDeltaMm.toFixed(1)} mm), z synced (${zDeltaMm.toFixed(1)} mm; z residual ${residualZMm.toFixed(1)} mm)`,
-      );
-    } else {
-      setCloudStlStatus(
-        `loaded, eje_x synced (${xDeltaMm.toFixed(1)} mm), z synced (${zDeltaMm.toFixed(1)} mm)`,
-      );
-    }
-  } else if (residualZMm > CLOUD_STL_HEAD_CONTACT_WARN_MM) {
-    setCloudStlStatus(
-      `loaded, eje_x synced (${xDeltaMm.toFixed(1)} mm; z residual ${residualZMm.toFixed(1)} mm)`,
-    );
-  } else {
-    setCloudStlStatus(`loaded, eje_x synced (${xDeltaMm.toFixed(1)} mm)`);
-  }
-
-  return true;
-}
-
-function applyCloudStlDisplayState() {
-  if (!cloudStlObject) {
-    return;
-  }
-
-  cloudStlObject.visible = cloudStlVisible && !printHideStl;
-  const materials = Array.isArray(cloudStlObject.material)
-    ? cloudStlObject.material
-    : [cloudStlObject.material];
-  for (const material of materials) {
-    if (!material) {
-      continue;
-    }
-
-    material.transparent = cloudStlOpacity < 0.999;
-    material.opacity = cloudStlOpacity;
-    material.needsUpdate = true;
-  }
-}
-
-function applyCloudPointDisplayState() {
-  if (!cloudPointObject) {
-    return;
-  }
-
-  cloudPointObject.visible = cloudStlVisible;
-
-  const applyOpacity = (material) => {
-    if (!material) {
-      return;
-    }
-
-    if ("transparent" in material) {
-      material.transparent = cloudStlOpacity < 0.999;
-    }
-    if ("opacity" in material) {
-      material.opacity = cloudStlOpacity;
-    }
-    material.needsUpdate = true;
-  };
-
-  if (cloudPointObject.material) {
-    if (Array.isArray(cloudPointObject.material)) {
-      for (const material of cloudPointObject.material) {
-        applyOpacity(material);
-      }
-    } else {
-      applyOpacity(cloudPointObject.material);
-    }
-  }
-
-  cloudPointObject.traverse((node) => {
-    if (!node.material) {
-      return;
-    }
-
-    if (Array.isArray(node.material)) {
-      for (const material of node.material) {
-        applyOpacity(material);
-      }
-      return;
-    }
-
-    applyOpacity(node.material);
-  });
-}
-
-function applyCloudOverlayDisplayState() {
-  applyCloudStlDisplayState();
-  applyCloudPointDisplayState();
-}
-
-function applyCloudPointSizeToActiveObject() {
-  if (
-    !cloudPointSpriteMaterial
-    || !cloudPointSpriteMaterial.uniforms
-    || !cloudPointSpriteMaterial.uniforms.uPointSize
-  ) {
-    return;
-  }
-
-  cloudPointSpriteMaterial.uniforms.uPointSize.value = cloudPointSize;
-  cloudPointSpriteMaterial.needsUpdate = true;
-}
-
-function buildCloudStlMaterial() {
-  return new THREE.MeshStandardMaterial({
-    color: 0x4ed0ff,
-    roughness: 0.36,
-    metalness: 0.08,
-    emissive: 0x1a6788,
-    emissiveIntensity: 0.22,
-    transparent: cloudStlOpacity < 0.999,
-    opacity: cloudStlOpacity,
-    side: THREE.DoubleSide,
-  });
-}
-
-function getCloudStlRawMaxDimensionMeters(geometry) {
-  if (!geometry) {
-    return null;
-  }
-
-  if (!geometry.boundingBox) {
-    geometry.computeBoundingBox();
-  }
-
-  if (!geometry.boundingBox || geometry.boundingBox.isEmpty()) {
-    return null;
-  }
-
-  const size = geometry.boundingBox.getSize(new THREE.Vector3());
-  return Math.max(size.x, size.y, size.z);
-}
-
-function resolveCloudStlUnitScale(geometry) {
-  const rawMaxDimension = getCloudStlRawMaxDimensionMeters(geometry);
-  if (!Number.isFinite(rawMaxDimension) || rawMaxDimension <= 1e-8) {
-    return {
-      scale: 1,
-      rawMaxDimension: null,
-      scaledMaxDimension: null,
-      assumedUnits: "unknown",
-    };
-  }
-
-  if (rawMaxDimension <= CLOUD_STL_ASSUME_REAL_SCALE_MAX_DIM_M) {
-    return {
-      scale: 1,
-      rawMaxDimension,
-      scaledMaxDimension: rawMaxDimension,
-      assumedUnits: "meters",
-    };
-  }
-
-  let bestScale = CLOUD_STL_UNIT_SCALE_CANDIDATES[0];
-  let bestScore = Number.POSITIVE_INFINITY;
-
-  for (const candidateScale of CLOUD_STL_UNIT_SCALE_CANDIDATES) {
-    const scaledMax = rawMaxDimension * candidateScale;
-    const score = Math.abs(scaledMax - CLOUD_STL_UNIT_SCALE_TARGET_DIM_M);
-    if (score < bestScore) {
-      bestScore = score;
-      bestScale = candidateScale;
-    }
-  }
-
-  const assumedUnits = bestScale === 0.001
-    ? "millimeters"
-    : (bestScale === 0.01 ? "centimeters" : (bestScale === 0.0254 ? "inches" : "custom"));
-
-  return {
-    scale: bestScale,
-    rawMaxDimension,
-    scaledMaxDimension: rawMaxDimension * bestScale,
-    assumedUnits,
-  };
-}
-
 function parsePositiveNumber(value, fallback, min = 0) {
   const numericValue = Number(value);
   if (!Number.isFinite(numericValue)) {
@@ -10519,1173 +7191,6 @@ function parseBoundedNumber(value, fallback, min, max) {
   return clamp(numeric, min, max);
 }
 
-function getCloudDatasetName() {
-  const rawDataset = cloudStlDatasetEl ? cloudStlDatasetEl.value : "";
-  const datasetName = (rawDataset || "").trim();
-  return datasetName || "small-torture-test_1-0-0";
-}
-
-function normalizeCloudStlFileName(name) {
-  return String(name || "")
-    .trim()
-    .toLowerCase()
-    .replace(/\.stl$/i, "")
-    .replace(/[\-_]+/g, " ")
-    .replace(/\s+/g, " ");
-}
-
-function resolveCloudDatasetAliasFromStlFile(stlFileName) {
-  const normalized = normalizeCloudStlFileName(stlFileName);
-  if (!normalized) {
-    return null;
-  }
-
-  return CLOUD_DATASET_ALIAS_BY_STL_FILE[normalized] || null;
-}
-
-function syncCloudDatasetFromSelectedStl(options = {}) {
-  const { overwrite = false } = options;
-  if (!cloudStlFileSelectEl || !cloudStlDatasetEl) {
-    return null;
-  }
-
-  const selectedFile = (cloudStlFileSelectEl.value || "").trim();
-  const mappedDataset = resolveCloudDatasetAliasFromStlFile(selectedFile);
-  if (!mappedDataset) {
-    return null;
-  }
-
-  const currentDataset = (cloudStlDatasetEl.value || "").trim();
-  if (!currentDataset || overwrite) {
-    cloudStlDatasetEl.value = mappedDataset;
-  }
-
-  return mappedDataset;
-}
-
-function resolveCloudFileSourceFilter(value) {
-  const normalized = typeof value === "string"
-    ? value.trim().toLowerCase()
-    : "cloud";
-
-  return CLOUD_FILE_SOURCE_VALUES.includes(normalized)
-    ? normalized
-    : "cloud";
-}
-
-function parseCloudBooleanField(value) {
-  if (typeof value === "boolean") {
-    return value;
-  }
-
-  if (typeof value === "number") {
-    return value !== 0;
-  }
-
-  if (typeof value === "string") {
-    const normalized = value.trim().toLowerCase();
-    if (["true", "1", "yes", "y", "on"].includes(normalized)) {
-      return true;
-    }
-    if (["false", "0", "no", "n", "off"].includes(normalized)) {
-      return false;
-    }
-  }
-
-  return null;
-}
-
-function parseCloudGramsField(...values) {
-  for (const value of values) {
-    const grams = Number(value);
-    if (Number.isFinite(grams) && grams > 0) {
-      return grams;
-    }
-  }
-
-  return null;
-}
-
-function normalizeCloudLibraryEntry(entry, fallbackSource) {
-  if (typeof entry === "string") {
-    const name = entry.trim();
-    if (!name) {
-      return null;
-    }
-
-    return {
-      name,
-      source: resolveCloudFileSourceFilter(fallbackSource),
-      cloudUploaded: null,
-    };
-  }
-
-  if (!entry || typeof entry !== "object") {
-    return null;
-  }
-
-  const rawName = entry.name ?? entry.file ?? entry.filename ?? entry.path ?? "";
-  const name = String(rawName || "").trim();
-  if (!name) {
-    return null;
-  }
-
-  const source = resolveCloudFileSourceFilter(entry.source ?? entry.origin ?? fallbackSource);
-  const cloudUploaded = parseCloudBooleanField(
-    entry.cloudUploaded ?? entry.isCloudUploaded ?? entry.uploadedFromCloud ?? entry.isCloud,
-  );
-  const estimatedMaterialUsedGrams = parseCloudGramsField(
-    entry.estimatedMaterialUsedGrams,
-    entry.estimatedMaterialUsageGrams,
-    entry.estimatedUsedGrams,
-    entry.estimatedGrams,
-    entry.requiredMaterialGrams,
-    entry.required_material_grams,
-    entry.materialRequiredGrams,
-    entry.requiredGrams,
-    entry.materialUsageGrams,
-    entry.materialUsedGrams,
-    entry.grams,
-    entry.weightGrams,
-  );
-  const actualMaterialUsedGrams = parseCloudGramsField(
-    entry.actualMaterialUsedGrams,
-    entry.actualMaterialUsageGrams,
-    entry.actualUsedGrams,
-    entry.usedGrams,
-  );
-
-  return {
-    name,
-    source,
-    cloudUploaded,
-    estimatedMaterialUsedGrams,
-    actualMaterialUsedGrams,
-  };
-}
-
-function isCloudLibraryEntryLoadedInViewer(entry) {
-  if (!entry || !cloudStlObject || !loadedCloudLibraryFileName) {
-    return false;
-  }
-
-  return entry.name === loadedCloudLibraryFileName;
-}
-
-function getCloudSourceLabel(source) {
-  const resolved = resolveCloudFileSourceFilter(source);
-  return resolved.toUpperCase();
-}
-
-function updateCloudSourceFilterButtons() {
-  setToggleButtonState(cloudSourceUsbEl, cloudFileSourceFilter === "usb");
-  setToggleButtonState(cloudSourceCloudEl, cloudFileSourceFilter === "cloud");
-  setToggleButtonState(cloudSourceLocalEl, cloudFileSourceFilter === "local");
-}
-
-function setCloudLibraryMessage(message) {
-  if (!cloudFileLibraryEl) {
-    return;
-  }
-
-  cloudFileLibraryEl.textContent = "";
-  const emptyEl = document.createElement("p");
-  emptyEl.className = "cloud-file-library-empty";
-  emptyEl.textContent = message;
-  cloudFileLibraryEl.appendChild(emptyEl);
-}
-
-function getFilteredCloudLibraryEntries() {
-  let filtered = cloudFileLibraryEntries;
-
-  if (cloudFavoritesOnlyFilter) {
-    filtered = filtered.filter((entry) => isCloudLibraryEntryFavorite(entry));
-  }
-
-  const query = cloudFileSearchQuery.trim().toLowerCase();
-  if (!query) {
-    return filtered;
-  }
-
-  return filtered.filter((entry) => entry.name.toLowerCase().includes(query));
-}
-
-function getCloudLibraryEntryKey(entry) {
-  if (!entry || !entry.name) {
-    return "";
-  }
-
-  return `${entry.source || "cloud"}::${entry.name}`;
-}
-
-function isCloudLibraryEntryFavorite(entry) {
-  const key = getCloudLibraryEntryKey(entry);
-  return Boolean(key) && cloudFavoriteEntryKeys.has(key);
-}
-
-function updateCloudFavoritesFilterButton() {
-  if (!cloudFavoritesFilterToggleEl) {
-    return;
-  }
-
-  const favoriteCount = cloudFavoriteEntryKeys.size;
-  setToggleButtonState(cloudFavoritesFilterToggleEl, cloudFavoritesOnlyFilter);
-  cloudFavoritesFilterToggleEl.textContent = favoriteCount > 0
-    ? `Favorites (${favoriteCount})`
-    : "Favorites";
-}
-
-function setCloudFavoritesOnlyFilterEnabled(enabled) {
-  cloudFavoritesOnlyFilter = Boolean(enabled);
-  updateCloudFavoritesFilterButton();
-  renderCloudFileLibrary();
-}
-
-function toggleCloudLibraryEntryFavorite(entry) {
-  const key = getCloudLibraryEntryKey(entry);
-  if (!key) {
-    return;
-  }
-
-  if (cloudFavoriteEntryKeys.has(key)) {
-    cloudFavoriteEntryKeys.delete(key);
-  } else {
-    cloudFavoriteEntryKeys.add(key);
-  }
-
-  updateCloudFavoritesFilterButton();
-  renderCloudFileLibrary();
-}
-
-function getCloudLibraryEntryByFileName(fileName) {
-  const target = String(fileName || "").trim();
-  if (!target) {
-    return null;
-  }
-
-  return cloudFileLibraryEntries.find((entry) => entry.name === target) || null;
-}
-
-function getCloudThumbPreviewKey(entry) {
-  if (!entry) {
-    return "";
-  }
-
-  return `${entry.source || "cloud"}::${entry.name || ""}`;
-}
-
-function ensureCloudThumbPreviewRenderer() {
-  if (cloudFileThumbPreviewRenderer) {
-    return true;
-  }
-
-  if (!canvas) {
-    return false;
-  }
-
-  cloudFileThumbPreviewRenderer = new THREE.WebGLRenderer({
-    alpha: false,
-    antialias: true,
-    preserveDrawingBuffer: true,
-  });
-  cloudFileThumbPreviewRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  cloudFileThumbPreviewRenderer.setSize(CLOUD_THUMB_PREVIEW_SIZE_PX, CLOUD_THUMB_PREVIEW_SIZE_PX, false);
-  cloudFileThumbPreviewRenderer.outputColorSpace = THREE.SRGBColorSpace;
-
-  cloudFileThumbPreviewScene = new THREE.Scene();
-  cloudFileThumbPreviewScene.background = new THREE.Color(CLOUD_THUMB_PREVIEW_BG_HEX);
-  cloudFileThumbPreviewRoot = new THREE.Group();
-  cloudFileThumbPreviewScene.add(cloudFileThumbPreviewRoot);
-
-  const ambient = new THREE.AmbientLight(0xffffff, 0.82);
-  cloudFileThumbPreviewScene.add(ambient);
-
-  const keyLight = new THREE.DirectionalLight(0xffffff, 0.95);
-  keyLight.position.set(1.2, 1.0, 1.35);
-  cloudFileThumbPreviewScene.add(keyLight);
-
-  const rimLight = new THREE.DirectionalLight(0x8ecbff, 0.52);
-  rimLight.position.set(-1.0, -1.15, 0.82);
-  cloudFileThumbPreviewScene.add(rimLight);
-
-  cloudFileThumbPreviewCamera = new THREE.PerspectiveCamera(34, 1, 0.01, 20);
-  cloudFileThumbPreviewCamera.up.set(0, 0, 1);
-
-  return true;
-}
-
-function getCloudThumbPreviewDataUrl(entry) {
-  const key = getCloudThumbPreviewKey(entry);
-  if (!key) {
-    return null;
-  }
-
-  return cloudFileThumbPreviewCache.get(key) || null;
-}
-
-function getCloudFileFetchUrl(fileName) {
-  const params = new URLSearchParams({ name: fileName });
-  return `${CLOUD_STL_FILE_API_URL}?${params.toString()}`;
-}
-
-async function renderCloudThumbPreviewForEntry(entry) {
-  if (!entry || !entry.name) {
-    return null;
-  }
-
-  if (!ensureCloudThumbPreviewRenderer()) {
-    return null;
-  }
-
-  const fileUrl = getCloudFileFetchUrl(entry.name);
-  const geometry = await stlLoader.loadAsync(fileUrl);
-  geometry.computeVertexNormals();
-  const unitScaleInfo = resolveCloudStlUnitScale(geometry);
-
-  const previewMesh = new THREE.Mesh(
-    geometry,
-    new THREE.MeshStandardMaterial({
-      color: 0xcbe9ff,
-      roughness: 0.34,
-      metalness: 0.18,
-      emissive: 0x1a4568,
-      emissiveIntensity: 0.42,
-    }),
-  );
-  previewMesh.scale.setScalar(unitScaleInfo.scale);
-
-  const previewGroup = new THREE.Group();
-  previewGroup.rotation.x = CAD_TO_VIEWER_X_ROTATION;
-  previewGroup.add(previewMesh);
-  cloudFileThumbPreviewRoot.add(previewGroup);
-
-  const bounds = new THREE.Box3().setFromObject(previewGroup);
-  if (!bounds.isEmpty()) {
-    const scaledSize = bounds.getSize(new THREE.Vector3());
-    const scaledMaxDimension = Math.max(scaledSize.x, scaledSize.y, scaledSize.z);
-    if (scaledMaxDimension > 1e-6) {
-      const previewScale = CLOUD_THUMB_PREVIEW_TARGET_DIM_M / scaledMaxDimension;
-      previewMesh.scale.multiplyScalar(previewScale);
-    }
-
-    const normalizedBounds = new THREE.Box3().setFromObject(previewGroup);
-    const center = normalizedBounds.getCenter(new THREE.Vector3());
-    previewGroup.position.sub(center);
-
-    const centeredBounds = new THREE.Box3().setFromObject(previewGroup);
-    const size = centeredBounds.getSize(new THREE.Vector3());
-    const radius = clamp(size.length() * 0.5, CLOUD_THUMB_PREVIEW_MIN_RADIUS, CLOUD_THUMB_PREVIEW_MAX_RADIUS);
-    const distance = clamp(radius * 2.3, 0.18, 6.2);
-
-    cloudFileThumbPreviewCamera.position.set(-distance * 0.92, distance * 1.14, distance * 0.64);
-    cloudFileThumbPreviewCamera.lookAt(0, 0, 0);
-    cloudFileThumbPreviewCamera.near = Math.max(distance * 0.02, 0.005);
-    cloudFileThumbPreviewCamera.far = Math.max(distance * 6.5, 5);
-    cloudFileThumbPreviewCamera.updateProjectionMatrix();
-  }
-
-  cloudFileThumbPreviewRenderer.render(cloudFileThumbPreviewScene, cloudFileThumbPreviewCamera);
-  const dataUrl = cloudFileThumbPreviewRenderer.domElement.toDataURL("image/png");
-
-  cloudFileThumbPreviewRoot.remove(previewGroup);
-  previewMesh.geometry.dispose();
-  if (Array.isArray(previewMesh.material)) {
-    previewMesh.material.forEach((material) => material.dispose());
-  } else {
-    previewMesh.material.dispose();
-  }
-
-  return dataUrl;
-}
-
-function scheduleCloudThumbPreview(entry) {
-  const key = getCloudThumbPreviewKey(entry);
-  if (!key || cloudFileThumbPreviewCache.has(key) || cloudFileThumbPreviewPending.has(key)) {
-    return;
-  }
-
-  const pendingPromise = (async () => {
-    try {
-      const imageDataUrl = await renderCloudThumbPreviewForEntry(entry);
-      if (imageDataUrl) {
-        cloudFileThumbPreviewCache.set(key, imageDataUrl);
-      }
-    } catch (_error) {
-      // Keep fallback icon if preview generation fails for a file.
-    } finally {
-      cloudFileThumbPreviewPending.delete(key);
-      renderCloudFileLibrary();
-    }
-  })();
-
-  cloudFileThumbPreviewPending.set(key, pendingPromise);
-}
-
-function applyCloudThumbStyle(thumbEl, entry) {
-  if (!thumbEl || !entry) {
-    return;
-  }
-
-  const previewDataUrl = getCloudThumbPreviewDataUrl(entry);
-  if (previewDataUrl) {
-    thumbEl.style.backgroundImage = `url("${previewDataUrl}")`;
-    thumbEl.classList.add("has-real-preview");
-    return;
-  }
-
-  thumbEl.classList.remove("has-real-preview");
-  scheduleCloudThumbPreview(entry);
-}
-
-function buildCloudFileStatusIcon(isLoadedInViewer) {
-  const svgNs = "http://www.w3.org/2000/svg";
-  const wrapEl = document.createElement("button");
-  wrapEl.type = "button";
-  wrapEl.className = "cloud-file-item-cloud-status";
-  // Behaves like the favorite star: a single icon with an inactive/active state.
-  wrapEl.classList.toggle("is-active", isLoadedInViewer);
-  wrapEl.setAttribute("aria-pressed", isLoadedInViewer ? "true" : "false");
-  wrapEl.setAttribute("aria-label", isLoadedInViewer ? "Remove this STL from the viewer" : "Load this STL in the viewer");
-  wrapEl.title = isLoadedInViewer ? "Remove from viewer" : "Load in viewer";
-
-  const iconEl = document.createElementNS(svgNs, "svg");
-  // Centered (non-zoomed) viewBox so each state's artwork is optically centered
-  // in the icon without enlarging it.
-  iconEl.setAttribute("viewBox", isLoadedInViewer ? "0 1 24 24" : "-1.7 -0.85 24 24");
-  iconEl.setAttribute("aria-hidden", "true");
-  iconEl.classList.add(isLoadedInViewer ? "is-ready" : "is-preload");
-
-  const cloudPathEl = document.createElementNS(svgNs, "path");
-  iconEl.appendChild(cloudPathEl);
-
-  if (isLoadedInViewer) {
-    cloudPathEl.setAttribute("data-part", "cloud");
-    cloudPathEl.setAttribute("d", "M6.4 14.8h6.8a3.2 3.2 0 0 0 0-6.4h-.34a4.8 4.8 0 0 0-9.2 1.84A3.06 3.06 0 0 0 6.4 14.8Z");
-
-    const badgeCircleEl = document.createElementNS(svgNs, "circle");
-    badgeCircleEl.setAttribute("data-part", "badge");
-    badgeCircleEl.setAttribute("cx", "16.9");
-    badgeCircleEl.setAttribute("cy", "15.9");
-    badgeCircleEl.setAttribute("r", "4.1");
-
-    const checkPathEl = document.createElementNS(svgNs, "path");
-    checkPathEl.setAttribute("data-part", "check");
-    checkPathEl.setAttribute("d", "m14.95 15.9 1.25 1.25 2.28-2.28");
-
-    iconEl.appendChild(badgeCircleEl);
-    iconEl.appendChild(checkPathEl);
-  } else {
-    cloudPathEl.setAttribute("data-part", "cloud");
-    cloudPathEl.setAttribute("d", "M6.2 15.2h11.6a3.6 3.6 0 0 0 0-7.2h-.36a5.4 5.4 0 0 0-10.33 2.07A3.44 3.44 0 0 0 6.2 15.2Z");
-
-    const arrowPathEl = document.createElementNS(svgNs, "path");
-    arrowPathEl.setAttribute("data-part", "arrow");
-    arrowPathEl.setAttribute("d", "M12 9.4v6.1m0 0 2.4-2.4m-2.4 2.4-2.4-2.4");
-
-    iconEl.appendChild(arrowPathEl);
-  }
-
-  wrapEl.appendChild(iconEl);
-  return wrapEl;
-}
-
-function buildCloudFavoriteToggleButton(isFavorite) {
-  const svgNs = "http://www.w3.org/2000/svg";
-  const buttonEl = document.createElement("button");
-  buttonEl.type = "button";
-  buttonEl.className = "cloud-file-item-favorite-toggle";
-  buttonEl.classList.toggle("is-favorite", Boolean(isFavorite));
-  buttonEl.setAttribute("aria-pressed", isFavorite ? "true" : "false");
-  buttonEl.setAttribute("aria-label", isFavorite ? "Remove from favorites" : "Add to favorites");
-
-  const iconEl = document.createElementNS(svgNs, "svg");
-  iconEl.setAttribute("viewBox", "0 0 24 24");
-  iconEl.setAttribute("aria-hidden", "true");
-
-  const starPathEl = document.createElementNS(svgNs, "path");
-  starPathEl.setAttribute("d", "M12 3.6 14.58 8.82l5.77.84-4.17 4.06.98 5.74L12 16.75 6.84 19.46l.98-5.74-4.17-4.06 5.77-.84L12 3.6Z");
-
-  iconEl.appendChild(starPathEl);
-  buttonEl.appendChild(iconEl);
-  return buttonEl;
-}
-
-function renderCloudFileLibrary() {
-  if (!cloudFileLibraryEl) {
-    return;
-  }
-
-  const entries = getFilteredCloudLibraryEntries();
-  cloudFileLibraryEl.textContent = "";
-
-  if (!entries.length) {
-    let message = "No files available for this source";
-    if (cloudFileLibraryEntries.length) {
-      if (cloudFavoritesOnlyFilter) {
-        message = cloudFavoriteEntryKeys.size
-          ? "No favorite files match the search"
-          : "No favorite files yet";
-      } else {
-        message = "No files match the search";
-      }
-    }
-    setCloudLibraryMessage(message);
-    return;
-  }
-
-  for (const entry of entries) {
-    const itemButton = document.createElement("div");
-    itemButton.className = "cloud-file-item";
-    itemButton.dataset.fileName = entry.name;
-    if (entry.name === selectedCloudLibraryFileName) {
-      itemButton.classList.add("is-selected");
-    }
-
-    itemButton.setAttribute("role", "option");
-    itemButton.setAttribute("aria-selected", entry.name === selectedCloudLibraryFileName ? "true" : "false");
-    itemButton.tabIndex = 0;
-
-    const thumbEl = document.createElement("span");
-    thumbEl.className = "cloud-file-item-thumb";
-    thumbEl.setAttribute("aria-hidden", "true");
-    applyCloudThumbStyle(thumbEl, entry);
-
-    if (!thumbEl.classList.contains("has-real-preview")) {
-      const thumbCoreEl = document.createElement("span");
-      thumbCoreEl.className = "cloud-file-item-thumb-core";
-      thumbEl.appendChild(thumbCoreEl);
-    }
-
-    const detailsEl = document.createElement("span");
-    detailsEl.className = "cloud-file-item-details";
-
-    const nameEl = document.createElement("span");
-    nameEl.className = "cloud-file-item-name";
-    nameEl.textContent = entry.name;
-    detailsEl.appendChild(nameEl);
-
-    const materialEl = document.createElement("span");
-    materialEl.className = "cloud-file-item-material";
-    materialEl.textContent = `Material: ${getMaterialLabelById(
-      hotspotMaterialAssignments.spool1
-        || hotspotMaterialAssignments.spool2
-        || hotspotMaterialAssignments.wiredrum,
-    )}`;
-    detailsEl.appendChild(materialEl);
-
-    const sourceEl = document.createElement("span");
-    sourceEl.className = "cloud-file-item-source";
-    sourceEl.textContent = `Updated: ${getCloudSourceLabel(entry.source)}`;
-    detailsEl.appendChild(sourceEl);
-
-    // Slice-status badge (slicing… / ready), driven by the auto-preslice flow.
-    const sliceBadgeEl = document.createElement("span");
-    sliceBadgeEl.className = "cloud-file-item-slice-badge";
-    applyCloudFileSliceBadge(sliceBadgeEl, cloudFileSliceStatusByName.get(entry.name) || "");
-    detailsEl.appendChild(sliceBadgeEl);
-
-    // Row action buttons sit together on one line ("Load to slicer" +, once
-    // sliced, "Start print").
-    const actionsEl = document.createElement("span");
-    actionsEl.className = "cloud-file-item-actions";
-
-    // "Load to slicer": choose this file and open the full-view slice panel with
-    // it pre-selected (no picker inside the slicer).
-    const loadToSlicerEl = document.createElement("button");
-    loadToSlicerEl.type = "button";
-    loadToSlicerEl.className = "cloud-file-item-slicer-button";
-    loadToSlicerEl.textContent = "Load to slicer";
-    loadToSlicerEl.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      markUserActivity();
-      loadFileToSlicer(entry.name);
-    });
-    actionsEl.appendChild(loadToSlicerEl);
-
-    // "Start print": shown only once this part is sliced/print-ready. Skips the
-    // full slicer — opens the placement preview + confirmation, then starts.
-    const startPrintEl = document.createElement("button");
-    startPrintEl.type = "button";
-    startPrintEl.className = "cloud-file-item-print-button";
-    startPrintEl.textContent = "Start print";
-    startPrintEl.hidden = cloudFileSliceStatusByName.get(entry.name) !== "ready";
-    startPrintEl.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      markUserActivity();
-      openStartPrintPreview(entry.name);
-    });
-    actionsEl.appendChild(startPrintEl);
-
-    detailsEl.appendChild(actionsEl);
-
-    const metaWrapEl = document.createElement("span");
-    metaWrapEl.className = "cloud-file-item-meta";
-
-    const cloudFlagEl = buildCloudFileStatusIcon(isCloudLibraryEntryLoadedInViewer(entry));
-    cloudFlagEl.addEventListener("click", async (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      markUserActivity();
-      // Toggle like the favorite star: load this STL into the viewer, or remove
-      // it again if this entry is already the one loaded.
-      if (isCloudLibraryEntryLoadedInViewer(entry)) {
-        clearCloudOverlays();
-        setCloudStlStatus("removed");
-      } else {
-        setSelectedCloudLibraryFile(entry.name, {
-          updateSelect: true,
-          syncDataset: true,
-        });
-        await loadCloudOverlayFromSelectedFile();
-      }
-    });
-    metaWrapEl.appendChild(cloudFlagEl);
-
-    const favoriteToggleEl = buildCloudFavoriteToggleButton(isCloudLibraryEntryFavorite(entry));
-    favoriteToggleEl.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      markUserActivity();
-      toggleCloudLibraryEntryFavorite(entry);
-    });
-    metaWrapEl.appendChild(favoriteToggleEl);
-
-    itemButton.appendChild(thumbEl);
-    itemButton.appendChild(detailsEl);
-    itemButton.appendChild(metaWrapEl);
-
-    itemButton.addEventListener("click", () => {
-      markUserActivity();
-      chooseCloudLibraryFile(entry.name);
-    });
-
-    itemButton.addEventListener("keydown", (event) => {
-      if (event.key !== "Enter" && event.key !== " ") {
-        return;
-      }
-
-      event.preventDefault();
-      markUserActivity();
-      chooseCloudLibraryFile(entry.name);
-    });
-
-    cloudFileLibraryEl.appendChild(itemButton);
-  }
-}
-
-// Render a row's slice-status badge for the given status ("" hides it).
-function applyCloudFileSliceBadge(badgeEl, status) {
-  if (!badgeEl) {
-    return;
-  }
-  const normalized = status === "slicing" || status === "ready" ? status : "";
-  badgeEl.dataset.status = normalized;
-  badgeEl.hidden = normalized === "";
-  badgeEl.textContent = normalized === "slicing" ? "Slicing…" : normalized === "ready" ? "Ready" : "";
-}
-
-// Set the slice status for a file and update its row badge in place (no full
-// list re-render, which would drop clicks mid-interaction).
-function setCloudFileRowSliceStatus(fileName, status) {
-  const name = String(fileName || "").trim();
-  if (!name) {
-    return;
-  }
-  if (status) {
-    cloudFileSliceStatusByName.set(name, status);
-  } else {
-    cloudFileSliceStatusByName.delete(name);
-  }
-  if (!cloudFileLibraryEl) {
-    return;
-  }
-  const rowEl = cloudFileLibraryEl.querySelector(
-    `.cloud-file-item[data-file-name="${(window.CSS && CSS.escape) ? CSS.escape(name) : name}"]`,
-  );
-  if (rowEl) {
-    applyCloudFileSliceBadge(rowEl.querySelector(".cloud-file-item-slice-badge"), status);
-    const printBtn = rowEl.querySelector(".cloud-file-item-print-button");
-    if (printBtn) {
-      printBtn.hidden = status !== "ready";
-    }
-  }
-}
-
-// Choosing a file from the list selects it AND preloads it into the viewer so
-// the slicer starts preparing right away. Loading auto-slices (see
-// loadCloudOverlayFromSelectedFile -> autoPreparePrintSimulationForSelection),
-// which makes the bottom Play button appear once the part is sliced. The choose
-// flow also surfaces slicing feedback: it opens the Slicer flyout and marks the
-// row, then collapses the file list once the slice is ready.
-async function chooseCloudLibraryFile(fileName) {
-  autoSliceFlowActive = true;
-  setSelectedCloudLibraryFile(fileName, {
-    updateSelect: true,
-    syncDataset: true,
-  });
-  // Warm the slice in the background and badge the row, but do NOT auto-open the
-  // full-view slicer or reveal the part: the user opens the Slicer explicitly,
-  // then "Load to viewer" drops the sliced part into the scene.
-  setCloudFileRowSliceStatus(fileName, "slicing");
-  await loadCloudOverlayFromSelectedFile();
-
-  // Material gate: the print file is chosen FIRST, then material. If nothing at
-  // all is loaded in Materials (no spool/drum assignment), route the operator
-  // straight to the Materials menu to load some before continuing. If a material
-  // is already loaded we stay in Files and let the normal slice/print flow run
-  // (suitability/enough-material is still enforced later at Start print).
-  const nothingLoadedInMaterials =
-    !hotspotMaterialAssignments.spool1
-    && !hotspotMaterialAssignments.spool2
-    && !hotspotMaterialAssignments.wiredrum;
-  if (nothingLoadedInMaterials && typeof setMaterialsMenuOpen === "function") {
-    setMaterialsMenuOpen(true); // closes the Files menu (the "transfer")
-    updateBottomNavState();
-  }
-}
-
-function setSelectedCloudLibraryFile(fileName, options = {}) {
-  const {
-    updateSelect = true,
-    syncDataset = true,
-  } = options;
-
-  const normalized = String(fileName || "").trim();
-  selectedCloudLibraryFileName = normalized;
-
-  if (cloudStlFileSelectEl && updateSelect) {
-    const hasOption = Array.from(cloudStlFileSelectEl.options)
-      .some((option) => option.value === normalized);
-
-    if (normalized && !hasOption) {
-      const option = document.createElement("option");
-      option.value = normalized;
-      option.textContent = normalized;
-      cloudStlFileSelectEl.appendChild(option);
-    }
-
-    cloudStlFileSelectEl.value = normalized;
-  }
-
-  if (syncDataset) {
-    syncCloudDatasetFromSelectedStl();
-  }
-
-  refreshSelectedPrintJobUsage();
-
-  updateCloudPrintSimulationControls();
-  renderCloudFileLibrary();
-  updateBottomNavState();
-}
-
-async function fetchCloudLibraryEntriesForSource(source) {
-  const resolvedSource = resolveCloudFileSourceFilter(source);
-  const sourceParams = new URLSearchParams({ source: resolvedSource });
-  const scopedUrl = `${CLOUD_STL_FILES_API_URL}?${sourceParams.toString()}`;
-
-  let response = await fetch(scopedUrl, { cache: "no-store" });
-  if (!response.ok) {
-    // Fallback for backends that still expose a single all-sources endpoint.
-    response = await fetch(CLOUD_STL_FILES_API_URL, { cache: "no-store" });
-  }
-
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
-  }
-
-  const payload = await response.json();
-  const rawItems = Array.isArray(payload?.items)
-    ? payload.items
-    : (Array.isArray(payload?.files) ? payload.files : []);
-
-  const entries = [];
-  const seen = new Set();
-
-  for (const rawEntry of rawItems) {
-    const entry = normalizeCloudLibraryEntry(rawEntry, resolvedSource);
-    if (!entry) {
-      continue;
-    }
-
-    const key = `${entry.source}::${entry.name}`;
-    if (seen.has(key)) {
-      continue;
-    }
-
-    seen.add(key);
-    entries.push(entry);
-  }
-
-  entries.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
-  return entries;
-}
-
-function setCloudFileSourceFilter(source, options = {}) {
-  const { refresh = true } = options;
-  const nextSource = resolveCloudFileSourceFilter(source);
-  cloudFileSourceFilter = nextSource;
-  updateCloudSourceFilterButtons();
-
-  if (refresh) {
-    refreshGlobalStlFiles({ source: nextSource });
-  }
-}
-
-function resolveCloudAttributeRange(points, payloadRange) {
-  if (payloadRange && Number.isFinite(payloadRange.min) && Number.isFinite(payloadRange.max)) {
-    return {
-      min: Number(payloadRange.min),
-      max: Number(payloadRange.max),
-    };
-  }
-
-  let min = Number.POSITIVE_INFINITY;
-  let max = Number.NEGATIVE_INFINITY;
-  for (const point of points) {
-    const value = Number(point?.[3]);
-    if (!Number.isFinite(value)) {
-      continue;
-    }
-    min = Math.min(min, value);
-    max = Math.max(max, value);
-  }
-
-  if (!Number.isFinite(min) || !Number.isFinite(max)) {
-    return { min: 0, max: 1 };
-  }
-
-  if (Math.abs(max - min) <= 1e-9) {
-    return { min, max: min + 1 };
-  }
-
-  return { min, max };
-}
-
-function clearCloudOverlays() {
-  cloudStlLoadToken += 1;
-  clearCloudStlObject();
-  clearCloudPointObject();
-}
-
-async function loadCloudStlFromUrl(url, sourceLabel) {
-  const currentLoadToken = ++cloudStlLoadToken;
-  setCloudStlStatus(`loading ${sourceLabel}...`);
-
-  try {
-    const response = await fetch(url, { cache: "no-store" });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-
-    const buffer = await response.arrayBuffer();
-    if (currentLoadToken !== cloudStlLoadToken) {
-      return false;
-    }
-
-    const geometry = stlLoader.parse(buffer);
-    geometry.computeBoundingBox();
-    geometry.computeVertexNormals();
-    const unitScaleInfo = resolveCloudStlUnitScale(geometry);
-
-    clearCloudStlObject();
-    cloudStlObject = new THREE.Mesh(geometry, buildCloudStlMaterial());
-    cloudStlObject.name = "cloud-stl-overlay";
-    cloudStlObject.castShadow = false;
-    cloudStlObject.receiveShadow = false;
-    cloudStlObject.frustumCulled = false;
-    cloudStlObject.scale.setScalar(unitScaleInfo.scale);
-    cloudStlBaseQuaternion.copy(cloudStlObject.quaternion);
-    applyCloudStlSideRotation();
-    cloudStlObject.updateMatrixWorld(true);
-
-    const parentObject = getCloudStlParentObject();
-    const parentLocalBounds = computeCloudStlParentLocalBounds(parentObject);
-    attachCloudStlToParent();
-    placeCloudStlAboveParentMesh(parentObject, parentLocalBounds);
-    // Rest the part on the build plate and place it under the nozzle in BOTH
-    // horizontal axes (eje_x + eje_y), WITHOUT dropping z to pin the part's top
-    // to the head. When a bridged slice exists, honour the operator's placement
-    // on the slicer plate so the preview matches the slicer; otherwise centre it.
-    alignCloudStlUnderHeadViaXY(CLOUD_STL_DROP_ALIGN_DURATION_SEC, getSlicerPlacementWorldOffset());
-    applyCloudStlDisplayState();
-    alignCloudPointToCloudStlTransform();
-
-    const scaleLabel = unitScaleInfo.scale === 1
-      ? "1"
-      : unitScaleInfo.scale.toFixed(4);
-    console.info(`[Cloud STL] loaded from ${sourceLabel} (scale ${scaleLabel})`);
-    if (Number.isFinite(unitScaleInfo.rawMaxDimension) && Number.isFinite(unitScaleInfo.scaledMaxDimension)) {
-      console.info(
-        "[Cloud STL] unit normalization",
-        {
-          source: sourceLabel,
-          assumedUnits: unitScaleInfo.assumedUnits,
-          scale: unitScaleInfo.scale,
-          rawMaxDimensionMeters: unitScaleInfo.rawMaxDimension,
-          scaledMaxDimensionMeters: unitScaleInfo.scaledMaxDimension,
-        },
-      );
-    }
-
-    return true;
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : "unknown error";
-    setCloudStlStatus(`error (${reason})`);
-    return false;
-  }
-}
-
-function buildCloudPointObject(payload, viewMode) {
-  const sourcePoints = Array.isArray(payload?.points) ? payload.points : [];
-  const rawPoints = sourcePoints
-    .filter((point) => {
-      if (!Array.isArray(point)) {
-        return false;
-      }
-
-      return Number.isFinite(Number(point[0]))
-        && Number.isFinite(Number(point[1]))
-        && Number.isFinite(Number(point[2]));
-    })
-    .slice();
-
-  if (!rawPoints.length) {
-    throw new Error("no points returned for selected dataset");
-  }
-
-  const simAxis = resolveCloudPrintSimAxis(cloudPrintSimAxis);
-  const simDirection = resolveCloudPrintSimDirection(cloudPrintSimDirection);
-  const simAxisIndex = getCloudPrintSimAxisIndex(simAxis);
-  const simLayerStepMm = getCloudPrintSimLayerStepMm(simAxis);
-
-  let axisMin = Number.POSITIVE_INFINITY;
-  let axisMax = Number.NEGATIVE_INFINITY;
-  for (const point of rawPoints) {
-    const axisValue = Number(point[simAxisIndex]);
-    axisMin = Math.min(axisMin, axisValue);
-    axisMax = Math.max(axisMax, axisValue);
-  }
-
-  const safeAxisMin = Number.isFinite(axisMin) ? axisMin : 0;
-  const safeAxisMax = Number.isFinite(axisMax) ? axisMax : safeAxisMin;
-  const axisSpan = Math.max(safeAxisMax - safeAxisMin, 0);
-  const totalLayers = Math.max(1, Math.ceil(axisSpan / simLayerStepMm) + 1);
-
-  const simulationEntries = rawPoints.map((point) => {
-    const axisValue = Number(point[simAxisIndex]);
-    const normalizedAxisDistance = simDirection === "negative"
-      ? (safeAxisMax - axisValue)
-      : (axisValue - safeAxisMin);
-    const layerIndex = Math.max(0, Math.floor(normalizedAxisDistance / simLayerStepMm));
-    return {
-      point,
-      axisValue,
-      layerIndex,
-    };
-  });
-
-  simulationEntries.sort((a, b) => {
-    const layerDelta = a.layerIndex - b.layerIndex;
-    if (layerDelta !== 0) {
-      return layerDelta;
-    }
-
-    return simDirection === "negative"
-      ? (b.axisValue - a.axisValue)
-      : (a.axisValue - b.axisValue);
-  });
-
-  const points = simulationEntries.map((entry) => entry.point);
-
-  if (!points.length) {
-    throw new Error("no points returned for selected dataset");
-  }
-
-  const pointOffset = Array.isArray(payload?.center) && payload.center.length >= 2
-    ? [Number(payload.center[0]) || 0, Number(payload.center[1]) || 0]
-    : [0, 0];
-
-  const attributeRange = resolveCloudAttributeRange(points, payload?.attributeRange);
-  const layerIndices = new Float32Array(points.length);
-  for (let i = 0; i < points.length; i += 1) {
-    layerIndices[i] = simulationEntries[i].layerIndex;
-  }
-
-  const layerSimMeta = {
-    pointCount: points.length,
-    axisKey: simAxis,
-    axisDirection: simDirection,
-    axisMin: safeAxisMin,
-    axisMax: safeAxisMax,
-    layerStepMm: simLayerStepMm,
-    layerIndices,
-    totalLayers,
-  };
-
-  if (viewMode === "voxel") {
-    const voxelObject = buildVoxelCubeObject(
-      points,
-      attributeRange,
-      Number(payload?.voxelSizeMm) || cloudPointVoxelSizeMm,
-      Number(payload?.voxelSizeZMm) || cloudPointVoxelSizeZMm,
-      0,
-      pointOffset,
-      0x36322e,
-    );
-
-    return {
-      object: voxelObject,
-      spriteMaterial: null,
-      renderedCount: points.length,
-      layerSimMeta,
-    };
-  }
-
-  const spriteResult = buildSpriteObject(
-    points,
-    attributeRange,
-    pointOffset,
-    cloudPointSize,
-    CLOUD_POINT_OUTLINE_COLOR,
-    CLOUD_POINT_OUTLINE_START,
-  );
-
-  return {
-    object: spriteResult.object,
-    spriteMaterial: spriteResult.material,
-    renderedCount: points.length,
-    layerSimMeta,
-  };
-}
-
-async function loadCloudPointFromDataset(viewMode = "point") {
-  const resolvedMode = resolveCloudViewMode(viewMode) === "voxel" ? "voxel" : "point";
-  const datasetName = getCloudDatasetName();
-
-  setCloudStlStatus(`loading ${resolvedMode} cloud from ${datasetName}...`);
-
-  try {
-    const requested = {
-      apiView: resolvedMode,
-      voxelSizeMm: cloudPointVoxelSizeMm,
-      voxelSizeZMm: cloudPointVoxelSizeZMm,
-      maxPoints: cloudPointMaxPoints,
-    };
-
-    const payload = await fetchSensorData(requested, {
-      dataset: datasetName,
-      attribute: "loadCell",
-    });
-
-    const built = buildCloudPointObject(payload, resolvedMode);
-    clearCloudPointObject();
-    cloudPointObject = built.object;
-    cloudPointSpriteMaterial = built.spriteMaterial;
-    cloudPointObject.userData = {
-      ...(cloudPointObject.userData || {}),
-      datasetName,
-      pointViewMode: resolvedMode,
-      layerSimMeta: built.layerSimMeta || null,
-    };
-
-    cloudPointObject.name = resolvedMode === "voxel" ? "cloud-voxel-overlay" : "cloud-point-overlay";
-    cloudPointObject.scale.setScalar(CLOUD_POINT_WORLD_SCALE);
-    cloudPointObject.traverse((node) => {
-      if ("castShadow" in node) {
-        node.castShadow = false;
-      }
-      if ("receiveShadow" in node) {
-        node.receiveShadow = false;
-      }
-      if ("frustumCulled" in node) {
-        node.frustumCulled = false;
-      }
-    });
-
-    attachCloudPointToParent();
-    if (cloudStlObject) {
-      alignCloudPointToCloudStlTransform();
-    } else {
-      applyCloudPointStandaloneSideRotation();
-    }
-    applyCloudPointDisplayState();
-    initializeCloudPrintSimulationForLoadedCloud();
-
-    const label = resolvedMode === "voxel" ? "voxel cloud" : "point cloud";
-    setCloudStlStatus(`loaded ${label} (${built.renderedCount.toLocaleString()} points)`);
-    return true;
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : "unknown error";
-    setCloudStlStatus(`error loading cloud (${reason})`);
-    return false;
-  }
-}
-
-
-async function loadCloudOverlayFromDataset() {
-  // Loading cloud data should not trigger or continue palpador automation.
-  clearPendingFrontDoorSequence();
-
-  const mode = resolveCloudViewMode(cloudViewMode);
-  const shouldLoadStl = mode === "stl" || mode === "both";
-  const shouldLoadPoint = mode === "point" || mode === "voxel" || mode === "both";
-
-  if (!shouldLoadStl) {
-    clearCloudStlObject();
-  }
-  if (!shouldLoadPoint) {
-    clearCloudPointObject();
-  }
-
-  let stlSuccess = true;
-  let pointSuccess = true;
-
-  if (shouldLoadStl) {
-    stlSuccess = await loadCloudStlFromDataset();
-    if (stlSuccess && loadedCloudLibraryFileName) {
-      loadedCloudLibraryFileName = "";
-      if (cloudFileLibraryEl) {
-        renderCloudFileLibrary();
-      }
-      updateBottomNavState();
-    }
-  }
-
-  if (shouldLoadPoint) {
-    const pointMode = mode === "voxel" ? "voxel" : "point";
-    pointSuccess = await loadCloudPointFromDataset(pointMode);
-
-    if (!pointSuccess && pointMode === "voxel") {
-      const fallbackPointSuccess = await loadCloudPointFromDataset("point");
-      if (fallbackPointSuccess) {
-        pointSuccess = true;
-        cloudViewMode = "point";
-        if (cloudViewModeEl) {
-          cloudViewModeEl.value = cloudViewMode;
-        }
-        updateCloudControlVisibility();
-        setCloudStlStatus("voxel unavailable; loaded point cloud");
-      }
-    }
-  }
-
-  if (mode === "both") {
-    if (stlSuccess && pointSuccess) {
-      setCloudStlStatus("loaded stl + point cloud");
-    } else if (!stlSuccess && !pointSuccess) {
-      setCloudStlStatus("failed to load stl and point cloud");
-    } else if (!stlSuccess) {
-      setCloudStlStatus("point cloud loaded; stl failed");
-    } else {
-      setCloudStlStatus("stl loaded; point cloud failed");
-    }
-  }
-
-  return stlSuccess && pointSuccess;
-}
-
 let printSimAutoRunInProgress = false;
 // True only during the choose-a-file flow, so the auto-open/auto-collapse menu
 // behaviour fires only then — a manual flyout Prepare or a profile-change
@@ -11699,230 +7204,6 @@ let autoSliceFlowActive = false;
 // client-side clip reveal if the slicer is unreachable. The in-flight guard
 // means selecting a new part while one is still slicing is ignored until the
 // current slice settles (kiosk one-at-a-time).
-async function autoPreparePrintSimulationForSelection() {
-  // Never run a background slice while a docked print is starting/active — its
-  // prepare() would race and could stomp the live print's toolpath source.
-  if (!printSim || printSimAutoRunInProgress || isDockedPrintActive) {
-    return;
-  }
-  if (!cloudStlObject || !hasLoadedCloudFileForPrint()) {
-    return;
-  }
-
-  // Capture the flag now (before any await) so only the choose-flow drives the
-  // menu adaptation, and clear it once consumed.
-  const isAutoFlow = autoSliceFlowActive;
-  autoSliceFlowActive = false;
-  const fileName = selectedCloudLibraryFileName;
-
-  printSimAutoRunInProgress = true;
-  try {
-    const ready = await printSim.prepare();
-    // "ready" (→ the row's "Start print" button) must mean a REAL sliced toolpath,
-    // not prepare()'s clip-reveal fallback (which also returns true but has no
-    // toolpath — the part isn't actually sliced). Require a toolpath source.
-    const hasRealToolpath =
-      typeof printSim.getSource === "function" && printSim.getSource() === "toolpath";
-    if (isAutoFlow) {
-      // Only badge the row. Revealing the part is deferred to "Load to viewer",
-      // so the warmed slice does not collapse the Files list behind the slicer.
-      setCloudFileRowSliceStatus(fileName, (ready && hasRealToolpath) ? "ready" : "");
-    }
-    // Reflect the slicer's orientation/placement in the main model when a real
-    // toolpath is prepared (shows the placed slicer solid; else keeps cloud STL).
-    updateSlicerModelPreview();
-  } catch (error) {
-    console.warn("[printSim] auto slice failed:", error?.message || error);
-    if (isAutoFlow) {
-      setCloudFileRowSliceStatus(fileName, "");
-    }
-  } finally {
-    printSimAutoRunInProgress = false;
-    updateBottomNavState();
-  }
-}
-
-async function loadCloudOverlayFromSelectedFile() {
-  // Keep palpador static during file loading workflows.
-  clearPendingFrontDoorSequence();
-
-  let mode = resolveCloudViewMode(cloudViewMode);
-  if (mode === "point" || mode === "voxel") {
-    cloudViewMode = "stl";
-    if (cloudViewModeEl) {
-      cloudViewModeEl.value = cloudViewMode;
-    }
-    updateCloudControlVisibility();
-    mode = "stl";
-  }
-
-  const stlSuccess = await loadCloudStlFromSelectedFile();
-
-  if (stlSuccess) {
-    // Choosing an STL auto-preloads it into the slicer (real-slicer toolpath at
-    // the model's scene position). Play stays manual — the bottom Play button
-    // appears once slicing completes (see updateBottomNavState).
-    autoPreparePrintSimulationForSelection();
-  }
-
-  if (mode !== "both") {
-    return stlSuccess;
-  }
-
-  const pointSuccess = await loadCloudPointFromDataset("point");
-  if (stlSuccess && pointSuccess) {
-    setCloudStlStatus("loaded stl + point cloud");
-  } else if (!pointSuccess) {
-    setCloudStlStatus("stl loaded; point cloud failed");
-  }
-
-  return stlSuccess && pointSuccess;
-}
-
-async function ensureCloudPointPrintMode() {
-  syncCloudDatasetFromSelectedStl();
-
-  cloudViewMode = "point";
-  if (cloudViewModeEl) {
-    cloudViewModeEl.value = cloudViewMode;
-  }
-  updateCloudControlVisibility();
-
-  const datasetName = getCloudDatasetName();
-  const layerMeta = getCloudPointLayerSimulationMeta();
-  const loadedDatasetName = String(cloudPointObject?.userData?.datasetName || "").trim();
-  const loadedPointMode = String(cloudPointObject?.userData?.pointViewMode || "").trim().toLowerCase();
-  const shouldReloadPointCloud = !layerMeta
-    || loadedDatasetName !== datasetName
-    || loadedPointMode !== "point";
-
-  if (shouldReloadPointCloud) {
-    const pointLoaded = await loadCloudPointFromDataset("point");
-    if (!pointLoaded) {
-      return false;
-    }
-  }
-
-  // Printing simulation is point-only; STL is removed once point cloud is aligned.
-  clearCloudStlObject();
-  applyCloudPointDisplayState();
-  setCloudStlStatus(`point print mode (${datasetName})`);
-  return Boolean(getCloudPointLayerSimulationMeta());
-}
-
-async function refreshGlobalStlFiles(options = {}) {
-  if (!cloudStlFileSelectEl) {
-    return;
-  }
-
-  const source = resolveCloudFileSourceFilter(options.source ?? cloudFileSourceFilter);
-  cloudFileSourceFilter = source;
-  updateCloudSourceFilterButtons();
-  const previousSelection = selectedCloudLibraryFileName || String(cloudStlFileSelectEl.value || "").trim();
-
-  if (cloudFileLibraryEl) {
-    setCloudLibraryMessage("Loading files...");
-  }
-
-  cloudStlFileSelectEl.textContent = "";
-  const placeholder = document.createElement("option");
-  placeholder.value = "";
-  placeholder.textContent = "Loading...";
-  cloudStlFileSelectEl.appendChild(placeholder);
-
-  try {
-    const entries = await fetchCloudLibraryEntriesForSource(source);
-    cloudFileLibraryEntries = entries;
-
-    cloudStlFileSelectEl.textContent = "";
-    if (!entries.length) {
-      const emptyOption = document.createElement("option");
-      emptyOption.value = "";
-      emptyOption.textContent = "No STL files";
-      cloudStlFileSelectEl.appendChild(emptyOption);
-      selectedCloudLibraryFileName = "";
-      refreshSelectedPrintJobUsage();
-      renderCloudFileLibrary();
-      updateCloudPrintSimulationControls();
-      return;
-    }
-
-    const uniqueNames = Array.from(new Set(entries.map((entry) => entry.name)));
-    for (const fileName of uniqueNames) {
-      const option = document.createElement("option");
-      option.value = fileName;
-      option.textContent = fileName;
-      cloudStlFileSelectEl.appendChild(option);
-    }
-
-    const selectedFile = (previousSelection && uniqueNames.includes(previousSelection))
-      ? previousSelection
-      : uniqueNames[0];
-
-    setSelectedCloudLibraryFile(selectedFile, {
-      updateSelect: true,
-      syncDataset: true,
-    });
-  } catch (error) {
-    cloudFileLibraryEntries = [];
-    cloudStlFileSelectEl.textContent = "";
-
-    const failedOption = document.createElement("option");
-    failedOption.value = "";
-    failedOption.textContent = "Unavailable";
-    cloudStlFileSelectEl.appendChild(failedOption);
-
-    selectedCloudLibraryFileName = "";
-    refreshSelectedPrintJobUsage();
-    setCloudLibraryMessage("Source unavailable");
-
-    const reason = error instanceof Error ? error.message : "unknown error";
-    setCloudStlStatus(`file list error (${reason})`);
-    updateCloudPrintSimulationControls();
-  }
-}
-
-
-async function loadCloudStlFromDataset() {
-  const datasetName = getCloudDatasetName();
-  const params = new URLSearchParams();
-  if (datasetName) {
-    params.set("dataset", datasetName);
-  }
-
-  const suffix = params.toString();
-  const url = suffix
-    ? `${CLOUD_STL_DATASET_API_URL}?${suffix}`
-    : CLOUD_STL_DATASET_API_URL;
-  const sourceLabel = datasetName ? `dataset ${datasetName}` : "default dataset";
-  return loadCloudStlFromUrl(url, sourceLabel);
-}
-
-async function loadCloudStlFromSelectedFile() {
-  if (!cloudStlFileSelectEl) {
-    return;
-  }
-
-  const selectedFile = (cloudStlFileSelectEl.value || "").trim();
-  if (!selectedFile) {
-    setCloudStlStatus("select a global STL file first");
-    return false;
-  }
-
-  syncCloudDatasetFromSelectedStl();
-
-  const params = new URLSearchParams({ name: selectedFile });
-  const url = `${CLOUD_STL_FILE_API_URL}?${params.toString()}`;
-  const loaded = await loadCloudStlFromUrl(url, selectedFile);
-  if (loaded) {
-    loadedCloudLibraryFileName = selectedFile;
-    if (cloudFileLibraryEl) {
-      renderCloudFileLibrary();
-    }
-    updateBottomNavState();
-  }
-  return loaded;
-}
 
 function millimetersToMeters(valueMm) {
   return Number(valueMm) / 1000;
@@ -13262,7 +8543,7 @@ function getPrintBedMeasureObject() {
   const printObject = printSim && typeof printSim.getPrintObject === "function"
     ? printSim.getPrintObject()
     : null;
-  return printObject || cloudStlObject || null;
+  return printObject || getCloudStlObject() || null;
 }
 
 // Substitute the STL with the sliced model: when the print source is a toolpath
@@ -13990,876 +9271,7 @@ function computeObjectLocalBounds(rootObject, options = {}) {
   return hasPoint ? localBounds : null;
 }
 
-function createAssemblyAnnotationManager(layerEl) {
-  if (!layerEl) {
-    return {
-      clear: () => {},
-      rebuildFromRobot: () => {},
-      update: () => {},
-      onResize: () => {},
-    };
-  }
 
-  const svgNs = "http://www.w3.org/2000/svg";
-  const calloutSvg = document.createElementNS(svgNs, "svg");
-  calloutSvg.classList.add("assembly-annotation-callouts");
-  layerEl.appendChild(calloutSvg);
-
-  const anchorWorld = new THREE.Vector3();
-  const projected = new THREE.Vector3();
-  const centerToAnchor = new THREE.Vector3();
-  const rayDirection = new THREE.Vector3();
-  const cameraForward = new THREE.Vector3();
-  const focusPoint = new THREE.Vector3();
-  const anchorOffset = new THREE.Vector3();
-  const raycaster = new THREE.Raycaster();
-  const previousCameraPosition = new THREE.Vector3();
-  const previousControlsTarget = new THREE.Vector3();
-  const previousCameraQuaternion = new THREE.Quaternion();
-  const silhouetteCornerWorld = new THREE.Vector3();
-  const silhouetteCornerProjected = new THREE.Vector3();
-  const outsideDirection = new THREE.Vector2();
-  const adjustedButtonPosition = { x: 0, y: 0 };
-  const items = [];
-  const robotLocalCorners = [];
-  const occlusionMeshes = [];
-  let activeItemId = null;
-  let activeItemUntilMs = 0;
-  let lastUpdateMs = -Infinity;
-  let cachedViewportWidth = 0;
-  let cachedViewportHeight = 0;
-  let hasCameraSnapshot = false;
-  let occlusionRoundRobinIndex = 0;
-  let lastInvokedItemId = null;
-  const modelScreenBounds = {
-    minX: 0,
-    maxX: 0,
-    minY: 0,
-    maxY: 0,
-    centerX: 0,
-    centerY: 0,
-    valid: false,
-  };
-
-  const isOccluderMaterial = (material) => {
-    if (!material) {
-      return true;
-    }
-
-    if (Array.isArray(material)) {
-      return material.some((entry) => isOccluderMaterial(entry));
-    }
-
-    if (material.visible === false) {
-      return false;
-    }
-
-    if (material.transparent && Number(material.opacity) < 0.8) {
-      return false;
-    }
-
-    return true;
-  };
-
-  const hideItem = (item) => {
-    item.button.hidden = true;
-    item.button.classList.remove("is-visible", "is-open", "is-occluded", "is-active");
-    item.line.style.display = "none";
-    item.lineEnd.style.display = "none";
-    item.currentButtonX = null;
-    item.currentButtonY = null;
-  };
-
-  const isDescendantOf = (node, ancestor) => {
-    let cursor = node;
-    while (cursor) {
-      if (cursor === ancestor) {
-        return true;
-      }
-      cursor = cursor.parent;
-    }
-    return false;
-  };
-
-  const collectOcclusionMeshes = () => {
-    occlusionMeshes.length = 0;
-    if (!robotRoot || !ENABLE_ANNOTATION_OCCLUSION) {
-      return;
-    }
-
-    robotRoot.traverse((node) => {
-      if (!node.isMesh || !node.visible || !node.geometry) {
-        return;
-      }
-      if (!isOccluderMaterial(node.material)) {
-        return;
-      }
-      occlusionMeshes.push(node);
-    });
-  };
-
-  const rebuildRobotLocalCorners = () => {
-    robotLocalCorners.length = 0;
-    if (!robotRoot) {
-      return;
-    }
-
-    const localBounds = computeObjectLocalBounds(robotRoot);
-    if (!localBounds || localBounds.isEmpty()) {
-      return;
-    }
-
-    for (let cornerIndex = 0; cornerIndex < 8; cornerIndex += 1) {
-      robotLocalCorners.push(new THREE.Vector3(
-        (cornerIndex & 1) ? localBounds.max.x : localBounds.min.x,
-        (cornerIndex & 2) ? localBounds.max.y : localBounds.min.y,
-        (cornerIndex & 4) ? localBounds.max.z : localBounds.min.z,
-      ));
-    }
-  };
-
-  const updateModelScreenBounds = () => {
-    modelScreenBounds.valid = false;
-
-    if (!robotRoot || !robotLocalCorners.length) {
-      return;
-    }
-
-    let minX = Number.POSITIVE_INFINITY;
-    let maxX = Number.NEGATIVE_INFINITY;
-    let minY = Number.POSITIVE_INFINITY;
-    let maxY = Number.NEGATIVE_INFINITY;
-    let visibleCornerCount = 0;
-
-    for (const localCorner of robotLocalCorners) {
-      silhouetteCornerWorld.copy(localCorner);
-      robotRoot.localToWorld(silhouetteCornerWorld);
-      silhouetteCornerProjected.copy(silhouetteCornerWorld).project(camera);
-
-      if (
-        !Number.isFinite(silhouetteCornerProjected.x)
-        || !Number.isFinite(silhouetteCornerProjected.y)
-        || !Number.isFinite(silhouetteCornerProjected.z)
-      ) {
-        continue;
-      }
-
-      const screenX = (silhouetteCornerProjected.x * 0.5 + 0.5) * window.innerWidth;
-      const screenY = (-silhouetteCornerProjected.y * 0.5 + 0.5) * window.innerHeight;
-      minX = Math.min(minX, screenX);
-      maxX = Math.max(maxX, screenX);
-      minY = Math.min(minY, screenY);
-      maxY = Math.max(maxY, screenY);
-      visibleCornerCount += 1;
-    }
-
-    if (visibleCornerCount < 2 || !Number.isFinite(minX) || !Number.isFinite(minY)) {
-      return;
-    }
-
-    modelScreenBounds.minX = minX;
-    modelScreenBounds.maxX = maxX;
-    modelScreenBounds.minY = minY;
-    modelScreenBounds.maxY = maxY;
-    modelScreenBounds.centerX = (minX + maxX) * 0.5;
-    modelScreenBounds.centerY = (minY + maxY) * 0.5;
-    modelScreenBounds.valid = true;
-  };
-
-  const rectOverlapsModelBounds = (left, top, width, height, padding = 6) => {
-    if (!modelScreenBounds.valid) {
-      return false;
-    }
-
-    const right = left + width;
-    const bottom = top + height;
-    const paddedMinX = modelScreenBounds.minX - padding;
-    const paddedMaxX = modelScreenBounds.maxX + padding;
-    const paddedMinY = modelScreenBounds.minY - padding;
-    const paddedMaxY = modelScreenBounds.maxY + padding;
-
-    return !(
-      right < paddedMinX
-      || left > paddedMaxX
-      || bottom < paddedMinY
-      || top > paddedMaxY
-    );
-  };
-
-  const moveButtonOutsideModelBounds = (buttonLeft, buttonTop, width, height, screenOffset) => {
-    if (!rectOverlapsModelBounds(buttonLeft, buttonTop, width, height, 8)) {
-      adjustedButtonPosition.x = buttonLeft;
-      adjustedButtonPosition.y = buttonTop;
-      return adjustedButtonPosition;
-    }
-
-    const maxX = Math.max(window.innerWidth - width - 8, 8);
-    const maxY = Math.max(window.innerHeight - height - 8, 8);
-    let nextX = buttonLeft;
-    let nextY = buttonTop;
-
-    outsideDirection.set(
-      (nextX + (width * 0.5)) - modelScreenBounds.centerX,
-      (nextY + (height * 0.5)) - modelScreenBounds.centerY,
-    );
-
-    if (outsideDirection.lengthSq() <= 1e-6) {
-      outsideDirection.set(
-        (screenOffset?.[0] || 1),
-        (screenOffset?.[1] || -1),
-      );
-    }
-    outsideDirection.normalize();
-
-    for (let step = 0; step < 8; step += 1) {
-      if (!rectOverlapsModelBounds(nextX, nextY, width, height, 8)) {
-        break;
-      }
-
-      nextX = clamp(nextX + (outsideDirection.x * 18), 8, maxX);
-      nextY = clamp(nextY + (outsideDirection.y * 18), 8, maxY);
-    }
-
-    adjustedButtonPosition.x = nextX;
-    adjustedButtonPosition.y = nextY;
-    return adjustedButtonPosition;
-  };
-
-  const isAnchorCrossingButtonBody = (anchorX, buttonLeft, width) => (
-    anchorX > buttonLeft && anchorX < (buttonLeft + width)
-  );
-
-  const computeFlippedButtonX = (anchorX, buttonLeft, width, screenOffsetX) => {
-    const maxX = Math.max(window.innerWidth - width - 8, 8);
-    const gap = Math.max(Math.abs(Number(screenOffsetX) || 0), 22);
-    const leftCandidate = clamp(anchorX - gap - width, 8, maxX);
-    const rightCandidate = clamp(anchorX + gap, 8, maxX);
-    const currentCenterX = buttonLeft + (width * 0.5);
-    const currentOnRightSide = currentCenterX >= anchorX;
-
-    let nextX = currentOnRightSide ? leftCandidate : rightCandidate;
-    if (!isAnchorCrossingButtonBody(anchorX, nextX, width)) {
-      return nextX;
-    }
-
-    const alternateX = currentOnRightSide ? rightCandidate : leftCandidate;
-    if (!isAnchorCrossingButtonBody(anchorX, alternateX, width)) {
-      return alternateX;
-    }
-
-    const leftDistance = Math.abs((leftCandidate + (width * 0.5)) - anchorX);
-    const rightDistance = Math.abs((rightCandidate + (width * 0.5)) - anchorX);
-    nextX = leftDistance >= rightDistance ? leftCandidate : rightCandidate;
-    return nextX;
-  };
-
-  const computeOccluded = (item, worldPoint, isProjectedOutside) => {
-    if (isProjectedOutside) {
-      return true;
-    }
-
-    rayDirection.copy(worldPoint).sub(camera.position);
-    const targetDistance = rayDirection.length();
-    if (!Number.isFinite(targetDistance) || targetDistance <= 1e-6) {
-      return false;
-    }
-
-    rayDirection.divideScalar(targetDistance);
-    raycaster.set(camera.position, rayDirection);
-    raycaster.near = 0.01;
-    raycaster.far = Math.max(targetDistance - ANNOTATION_OCCLUSION_TOLERANCE, 0.01);
-
-    const hits = raycaster.intersectObjects(occlusionMeshes, false);
-    for (const hit of hits) {
-      if (!hit.object || !hit.object.visible) {
-        continue;
-      }
-      if (isDescendantOf(hit.object, item.targetObject)) {
-        continue;
-      }
-      return true;
-    }
-
-    return false;
-  };
-
-  const getItemIsOpen = (itemId) => {
-    if (itemId === "front-door") {
-      return isFrontDoorOpen();
-    }
-    if (itemId === "spools-door") {
-      if (isFrontDoorOpen()) {
-        return activeHotspotPanelId === HOTSPOT_PANEL_MATERIALS_ID;
-      }
-      return isSpoolsDoorOpen();
-    }
-    if (itemId === "feeder-drive") {
-      return activeHotspotPanelId === HOTSPOT_PANEL_MATERIALS_ID;
-    }
-    if (itemId === "top-cover") {
-      return isTopCoverOpen();
-    }
-    return false;
-  };
-
-  const runItemToggleAction = (item) => {
-    if (item.id === "front-door") {
-      return setFrontDoorOpenState(!isFrontDoorOpen());
-    }
-    if (item.id === "spools-door") {
-      return setSpoolsDoorOpenState(!isSpoolsDoorOpen());
-    }
-    if (item.id === "top-cover") {
-      return setTopCoverOpenState(!isTopCoverOpen());
-    }
-    return false;
-  };
-
-  const runItemCameraAction = (item, worldPoint) => {
-    if (item.id === "front-door") {
-      closeHotspotContextPanel();
-      return runFrontDoorButtonAction(worldPoint);
-    }
-    if (item.id === "spools-door") {
-      if (isFrontDoorOpen()) {
-        setHotspotMaterialsFocusSpool(null);
-        return toggleHotspotContextPanel(HOTSPOT_PANEL_MATERIALS_ID);
-      }
-      closeHotspotContextPanel();
-      return runSpoolsDoorButtonAction(worldPoint);
-    }
-    if (item.id === "feeder-drive") {
-      setHotspotMaterialsFocusSpool(null);
-      return toggleHotspotContextPanel(HOTSPOT_PANEL_MATERIALS_ID);
-    }
-    if (item.id === "top-cover") {
-      closeHotspotContextPanel();
-      return runTopCoverButtonAction(worldPoint);
-    }
-    return false;
-  };
-
-  const setNavButtonState = (itemId, options = {}) => {
-    const buttonEl = annotationNavButtonsById[itemId];
-    if (!buttonEl) {
-      return;
-    }
-
-    const isEnabled = options.enabled !== false;
-    const isActive = isEnabled && Boolean(options.active);
-    const isOpen = isEnabled && Boolean(options.open);
-
-    buttonEl.disabled = !isEnabled;
-    buttonEl.classList.toggle("active", isActive || isOpen);
-    buttonEl.classList.toggle("is-open", isOpen);
-    buttonEl.setAttribute("aria-pressed", (isActive || isOpen) ? "true" : "false");
-  };
-
-  const closeAssemblyForItem = (itemId) => {
-    if (itemId === "front-door") {
-      return setFrontDoorOpenState(false);
-    }
-    if (itemId === "spools-door") {
-      return setSpoolsDoorOpenState(false);
-    }
-    if (itemId === "feeder-drive") {
-      return closeHotspotContextPanel();
-    }
-    if (itemId === "top-cover") {
-      return setTopCoverOpenState(false);
-    }
-    return false;
-  };
-
-  const runMenuActionWithSwitchHandling = (item, worldPoint) => {
-    const supportsSwitchHandling = item.id !== "feeder-drive" && !(isFrontDoorOpen() && item.id === "spools-door");
-    const switchedItem = supportsSwitchHandling && Boolean(lastInvokedItemId && lastInvokedItemId !== item.id);
-    const actionWorldPoint = worldPoint.clone();
-
-    if (switchedItem) {
-      closeAssemblyForItem(lastInvokedItemId);
-    }
-
-    runItemCameraAction(item, actionWorldPoint);
-    if (supportsSwitchHandling) {
-      lastInvokedItemId = item.id;
-    }
-  };
-
-  const resolveTargetObject = (definition) => {
-    if (!robotRoot) {
-      return null;
-    }
-
-    const primaryTarget = definition.targetObjectName
-      ? robotRoot.getObjectByName(definition.targetObjectName)
-      : null;
-    if (primaryTarget) {
-      return primaryTarget;
-    }
-
-    if (!definition.fallbackTargetObjectName) {
-      return null;
-    }
-
-    return robotRoot.getObjectByName(definition.fallbackTargetObjectName);
-  };
-
-  const computeLocalAnchorData = (targetObject, definition) => {
-    const localBounds = computeObjectLocalBounds(targetObject);
-    const localCenter = new THREE.Vector3();
-    const localSize = new THREE.Vector3(0.2, 0.2, 0.2);
-
-    if (localBounds && !localBounds.isEmpty()) {
-      localBounds.getCenter(localCenter);
-      localBounds.getSize(localSize);
-    }
-
-    const localAnchor = localCenter.clone();
-    const localOffset = Array.isArray(definition.localOffset) ? definition.localOffset : [0, 0, 0];
-    anchorOffset.set(
-      Number(localOffset[0]) || 0,
-      Number(localOffset[1]) || 0,
-      Number(localOffset[2]) || 0,
-    );
-    localAnchor.add(anchorOffset);
-
-    return {
-      localCenter,
-      localSize,
-      localAnchor,
-    };
-  };
-
-  const hasControlData = (itemId) => {
-    if (itemId === "front-door") {
-      return Boolean(getFrontDoorControlData());
-    }
-    if (itemId === "spools-door") {
-      return Boolean(getSpoolsDoorControlData());
-    }
-    if (itemId === "feeder-drive") {
-      return Boolean(leftFeederWheelState || rightFeederWheelState);
-    }
-    if (itemId === "top-cover") {
-      return Boolean(getTopCoverControlData());
-    }
-    return false;
-  };
-
-  const setCalloutSvgSize = () => {
-    const width = window.innerWidth;
-    const height = window.innerHeight;
-
-    if (width === cachedViewportWidth && height === cachedViewportHeight) {
-      return;
-    }
-
-    cachedViewportWidth = width;
-    cachedViewportHeight = height;
-    calloutSvg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-    calloutSvg.setAttribute("width", String(width));
-    calloutSvg.setAttribute("height", String(height));
-
-    for (const item of items) {
-      const rect = item.button.getBoundingClientRect();
-      item.buttonWidth = rect.width || item.buttonWidth;
-      item.buttonHeight = rect.height || item.buttonHeight;
-    }
-  };
-
-  const clear = () => {
-    for (const item of items) {
-      if (item.navButton) {
-        item.navButton.onclick = null;
-      }
-      item.button.remove();
-      item.line.remove();
-      item.lineEnd.remove();
-    }
-    items.length = 0;
-    robotLocalCorners.length = 0;
-    activeItemId = null;
-    activeItemUntilMs = 0;
-    occlusionRoundRobinIndex = 0;
-    hasCameraSnapshot = false;
-    lastInvokedItemId = null;
-
-    for (const itemId of Object.keys(annotationNavButtonsById)) {
-      setNavButtonState(itemId, { enabled: false, active: false, open: false });
-    }
-
-    layerEl.setAttribute("aria-hidden", "true");
-  };
-
-  const rebuildFromRobot = () => {
-    clear();
-
-    if (!robotRoot) {
-      return;
-    }
-
-    robotRoot.updateWorldMatrix(true, true);
-    rebuildRobotLocalCorners();
-    setCalloutSvgSize();
-    collectOcclusionMeshes();
-
-    for (const itemId of Object.keys(annotationNavButtonsById)) {
-      setNavButtonState(itemId, { enabled: false, active: false, open: false });
-    }
-
-    for (const definition of ANNOTATION_DEFINITIONS) {
-      if (!hasControlData(definition.id)) {
-        continue;
-      }
-
-      const targetObject = resolveTargetObject(definition);
-      if (!targetObject) {
-        continue;
-      }
-
-      const {
-        localCenter,
-        localSize,
-        localAnchor,
-      } = computeLocalAnchorData(targetObject, definition);
-
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "assembly-annotation";
-      button.setAttribute("aria-label", definition.label);
-      button.dataset.annotationId = definition.id;
-
-      const labelEl = document.createElement("span");
-      labelEl.className = "assembly-annotation-label";
-      labelEl.textContent = definition.label;
-
-      button.appendChild(labelEl);
-
-      const line = document.createElementNS(svgNs, "line");
-      line.classList.add("assembly-callout-line");
-      const lineEnd = document.createElementNS(svgNs, "circle");
-      lineEnd.classList.add("assembly-callout-end");
-      lineEnd.setAttribute("r", "3.1");
-      calloutSvg.appendChild(line);
-      calloutSvg.appendChild(lineEnd);
-      layerEl.appendChild(button);
-
-      const item = {
-        id: definition.id,
-        definition,
-        targetObject,
-        localCenter,
-        localSize,
-        localAnchor,
-        screenOffset: definition.screenOffset,
-        button,
-        line,
-        lineEnd,
-        navButton: annotationNavButtonsById[definition.id] || null,
-        buttonWidth: 130,
-        buttonHeight: 34,
-        occluded: false,
-        lastOcclusionUpdateMs: -Infinity,
-        previousAnchorWorld: new THREE.Vector3(),
-        hasPreviousAnchorWorld: false,
-        currentButtonX: null,
-        currentButtonY: null,
-      };
-
-      const buttonRect = button.getBoundingClientRect();
-      item.buttonWidth = buttonRect.width || item.buttonWidth;
-      item.buttonHeight = buttonRect.height || item.buttonHeight;
-
-      const triggerItemAction = () => {
-        markUserActivity();
-        activeItemId = item.id;
-        activeItemUntilMs = performance.now() + ANNOTATION_CLICK_ACTIVE_HOLD_MS;
-
-        focusPoint.copy(item.localAnchor);
-        item.targetObject.localToWorld(focusPoint);
-        runMenuActionWithSwitchHandling(item, focusPoint);
-      };
-
-      button.addEventListener("click", triggerItemAction);
-
-      if (item.navButton) {
-        const triggerNavAction = () => {
-          markUserActivity();
-          activeItemId = item.id;
-          activeItemUntilMs = performance.now() + ANNOTATION_CLICK_ACTIVE_HOLD_MS;
-
-          focusPoint.copy(item.localAnchor);
-          item.targetObject.localToWorld(focusPoint);
-          runMenuActionWithSwitchHandling(item, focusPoint);
-        };
-
-        const navLabel = item.id === "front-door" ? "Front Door" : definition.label;
-        item.navButton.textContent = navLabel;
-        item.navButton.onclick = triggerNavAction;
-        setNavButtonState(item.id, { enabled: true, active: false, open: false });
-      }
-
-      items.push(item);
-    }
-
-    layerEl.setAttribute("aria-hidden", items.length ? "false" : "true");
-  };
-
-  const update = (nowMs = performance.now()) => {
-    if (!items.length || !robotRoot) {
-      return;
-    }
-
-    if (ANNOTATION_UPDATE_INTERVAL_MS > 0 && (nowMs - lastUpdateMs) < ANNOTATION_UPDATE_INTERVAL_MS) {
-      return;
-    }
-    lastUpdateMs = nowMs;
-
-    cameraForward.copy(controls.target).sub(camera.position).normalize();
-    updateModelScreenBounds();
-
-    let cameraMoved = false;
-    if (ENABLE_ANNOTATION_OCCLUSION) {
-      cameraMoved = (
-        !hasCameraSnapshot ||
-        previousCameraPosition.distanceToSquared(camera.position) > 1e-8 ||
-        previousControlsTarget.distanceToSquared(controls.target) > 1e-8 ||
-        (1 - Math.abs(previousCameraQuaternion.dot(camera.quaternion))) > 1e-7
-      );
-
-      previousCameraPosition.copy(camera.position);
-      previousControlsTarget.copy(controls.target);
-      previousCameraQuaternion.copy(camera.quaternion);
-      hasCameraSnapshot = true;
-    }
-
-    const occlusionBudget = Math.max(0, Math.min(ANNOTATION_OCCLUSION_RAYCASTS_PER_FRAME, items.length));
-    const occlusionStartIndex = occlusionRoundRobinIndex;
-    const isFrontDoorViewActive = isFrontDoorOpen();
-    const shouldUseFilesPopupRail = isCloudModelMenuOpen;
-    setHotspotTriggerRailVisible(shouldUseFilesPopupRail);
-
-    if (!shouldUseFilesPopupRail && activeHotspotPanelId && !keepHotspotContextPanelVisible) {
-      closeHotspotContextPanel();
-    }
-
-    for (let itemIndex = 0; itemIndex < items.length; itemIndex += 1) {
-      const item = items[itemIndex];
-      const open = getItemIsOpen(item.id);
-      item.isOpen = open;
-
-      if (
-        item.id === "front-door"
-        || item.id === "spools-door"
-        || isFrontDoorViewActive
-        || (!isFrontDoorViewActive && item.id === "feeder-drive")
-        || (shouldUseFilesPopupRail && (item.id === "spools-door" || item.id === "feeder-drive"))
-      ) {
-        item.isVisible = false;
-        item.autoActiveScore = Number.POSITIVE_INFINITY;
-        hideItem(item);
-        continue;
-      }
-
-      anchorWorld.copy(item.localAnchor);
-      item.targetObject.localToWorld(anchorWorld);
-
-      let anchorMoved = !item.hasPreviousAnchorWorld;
-      if (!anchorMoved) {
-        anchorMoved = item.previousAnchorWorld.distanceToSquared(anchorWorld) > 1e-8;
-      }
-      item.previousAnchorWorld.copy(anchorWorld);
-      item.hasPreviousAnchorWorld = true;
-
-      projected.copy(anchorWorld).project(camera);
-
-      if (!Number.isFinite(projected.x) || !Number.isFinite(projected.y) || !Number.isFinite(projected.z)) {
-        item.isVisible = false;
-        hideItem(item);
-        continue;
-      }
-
-      const isProjectedOutside = (
-        projected.z <= -1 ||
-        projected.z >= 1 ||
-        Math.abs(projected.x) > 1 ||
-        Math.abs(projected.y) > 1
-      );
-
-      const clampedProjectedX = clamp(projected.x, -0.92, 0.92);
-      const clampedProjectedY = clamp(projected.y, -0.92, 0.92);
-
-      item.isVisible = true;
-
-      const anchorX = (clampedProjectedX * 0.5 + 0.5) * window.innerWidth;
-      const anchorY = (-clampedProjectedY * 0.5 + 0.5) * window.innerHeight;
-      const buttonWidth = item.buttonWidth;
-      const buttonHeight = item.buttonHeight;
-      const overlayYBounds = getOverlayVerticalSafeBounds(buttonHeight);
-
-      let buttonX = clamp(
-        anchorX + item.screenOffset[0],
-        8,
-        Math.max(window.innerWidth - buttonWidth - 8, 8),
-      );
-      let buttonY = clamp(
-        anchorY + item.screenOffset[1],
-        overlayYBounds.minY,
-        overlayYBounds.maxY,
-      );
-
-      const isActiveMaterialsPinnedLeft = item.id === "spools-door"
-        && (open || activeItemId === item.id);
-      if (isActiveMaterialsPinnedLeft) {
-        const maxScreenX = Math.max(window.innerWidth - buttonWidth - 8, 8);
-        const modelRelativeLeftTargetX = modelScreenBounds.valid
-          ? modelScreenBounds.minX - buttonWidth - 20
-          : 136;
-        buttonX = clamp(modelRelativeLeftTargetX, 128, Math.min(220, maxScreenX));
-      }
-
-      if (modelScreenBounds.valid && !isActiveMaterialsPinnedLeft) {
-        const moved = moveButtonOutsideModelBounds(buttonX, buttonY, buttonWidth, buttonHeight, item.screenOffset);
-        buttonX = moved.x;
-        buttonY = moved.y;
-      }
-
-      if (!isActiveMaterialsPinnedLeft && isAnchorCrossingButtonBody(anchorX, buttonX, buttonWidth)) {
-        buttonX = computeFlippedButtonX(anchorX, buttonX, buttonWidth, item.screenOffset?.[0]);
-
-        if (modelScreenBounds.valid) {
-          const moved = moveButtonOutsideModelBounds(buttonX, buttonY, buttonWidth, buttonHeight, item.screenOffset);
-          buttonX = moved.x;
-          buttonY = moved.y;
-        }
-      }
-
-      // Keep callouts clear of fixed top and bottom menus while camera moves.
-      buttonY = clamp(buttonY, overlayYBounds.minY, overlayYBounds.maxY);
-
-      if (item.id === "spools-door" && Number.isFinite(item.currentButtonX) && Number.isFinite(item.currentButtonY)) {
-        const xSmoothing = isActiveMaterialsPinnedLeft ? 0.2 : 0.14;
-        const ySmoothing = isActiveMaterialsPinnedLeft ? 0.18 : 0.14;
-        buttonX = THREE.MathUtils.lerp(item.currentButtonX, buttonX, xSmoothing);
-        buttonY = THREE.MathUtils.lerp(item.currentButtonY, buttonY, ySmoothing);
-      }
-
-      item.currentButtonX = buttonX;
-      item.currentButtonY = buttonY;
-
-      item.button.style.transform = `translate(${buttonX.toFixed(2)}px, ${buttonY.toFixed(2)}px)`;
-      item.button.hidden = false;
-      item.button.classList.add("is-visible");
-
-      const buttonCenterX = buttonX + (buttonWidth * 0.5);
-      const lineEndX = anchorX <= buttonCenterX ? buttonX : (buttonX + buttonWidth);
-      const lineEndY = buttonY + (buttonHeight * 0.5);
-      const lineStartX = anchorX;
-      const lineStartY = anchorY;
-
-      item.line.setAttribute("x1", String(lineStartX));
-      item.line.setAttribute("y1", String(lineStartY));
-      item.line.setAttribute("x2", String(lineEndX));
-      item.line.setAttribute("y2", String(lineEndY));
-      item.lineEnd.setAttribute("cx", String(lineStartX));
-      item.lineEnd.setAttribute("cy", String(lineStartY));
-
-      if (isProjectedOutside) {
-        item.occluded = true;
-        item.lastOcclusionUpdateMs = nowMs;
-      } else if (!ENABLE_ANNOTATION_OCCLUSION || occlusionBudget === 0) {
-        item.occluded = false;
-        item.lastOcclusionUpdateMs = nowMs;
-      } else {
-        const staleOcclusion = (nowMs - item.lastOcclusionUpdateMs) >= ANNOTATION_OCCLUSION_MAX_STALE_MS;
-        const isRoundRobinSelected =
-          items.length <= occlusionBudget ||
-          ((itemIndex - occlusionStartIndex + items.length) % items.length) < occlusionBudget;
-        const shouldRaycastOcclusion = isRoundRobinSelected && (cameraMoved || anchorMoved || staleOcclusion);
-
-        if (shouldRaycastOcclusion) {
-          item.occluded = computeOccluded(item, anchorWorld, false);
-          item.lastOcclusionUpdateMs = nowMs;
-        }
-      }
-
-      const centerDx = (anchorX - (window.innerWidth * 0.5)) / Math.max(window.innerWidth, 1);
-      const centerDy = (anchorY - (window.innerHeight * 0.5)) / Math.max(window.innerHeight, 1);
-      const centerDistanceSq = (centerDx * centerDx) + (centerDy * centerDy);
-      centerToAnchor.copy(anchorWorld).sub(controls.target);
-      let sideScore = 1;
-      let facingDot = -1;
-      if (centerToAnchor.lengthSq() > 1e-8) {
-        centerToAnchor.normalize();
-        facingDot = clamp(centerToAnchor.dot(cameraForward), -1, 1);
-        sideScore = 1 - facingDot;
-      }
-
-      const backsideOccluded = !isProjectedOutside && facingDot > 0.22;
-      const occluded = Boolean(item.occluded || backsideOccluded);
-
-      item.autoActiveScore = isProjectedOutside ? Number.POSITIVE_INFINITY : ((sideScore * 0.8) + (centerDistanceSq * 0.45));
-
-      item.button.classList.toggle("is-open", open);
-      item.button.classList.toggle("is-occluded", occluded);
-
-      item.line.classList.toggle("is-open", open);
-      item.line.classList.toggle("is-occluded", occluded);
-      item.lineEnd.classList.toggle("is-open", open);
-      item.lineEnd.classList.toggle("is-occluded", occluded);
-      item.line.style.display = occluded ? "none" : "block";
-      item.lineEnd.style.display = occluded ? "none" : "block";
-    }
-
-    if (items.length) {
-      occlusionRoundRobinIndex = (occlusionRoundRobinIndex + occlusionBudget) % items.length;
-    }
-
-    if (!ENABLE_ANNOTATION_OCCLUSION) {
-      hasCameraSnapshot = false;
-    }
-
-    if (activeItemId && nowMs > activeItemUntilMs) {
-      activeItemId = null;
-    }
-
-    let autoActiveId = null;
-    let bestAutoScore = Number.POSITIVE_INFINITY;
-    for (const item of items) {
-      if (!item.isVisible || !Number.isFinite(item.autoActiveScore)) {
-        continue;
-      }
-      if (item.autoActiveScore < bestAutoScore) {
-        bestAutoScore = item.autoActiveScore;
-        autoActiveId = item.id;
-      }
-    }
-
-    const effectiveActiveId = activeItemId || autoActiveId;
-    for (const item of items) {
-      const active = item.isVisible && (item.id === effectiveActiveId || Boolean(item.isOpen));
-      item.button.classList.toggle("is-active", active);
-      item.line.classList.toggle("is-active", active);
-      item.lineEnd.classList.toggle("is-active", active);
-      const navActive = item.id === activeItemId;
-      setNavButtonState(item.id, { enabled: true, active: navActive, open: Boolean(item.isOpen) });
-    }
-  };
-
-  const onResize = () => {
-    cachedViewportWidth = 0;
-    cachedViewportHeight = 0;
-    setCalloutSvgSize();
-  };
-
-  return {
-    clear,
-    rebuildFromRobot,
-    update,
-    onResize,
-  };
-}
 
 function rebuildJointControls() {
   jointControlsEl.textContent = "";
@@ -15503,7 +9915,7 @@ async function loadUrdf(urdfUrl) {
     // CAD assets are authored as Y-up; rotate once so the viewer is Z-up.
     robotRoot.rotation.x = CAD_TO_VIEWER_X_ROTATION;
     scene.add(robotRoot);
-    if (cloudStlObject) {
+    if (getCloudStlObject()) {
       const parentObject = getCloudStlParentObject();
       const parentLocalBounds = computeCloudStlParentLocalBounds(parentObject);
       attachCloudStlToParent();
@@ -15512,7 +9924,7 @@ async function loadUrdf(urdfUrl) {
       alignCloudStlUnderHeadViaXY(0.6, getSlicerPlacementWorldOffset());
       applyCloudStlDisplayState();
     }
-    if (cloudPointObject) {
+    if (getCloudPointObject()) {
       attachCloudPointToParent();
       alignCloudPointToCloudStlTransform();
       applyCloudPointDisplayState();
@@ -15688,84 +10100,6 @@ function setTopbarUtilityToggleState(buttonEl, isEnabled) {
   buttonEl.classList.toggle("is-active", isEnabled);
 }
 
-function syncTopbarUtilityErrorNotifications() {
-  const nowIso = new Date().toISOString();
-  const utilityErrorRecords = [];
-
-  if (!isTopbarChillerEnabled) {
-    utilityErrorRecords.push({
-      id: "manual-chiller-error",
-      type: "coolant_warning",
-      title: "Chiller fault detected",
-      description: "Chiller loop is offline or above target temperature. Printing stability is at risk.",
-      severity: "critical",
-      status: "active",
-      timestamp: nowIso,
-      recommendedAction: "Inspect coolant level, pump status, and heat exchanger before continuing.",
-      source: "Chiller",
-      relatedScreen: "coolant-control",
-      canAcknowledge: true,
-      canResolveManually: true,
-      sensorValue: "67.2 C",
-      persistWhileSignalActive: false,
-      icon: "thermometer",
-      possibleCauses: "Low coolant flow, blocked filter, pump issue, or heat exchanger saturation.",
-    });
-  }
-
-  if (!isTopbarFanEnabled) {
-    utilityErrorRecords.push({
-      id: "manual-fan-error",
-      type: "external_security_closed_loop_warning",
-      title: "Cooling fan alarm",
-      description: "Primary enclosure fan airflow is below safe threshold.",
-      severity: "critical",
-      status: "active",
-      timestamp: nowIso,
-      recommendedAction: "Check fan power, connector, and airflow path, then restart cooling subsystem.",
-      source: "Cooling",
-      relatedScreen: "diagnostics",
-      canAcknowledge: true,
-      canResolveManually: true,
-      sensorValue: "Airflow low",
-      persistWhileSignalActive: false,
-      icon: "fan",
-      possibleCauses: "Fan motor fault, loose wiring, or blocked inlet/outlet.",
-    });
-  }
-
-  const activeUtilityIds = new Set(utilityErrorRecords.map((record) => record.id));
-  for (const record of utilityErrorRecords) {
-    const existing = notificationsById.get(record.id);
-    const normalized = normalizeNotificationRecord(record);
-    notificationsById.set(record.id, {
-      ...(existing || {}),
-      ...normalized,
-      status: "active",
-      timestamp: existing?.timestamp || normalized.timestamp,
-    });
-  }
-
-  for (const utilityId of ["manual-chiller-error", "manual-fan-error"]) {
-    if (activeUtilityIds.has(utilityId)) {
-      continue;
-    }
-
-    const existing = notificationsById.get(utilityId);
-    if (!existing || existing.status === "resolved") {
-      continue;
-    }
-
-    notificationsById.set(utilityId, {
-      ...existing,
-      status: "resolved",
-      timestamp: nowIso,
-    });
-  }
-
-  renderNotificationCenter();
-}
-
 // Keep the topbar clock in sync with local time without depending on backend data.
 function updateTopbarClock() {
   if (!topbarClockEl) {
@@ -15877,13 +10211,39 @@ function applyChamberAtmosphere(data) {
   }
 }
 window.meltioApplyChamberAtmosphere = applyChamberAtmosphere;
+
+// --- Unified cross-frame message dispatcher --------------------------------
+// A single `message` listener for every postMessage bridge. Route by
+// `data.source` FIRST, then apply that source's origin gate BEFORE acting, then
+// dispatch by `data.type`. This ordering is a security invariant: a "meltio-slicer"
+// message must only ever be trusted by iframe contentWindow identity (the slicer
+// UI can be cross-origin via AVIS_SLICER_UI_URL), and a "meltio-m600" sensor
+// message must only ever be accepted strictly same-origin — never let one source
+// be validated by the other's gate. A single listener also avoids evaluating
+// unrelated handlers on every message.
 window.addEventListener("message", (event) => {
-  if (!isSameOriginMessage(event)) {
+  const data = event && event.data;
+  if (!data || typeof data !== "object") {
     return;
   }
-  const d = event && event.data;
-  if (d && d.source === "meltio-m600" && d.type === "chamber-atmosphere") {
-    applyChamberAtmosphere(d);
+  if (data.source === "meltio-slicer") {
+    if (!isTrustedSlicerMessage(event)) {
+      return;
+    }
+    if (data.type === "slice-data") {
+      handleSliceData(data);
+    } else if (data.type === "start-print") {
+      runStartPrintAction();
+    } else if (data.type === "dock-ready") {
+      handleSlicerDockReady();
+    }
+  } else if (data.source === "meltio-m600") {
+    if (!isSameOriginMessage(event)) {
+      return;
+    }
+    if (data.type === "chamber-atmosphere") {
+      applyChamberAtmosphere(data);
+    }
   }
 });
 
@@ -16839,7 +11199,7 @@ if (advancedModePinInputEl) {
 if (topbarCalendarToggleEl) {
   topbarCalendarToggleEl.addEventListener("click", () => {
     markUserActivity();
-    setCalendarScreenOpen(!isCalendarScreenOpen);
+    setCalendarScreenOpen(!calendar.isScreenOpen);
   });
 }
 
@@ -16860,36 +11220,21 @@ if (calendarAddEventEl) {
 if (calendarPrevRangeEl) {
   calendarPrevRangeEl.addEventListener("click", () => {
     markUserActivity();
-    if (calendarCurrentView === "month") {
-      calendarAnchorDate.setMonth(calendarAnchorDate.getMonth() - 1);
-    } else if (calendarCurrentView === "week") {
-      calendarAnchorDate.setDate(calendarAnchorDate.getDate() - 7);
-    } else {
-      calendarAnchorDate.setDate(calendarAnchorDate.getDate() - 1);
-    }
-    renderCalendarScreen();
+    calendar.stepRange(-1);
   });
 }
 
 if (calendarTodayEl) {
   calendarTodayEl.addEventListener("click", () => {
     markUserActivity();
-    calendarAnchorDate = new Date();
-    renderCalendarScreen();
+    calendar.goToToday();
   });
 }
 
 if (calendarNextRangeEl) {
   calendarNextRangeEl.addEventListener("click", () => {
     markUserActivity();
-    if (calendarCurrentView === "month") {
-      calendarAnchorDate.setMonth(calendarAnchorDate.getMonth() + 1);
-    } else if (calendarCurrentView === "week") {
-      calendarAnchorDate.setDate(calendarAnchorDate.getDate() + 7);
-    } else {
-      calendarAnchorDate.setDate(calendarAnchorDate.getDate() + 1);
-    }
-    renderCalendarScreen();
+    calendar.stepRange(1);
   });
 }
 
@@ -16900,8 +11245,7 @@ for (const viewButton of [calendarViewMonthEl, calendarViewWeekEl, calendarViewD
 
   viewButton.addEventListener("click", () => {
     markUserActivity();
-    calendarCurrentView = normalizeCalendarView(viewButton.dataset.view);
-    renderCalendarScreen();
+    calendar.setView(viewButton.dataset.view);
   });
 }
 
@@ -16941,11 +11285,15 @@ if (topbarNotificationsToggleEl) {
     if (isTopbarSettingsMenuOpen) {
       setTopbarSettingsMenuOpen(false);
     }
-    setNotificationCenterOpen(!isNotificationCenterOpen);
+    setNotificationCenterOpen(!notifications.isCenterOpen);
   });
 }
 
-for (const filterButtonEl of getNotificationFilterButtons()) {
+// The notification filter buttons live in the god-file DOM; iterate them directly
+// here (this listener setup runs at module-eval, before the notifications factory
+// instance exists — so it must not call a factory method). Mirrors what the
+// factory's internal getNotificationFilterButtons() returns.
+for (const filterButtonEl of [notificationFilterAllEl, notificationFilterCriticalEl, notificationFilterWarningEl, notificationFilterInfoEl].filter(Boolean)) {
   filterButtonEl.addEventListener("click", () => {
     markUserActivity();
     setNotificationFilter(filterButtonEl.dataset.filter || "all");
@@ -17013,33 +11361,33 @@ if (notificationDetailsCloseEl) {
 
 if (notificationDetailsGoToIssueEl) {
   notificationDetailsGoToIssueEl.addEventListener("click", () => {
-    if (!selectedNotificationDetailId) {
+    if (!notifications.selectedDetailId) {
       return;
     }
     markUserActivity();
-    goToNotificationIssue(selectedNotificationDetailId);
+    goToNotificationIssue(notifications.selectedDetailId);
     closeNotificationDetailsModal();
   });
 }
 
 if (notificationDetailsAcknowledgeEl) {
   notificationDetailsAcknowledgeEl.addEventListener("click", () => {
-    if (!selectedNotificationDetailId) {
+    if (!notifications.selectedDetailId) {
       return;
     }
     markUserActivity();
-    acknowledgeNotification(selectedNotificationDetailId);
-    openNotificationDetailsModal(selectedNotificationDetailId);
+    acknowledgeNotification(notifications.selectedDetailId);
+    openNotificationDetailsModal(notifications.selectedDetailId);
   });
 }
 
 if (notificationDetailsResolveEl) {
   notificationDetailsResolveEl.addEventListener("click", () => {
-    if (!selectedNotificationDetailId) {
+    if (!notifications.selectedDetailId) {
       return;
     }
     markUserActivity();
-    goToNotificationIssue(selectedNotificationDetailId);
+    goToNotificationIssue(notifications.selectedDetailId);
     closeNotificationDetailsModal();
   });
 }
@@ -17095,7 +11443,7 @@ window.addEventListener("pointerdown", (event) => {
     }
   }
 
-  if (isNotificationCenterOpen) {
+  if (notifications.isCenterOpen) {
     const isInsideNotificationCenter = Boolean(topbarNotificationCenterEl && topbarNotificationCenterEl.contains(target));
     const isNotificationToggle = Boolean(topbarNotificationsToggleEl && topbarNotificationsToggleEl.contains(target));
 
@@ -17639,7 +11987,7 @@ if (cloudStlPlacementSideEl) {
     cloudStlPlacementSide = resolveCloudStlPlacementSide(cloudStlPlacementSideEl.value);
     cloudStlPlacementSideEl.value = cloudStlPlacementSide;
 
-    if (!cloudStlObject) {
+    if (!getCloudStlObject()) {
       applyCloudPointStandaloneSideRotation();
       setCloudStlStatus(`side set to ${getCloudStlPlacementConfig().label.toLowerCase()}`);
       return;
@@ -17811,30 +12159,6 @@ if (cloudPointMaxPointsEl) {
     cloudPointMaxPoints = Math.round(parseBoundedNumber(cloudPointMaxPointsEl.value, cloudPointMaxPoints, 1000, 2000000));
     cloudPointMaxPointsEl.value = String(cloudPointMaxPoints);
   });
-}
-
-async function reloadCloudPointForSimulationAxisUpdate() {
-  if (!cloudPointObject) {
-    return;
-  }
-
-  const pointViewMode = String(cloudPointObject?.userData?.pointViewMode || "").toLowerCase() === "voxel"
-    ? "voxel"
-    : "point";
-
-  const wasPlaying = cloudPrintSimPlaying;
-  const previousProgress = cloudPrintSimProgress;
-  setCloudPrintSimulationPlaying(false);
-
-  const loaded = await loadCloudPointFromDataset(pointViewMode);
-  if (!loaded) {
-    return;
-  }
-
-  setCloudPrintSimulationProgress(previousProgress, { syncUi: true });
-  if (wasPlaying) {
-    setCloudPrintSimulationPlaying(true);
-  }
 }
 
 if (cloudPrintSimAxisEl) {
@@ -18626,7 +12950,7 @@ window.addEventListener("keydown", (event) => {
     if (calendarEventModalEl && !calendarEventModalEl.hidden) {
       closeCalendarEventModal();
     }
-    if (isCalendarScreenOpen) {
+    if (calendar.isScreenOpen) {
       setCalendarScreenOpen(false);
     }
     if (isTopbarSettingsMenuOpen) {
@@ -18638,7 +12962,7 @@ window.addEventListener("keydown", (event) => {
     if (isSettingsCalibrateMenuOpen) {
       setSettingsCalibrateMenuOpen(false);
     }
-    if (isNotificationCenterOpen) {
+    if (notifications.isCenterOpen) {
       setNotificationCenterOpen(false);
     }
     if (isCloudModelMenuOpen) {
@@ -18692,6 +13016,307 @@ window.addEventListener("touchstart", () => {
   markUserActivity(performance.now(), { boostInteractionQuality: false });
 }, { passive: true, capture: true });
 
+// --- Notifications domain instance (static/notifications/notifications.js) --
+// ONE stateful instance owns the record map + all notification UI. Its API is
+// destructured back to the original function names so the call sites above are
+// unchanged; shared state is read via notifications.isCenterOpen /
+// .selectedDetailId, and window.MeltioNotifications delegates to it.
+let cloudLibrary;
+const cloudStl3D = createCloudStl3D({
+  scene,
+  camera,
+  controls,
+  stlLoader,
+  setCloudStlStatus,
+  printSim,
+  setCloudPrintSimulationPlaying,
+  setCloudPrintSimulationProgress,
+  beginInteractionQuality,
+  resolveCloudViewMode,
+  updateCloudControlVisibility,
+  updateBottomNavState,
+  computeObjectLocalBounds,
+  clearPendingFrontDoorSequence,
+  getCloudPointLayerSimulationMeta,
+  refreshSelectedPrintJobUsage,
+  updateCloudPrintSimulationControls,
+  teardownPrintBedSimulation,
+  getSlicerPlacementWorldOffset,
+  resolveCloudPrintSimAxis,
+  resolveCloudPrintSimDirection,
+  getCloudPrintSimAxisIndex,
+  getCloudPrintSimLayerStepMm,
+  buildVoxelCubeObject,
+  buildSpriteObject,
+  fetchSensorData,
+  initializeCloudPrintSimulationForLoadedCloud,
+  hasLoadedCloudFileForPrint,
+  updateSlicerModelPreview,
+  markUserActivity,
+  getJointStateByName,
+  setJointValue,
+  moveJointToValue,
+  getLinearJointWorldAxis,
+  getHeadLowestWorldPoint,
+  clamp,
+  getCanvasPointerNdc,
+  disposeMaterialWithMaps,
+  cloudStlFileSelectEl,
+  cloudViewModeEl,
+  cloudFileLibraryEl,
+  EJE_X_JOINT,
+  EJE_Y_JOINT,
+  Z_AXIS_JOINT,
+  CLOUD_STL_PLACEMENT_SIDES,
+  CLOUD_STL_PARENT_LINK,
+  CLOUD_POINT_PARENT_LINK,
+  CLOUD_STL_TOP_CLEARANCE_M,
+  CLOUD_STL_DROP_ALIGN_DURATION_SEC,
+  CLOUD_STL_HEAD_CONTACT_MOVE_DURATION_SEC,
+  CLOUD_STL_HEAD_CONTACT_Z_MOVE_DURATION_SEC,
+  CLOUD_STL_HEAD_CONTACT_WARN_MM,
+  CLOUD_STL_ASSUME_REAL_SCALE_MAX_DIM_M,
+  CLOUD_STL_UNIT_SCALE_CANDIDATES,
+  CLOUD_STL_UNIT_SCALE_TARGET_DIM_M,
+  CLOUD_STL_DATASET_API_URL,
+  CLOUD_STL_FILE_API_URL,
+  CLOUD_POINT_OUTLINE_COLOR,
+  CLOUD_POINT_OUTLINE_START,
+  CLOUD_POINT_WORLD_SCALE,
+  getCloudDatasetName: (...a) => cloudLibrary.getCloudDatasetName(...a),
+  syncCloudDatasetFromSelectedStl: (...a) => cloudLibrary.syncCloudDatasetFromSelectedStl(...a),
+  renderCloudFileLibrary: (...a) => cloudLibrary.renderCloudFileLibrary(...a),
+  resolveCloudFileSourceFilter: (...a) => cloudLibrary.resolveCloudFileSourceFilter(...a),
+  updateCloudSourceFilterButtons: (...a) => cloudLibrary.updateCloudSourceFilterButtons(...a),
+  setCloudLibraryMessage: (...a) => cloudLibrary.setCloudLibraryMessage(...a),
+  fetchCloudLibraryEntriesForSource: (...a) => cloudLibrary.fetchCloudLibraryEntriesForSource(...a),
+  setSelectedCloudLibraryFile: (...a) => cloudLibrary.setSelectedCloudLibraryFile(...a),
+  setCloudFileRowSliceStatus: (...a) => cloudLibrary.setCloudFileRowSliceStatus(...a),
+  getRobotRoot: () => robotRoot,
+  getCloudStlVisible: () => cloudStlVisible,
+  getCloudStlOpacity: () => cloudStlOpacity,
+  getCloudStlPlacementSide: () => cloudStlPlacementSide,
+  getCloudPointSize: () => cloudPointSize,
+  getCloudPointMaxPoints: () => cloudPointMaxPoints,
+  getCloudPointVoxelSizeMm: () => cloudPointVoxelSizeMm,
+  getCloudPointVoxelSizeZMm: () => cloudPointVoxelSizeZMm,
+  getCloudPrintSimAxis: () => cloudPrintSimAxis,
+  getCloudPrintSimDirection: () => cloudPrintSimDirection,
+  getIsDockedPrintActive: () => isDockedPrintActive,
+  getCloudPrintSimPlaying: () => cloudPrintSimPlaying,
+  getCloudPrintSimProgress: () => cloudPrintSimProgress,
+  getCloudViewMode: () => cloudViewMode,
+  setCloudViewMode: (v) => { cloudViewMode = v; },
+  getLoadedCloudLibraryFileName: () => loadedCloudLibraryFileName,
+  setLoadedCloudLibraryFileName: (v) => { loadedCloudLibraryFileName = v; },
+  getSelectedCloudLibraryFileName: () => selectedCloudLibraryFileName,
+  setSelectedCloudLibraryFileName: (v) => { selectedCloudLibraryFileName = v; },
+  getCloudFileSourceFilter: () => cloudFileSourceFilter,
+  setCloudFileSourceFilter: (v) => { cloudFileSourceFilter = v; },
+  getCloudFileLibraryEntries: () => cloudFileLibraryEntries,
+  setCloudFileLibraryEntries: (v) => { cloudFileLibraryEntries = v; },
+  getPrintHideStl: () => printHideStl,
+  setPrintHideStl: (v) => { printHideStl = v; },
+  getPrintSimAutoRunInProgress: () => printSimAutoRunInProgress,
+  setPrintSimAutoRunInProgress: (v) => { printSimAutoRunInProgress = v; },
+  getAutoSliceFlowActive: () => autoSliceFlowActive,
+  setAutoSliceFlowActive: (v) => { autoSliceFlowActive = v; },
+});
+const {
+  resolveCloudStlPlacementSide,
+  getCloudStlPlacementConfig,
+  applyCloudStlSideRotation,
+  applyCloudPointStandaloneSideRotation,
+  updateCloudStlDrag,
+  tryPlaceCloudStlDrag,
+  stopCloudStlDrag,
+  clearCloudStlObject,
+  clearCloudPointObject,
+  getCloudStlParentObject,
+  attachCloudStlToParent,
+  attachCloudPointToParent,
+  alignCloudPointToCloudStlTransform,
+  computeCloudStlParentLocalBounds,
+  placeCloudStlAboveParentMesh,
+  tryRelocateCloudStlByDoubleClick,
+  alignCloudStlUnderHeadViaXY,
+  applyCloudStlDisplayState,
+  applyCloudPointDisplayState,
+  applyCloudOverlayDisplayState,
+  applyCloudPointSizeToActiveObject,
+  resolveCloudStlUnitScale,
+  clearCloudOverlays,
+  loadCloudOverlayFromDataset,
+  autoPreparePrintSimulationForSelection,
+  loadCloudOverlayFromSelectedFile,
+  ensureCloudPointPrintMode,
+  refreshGlobalStlFiles,
+  reloadCloudPointForSimulationAxisUpdate,
+  getCloudStlObject,
+  getCloudPointObject,
+  getCloudStlDragState,
+} = cloudStl3D;
+cloudLibrary = createCloudLibrary({
+  cloudStlDatasetEl,
+  cloudStlFileSelectEl,
+  cloudSourceUsbEl,
+  cloudSourceCloudEl,
+  cloudSourceLocalEl,
+  cloudFavoritesFilterToggleEl,
+  cloudFileLibraryEl,
+  clamp,
+  resolveCloudStlUnitScale,
+  canvas,
+  CAD_TO_VIEWER_X_ROTATION,
+  CLOUD_STL_FILES_API_URL,
+  CLOUD_STL_FILE_API_URL,
+  CLOUD_FILE_SOURCE_VALUES,
+  cloudFileSliceStatusByName,
+  setToggleButtonState,
+  getMaterialLabelById,
+  refreshSelectedPrintJobUsage,
+  updateCloudPrintSimulationControls,
+  setCloudStlStatus,
+  markUserActivity,
+  loadFileToSlicer,
+  openStartPrintPreview,
+  clearCloudOverlays,
+  loadCloudOverlayFromSelectedFile,
+  refreshGlobalStlFiles,
+  setMaterialsMenuOpen,
+  updateBottomNavState,
+  getSelectedCloudLibraryFileName: () => selectedCloudLibraryFileName,
+  setSelectedCloudLibraryFileNameState: (v) => { selectedCloudLibraryFileName = v; },
+  getCloudFileLibraryEntries: () => cloudFileLibraryEntries,
+  getCloudFileSourceFilter: () => cloudFileSourceFilter,
+  setCloudFileSourceFilterState: (v) => { cloudFileSourceFilter = v; },
+  getCloudFileSearchQuery: () => cloudFileSearchQuery,
+  getLoadedCloudLibraryFileName: () => loadedCloudLibraryFileName,
+  getCloudStlObject: () => getCloudStlObject(),
+  getHotspotMaterialAssignments: () => hotspotMaterialAssignments,
+  setAutoSliceFlowActive: (v) => { autoSliceFlowActive = v; },
+  getCloudFavoritesOnly: () => cloudFavoritesOnlyFilter,
+  setCloudFavoritesOnlyState: (v) => { cloudFavoritesOnlyFilter = v; },
+});
+const {
+  renderCloudFileLibrary,
+  setCloudFileSourceFilter,
+  setSelectedCloudLibraryFile,
+  setCloudFileRowSliceStatus,
+  fetchCloudLibraryEntriesForSource,
+  setCloudFavoritesOnlyFilterEnabled,
+  getCloudLibraryEntryByFileName,
+  updateCloudSourceFilterButtons,
+  getCloudDatasetName,
+  syncCloudDatasetFromSelectedStl,
+  resolveCloudFileSourceFilter,
+  setCloudLibraryMessage,
+  updateCloudFavoritesFilterButton,
+} = cloudLibrary;
+const notifications = createNotifications({
+  topbarConnectionEl,
+  topbarNotificationsToggleEl,
+  topbarNotificationBadgeEl,
+  topbarNotificationCenterEl,
+  notificationActiveCountEl,
+  notificationFilterAllEl,
+  notificationFilterCriticalEl,
+  notificationFilterWarningEl,
+  notificationFilterInfoEl,
+  notificationListEl,
+  notificationEmptyStateEl,
+  notificationHistoryScreenEl,
+  notificationHistoryListEl,
+  notificationHistoryEmptyEl,
+  notificationHistoryCountEl,
+  notificationDetailsModalEl,
+  notificationDetailsBodyEl,
+  notificationDetailsAcknowledgeEl,
+  notificationDetailsResolveEl,
+  escapeHtml,
+  markUserActivity,
+  setCalendarScreenOpen: (v) => setCalendarScreenOpen(v),
+  isCalendarScreenOpen: () => calendar.isScreenOpen,
+  setTopbarSettingsMenuOpen,
+  setSettingsCalibrateMenuOpen,
+  setSettingsAdvancedMenuOpen,
+  isChillerEnabled: () => isTopbarChillerEnabled,
+  isFanEnabled: () => isTopbarFanEnabled,
+});
+const {
+  setNotificationCenterOpen,
+  setNotificationFilter,
+  setNotificationHistoryScreenOpen,
+  renderNotificationCenter,
+  renderNotificationHistoryScreen,
+  updateNotificationBellState,
+  updateNotificationCenterFromSignals,
+  openNotificationDetailsModal,
+  closeNotificationDetailsModal,
+  acknowledgeNotification,
+  resolveNotification,
+  goToNotificationIssue,
+  handleNotificationAction,
+  clearResolvedNotifications,
+  clearNotificationToasts,
+  syncTopbarUtilityErrorNotifications,
+  getNotificationSignalsSnapshot,
+} = notifications;
+
+// --- Calendar domain instance (static/calendar/calendar.js) ----------------
+// Created after notifications so its ctx can pass the notification closers by
+// value; the reverse refs (notifications -> calendar) are lazy arrows above.
+const calendar = createCalendar({
+  calendarScreenEl,
+  calendarGridEl,
+  calendarRangeLabelEl,
+  calendarViewMonthEl,
+  calendarViewWeekEl,
+  calendarViewDayEl,
+  calendarViewAgendaEl,
+  calendarEventDetailsBodyEl,
+  calendarEventModalEl,
+  calendarEventModalTitleEl,
+  calendarEventTitleInputEl,
+  calendarEventTypeInputEl,
+  calendarEventStartInputEl,
+  calendarEventEndInputEl,
+  calendarEventFileInputEl,
+  calendarEventMaterialInputEl,
+  calendarEventEstimatedHoursInputEl,
+  calendarEventActualHoursInputEl,
+  calendarEventMaterialUsedInputEl,
+  calendarEventMachineInputEl,
+  calendarEventNotesInputEl,
+  calendarEventDeleteEl,
+  calendarEventValidationEl,
+  topbarCalendarToggleEl,
+  escapeHtml,
+  markUserActivity,
+  MELTIO_MATERIAL_LIBRARY,
+  getCloudFileLibraryEntries: () => cloudFileLibraryEntries,
+  setNotificationCenterOpen,
+  setNotificationHistoryScreenOpen,
+  setControlsPanelOpen,
+  isControlsPanelOpen: () => isControlsPanelOpen,
+  setCloudModelMenuOpen,
+  isCloudModelMenuOpen: () => isCloudModelMenuOpen,
+  setMaterialsMenuOpen,
+  isMaterialsMenuOpen: () => isMaterialsMenuOpen,
+  closeHotspotContextPanel,
+  setTopbarSettingsMenuOpen,
+});
+const {
+  setCalendarScreenOpen,
+  renderCalendarScreen,
+  seedCalendarEventsIfNeeded,
+  suggestMaintenanceEventsFromSchedule,
+  openCalendarEventModal,
+  closeCalendarEventModal,
+  saveCalendarEventFromModal,
+  deleteCalendarEventFromModal,
+} = calendar;
+
 resetInitialTransparencyState();
 applyUserStepTransparency();
 applyDisplayTransparency();
@@ -18719,6 +13344,8 @@ setHotspotTriggerRailVisible(false);
 setTopbarSettingsMenuOpen(false);
 setSettingsAdvancedMenuOpen(false);
 setSettingsCalibrateMenuOpen(false);
+
+
 setNotificationCenterOpen(false);
 setNotificationFilter("all");
 setAdvancedModeEnabled(false);
@@ -18975,13 +13602,13 @@ function initializePrintSimulation() {
   printSim = createPrintSimulation({
     THREE,
     renderer,
-    getStlObject: () => cloudStlObject,
+    getStlObject: () => getCloudStlObject(),
     ensureModelLoaded: async () => {
       const name = String(selectedCloudLibraryFileName || cloudStlFileSelectEl?.value || "").trim();
       if (!name) {
         return false;
       }
-      if (cloudStlObject && hasLoadedCloudFileForPrint()) {
+      if (getCloudStlObject() && hasLoadedCloudFileForPrint()) {
         return true;
       }
       return await loadCloudOverlayFromSelectedFile();
@@ -19130,19 +13757,10 @@ window.MeltioNotifications = {
   // record: { id, type, title, description, severity, recommendedAction,
   //           possibleCauses, source, relatedScreen, canAcknowledge, ... }
   raise(record) {
-    if (!record || typeof record !== "object") return null;
-    const normalized = normalizeNotificationRecord(record);
-    notificationsById.set(normalized.id, normalized);
-    renderNotificationCenter();
-    updateNotificationBellState();
-    return normalized.id;
+    return notifications.raiseRecord(record);
   },
   resolve(id) {
-    const existing = notificationsById.get(String(id));
-    if (!existing) return;
-    notificationsById.set(String(id), { ...existing, status: "resolved", timestamp: new Date().toISOString() });
-    renderNotificationCenter();
-    updateNotificationBellState();
+    notifications.resolveRecordById(id);
   },
 };
 
