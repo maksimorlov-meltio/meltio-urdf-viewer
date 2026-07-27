@@ -1,0 +1,115 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+A web-based 3D **operator HMI** for the Meltio M600-PRO metal-printing system. It is
+**two independent FastAPI + Three.js apps** run side by side and glued at runtime, one
+browser SPA embedding the other in an `<iframe>`:
+
+| App | Package (import name) | Source root | venv | Port |
+|-----|-----------------------|-------------|------|------|
+| **Viewer** (`avisualizer`) | `avisualizer` | `urdf_viewer/projects/avisualizer/src` | `.venv` (Py 3.11) | `8090` |
+| **Slicer** (`meltio-platform`) | `meltio_platform` (import pkg — **not** `platform`, which shadows stdlib) | `_slicer_branch/projects/platform/src` | `venv311` (Py 3.11) | `8765` |
+
+The viewer never imports slicer Python — they talk over **HTTP** (viewer backend
+same-origin-proxies to the slicer) and browser **`postMessage`** (`source:"meltio-slicer"`,
+types `dock-ready` / `slice-data` / `start-print`). The slicer turns an STL into a toolpath;
+the viewer animates the robot printing that toolpath.
+
+## Read these first
+
+Do not rediscover the architecture by reading the two ~16k / ~5k-line frontend files. Two
+existing docs are authoritative and kept current:
+
+- **`urdf_viewer/projects/avisualizer/ARCHITECTURE.md`** — the map of both apps: the
+  load→slice→print flow, the responsibility-by-line-range table for the giant
+  `urdf_viewer.js`, the slicer `core/` pipeline stages (in order), the postMessage bridge,
+  and a "gotchas" section. Read it before touching either app.
+- **`_slicer_branch/projects/platform/STYLEGUIDE.md`** — the single source of truth for UI
+  look. Both apps share one dark palette via CSS `:root` design tokens (`--bg`, `--panel`,
+  `--accent`, `--radius`, …). **When adding any UI element, reuse an existing token and
+  component class (`.tool-btn`, `.primary`, `.card`, …); do not introduce new hex colors or
+  one-off button styles.**
+
+## Commands (PowerShell, from repo root)
+
+Setup and running are documented in `README.md`; the essentials:
+
+```powershell
+# Run both apps + open the browser (idempotent; skips services already up)
+.\Start-Viewer.bat        # or Stop-Viewer.bat to shut down
+```
+
+Tests use pytest for the backends; the pure frontend `sim/` modules have a small
+`node:test` suite:
+
+```powershell
+# Viewer tests
+.\.venv\Scripts\python.exe -m pytest urdf_viewer/projects/avisualizer/tests
+.\.venv\Scripts\python.exe -m pytest urdf_viewer/projects/avisualizer/tests/web/test_slice_proxy.py::<test_name>   # single test
+
+# Slicer tests (test_slicer_core_contracts.py exercises the real slicing pipeline in memory)
+.\venv311\Scripts\python.exe -m pytest _slicer_branch/projects/platform/tests
+
+# Frontend unit tests (pure sim/ modules only — no Three.js, no DOM)
+node --test "urdf_viewer/projects/avisualizer/tests/js/**/*.test.mjs"
+```
+
+There is no configured linter/formatter. Validate edited frontend JS with `node --check`
+(catches syntax errors, but **not** a `getElementById(null).addEventListener` that only
+throws in the browser — see gotchas). After adding/renaming/removing any static JS module,
+also run the import-resolution gate — `node --check` does **not** catch an `import` that
+points at a missing file, which is a load-time-fatal 404 that kills the whole module:
+
+```powershell
+node urdf_viewer/projects/avisualizer/tools/check_imports.mjs
+```
+
+Sign-in credentials (PBKDF2, stored in `database/credentials.json`, separate from the
+public roles/users document) are managed out-of-band:
+
+```powershell
+.\.venv\Scripts\python.exe urdf_viewer/projects/avisualizer/tools/set_password.py --username <user>
+```
+
+## Non-obvious operational facts
+
+- **Static assets are cache-busted with a `?v=` query in the HTML.** Edit CSS/JS and forget
+  to bump it → the browser serves the stale file and your change appears to do nothing. The
+  launcher additionally appends a `?cb=` to the URL on each open.
+- **Python backend edits require a server restart** (routes, stubs, proxy). Static JS/CSS/HTML
+  reload on browser refresh; Python does not. A "still broken" result is often an unrestarted
+  server.
+- **Removing a DOM button:** delete the element **and** its `addEventListener` calls together.
+  A leftover listener on a now-missing element throws and kills the whole JS module.
+- **The machine link is off by default** — the scene runs against a mock machine state. Append
+  `?machine=1` to the viewer URL to enable the live transport (`static/sim/machineLink.js`).
+  The transport stays disconnected (and every command rejects) until a `base` URL actually
+  answers, so the local simulation remains the authority. **Before pointing it at real
+  hardware, add server-side/firmware role authorization for motion-bearing commands** — the
+  permissions gating below is UI-only.
+- **Pre-print safety gate** (`static/sim/prePrintCheck.js`): the Start-print flow runs a
+  material + machine-signal check before `startDockedPrint()`. Material blocks route to the
+  guided Materials fix; signal blocks only proceed on an authorised (Support/God) override.
+- **The slicer is optional in the viewer**, gated by env vars `AVIS_SLICER_URL` (API base) and
+  `AVIS_SLICER_UI_URL` (UI base). Without them, the print flow falls back to a "clip-plane"
+  Z-sweep preview instead of real toolpath animation. The launcher wires both to `:8765`.
+- **Auth & permissions** resolve a level (Operator / Operator+ / Support / God) that gates
+  motion-bearing controls (the Move jog panel, machine commands) — **UI gating only, not a
+  security boundary**. Sign-in is `POST /api/auth/login` (PBKDF2 against
+  `database/credentials.json`, managed with `tools/set_password.py`); the roles/users matrix
+  is served by `GET/PUT /api/permissions/config` + `static/permissions.js`. The slicer package
+  has its own `auth.py` / `permissions.py` / `role_config.py` (part of the dormant cloud shell).
+- **Windows-only, PowerShell 5.1.** The launcher expects the exact venv folder names `.venv`
+  and `venv311`. Use `py -3.11` — Python 3.11 has prebuilt wheels for the heavy native deps
+  (`open3d`, `trimesh`, `scipy`, `shapely`, `rtree`); other versions may not.
+- **Not tracked** (see `.gitignore`): the venvs, `**/projects/avisualizer/database/` datasets,
+  `Sensors.csv`, `.env`, and raw mesh sources. The URDF loads `.glb`, not the OBJ sources.
+
+## Layout targets
+
+The UI is tuned for a **vertical 1080×1920 HMI touch panel** (a 1920×1080 screen mounted
+portrait), full-bleed top bar + bottom nav. Run the browser fullscreen (F11 / `--kiosk`) for a
+true kiosk look.

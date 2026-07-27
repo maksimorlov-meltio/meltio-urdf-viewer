@@ -60,10 +60,14 @@ active:
 constant-velocity glide (no snapping), **Home XY** and **Home Z**, and a smooth
 **palpador** deploy/retract toggle.
 
-**Accounts & permissions** — credential sign-in (username + password) against the
-backend (hashed), which resolves a permission level (Operator, Operator+, Support,
-God). Motion-bearing controls (the Move panel, machine commands) are gated to the
-appropriate level, and the session auto-signs-out when idle.
+**Accounts & permissions** — credential sign-in (username + password) via
+`POST /api/auth/login`, validated against a PBKDF2 credential store
+(`database/credentials.json`, managed with
+`urdf_viewer/projects/avisualizer/tools/set_password.py`). Sign-in resolves a
+permission level (Operator, Operator+, Support, God); motion-bearing controls
+(the Move panel, machine commands) are gated to the appropriate level, and the
+session auto-signs-out when idle. The gating is a UI convenience, not a security
+boundary — a real machine must enforce authorization for physical commands.
 
 **Print flow** — Files → slice an STL → **Start print**: pre-print homing/probe
 routine, 3-axis bead tracing at real speed, pause/stop, plus a material gate and
@@ -169,8 +173,15 @@ slicer dock bar are tuned for that.
 │       └─ assets/         # M600-PRO URDF + meshes (.glb/.obj)
 └─ _slicer_branch/         # the slicer backend (meltio-platform)
     └─ projects/platform/
-        └─ src/meltio_platform/slicer/   # slicer web app + engine
+        └─ src/meltio_platform/
+            ├─ slicer/     # slicer web app + engine — this is what runs locally
+            └─ web/        # multi-tenant cloud shell (Postgres/S3/admin) — DORMANT
 ```
+
+> The local HMI launches only `meltio_platform.slicer.web.app`. The rest of
+> `meltio_platform` (the `web/` cloud shell, plus the `frontend/` React SPA and
+> `render-service/`) is a separate cloud product that is **not started** by the
+> launcher; ignore it unless you are working on that deployment.
 
 The virtual environments (`.venv`, `venv311`) and large local datasets are **not**
 tracked — they are created by the setup steps above.
