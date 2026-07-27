@@ -96,7 +96,11 @@ the browser doesn't hit cross-origin problems.
   against the PBKDF2 credential store (`database/credentials.json`, managed with
   `tools/set_password.py`) and returns `{user}` with the role from the
   permissions document; `GET/PUT /api/permissions/config` serves/persists the
-  roles+users matrix. Enforcement is UI gating only (see `static/permissions.js`).
+  roles+users matrix. Enforcement is UI gating only (see `static/permissions.js`);
+  the `PUT` doesn't authorize the caller (write access stays client-gated) but it
+  validates document integrity — caps body size and rejects a malformed or
+  self-locking-out matrix (no God role / no God user) so one bad write can't
+  brick the shared config.
 - **CORS:** scoped to the configured slicer origin (not `*`) so only the embedded
   slicer UI can read our GET endpoints; empty when no slicer is configured.
 - **Slicer glue (optional, off by default):** controlled by env vars

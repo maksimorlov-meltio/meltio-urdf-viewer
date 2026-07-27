@@ -29,6 +29,12 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 DEFAULT_DATASET_NAME = "small-torture-test_1-0-0"
 # Roles/users/permission-matrix document (see /api/permissions/config).
 PERMISSIONS_STORE = DATABASE_ROOT / "permissions.json"
+# The permission that implies God (full admin): a role granting it may edit the
+# roles/users matrix. Mirrors static/permissions.js (`isGod` / `hasPermission`).
+ADMIN_PERMISSION = "admin.users"
+# Upper bound for a PUT'd permissions document. It is a tiny roles/users record;
+# anything larger is a mistake or abuse, so we reject it rather than persist it.
+PERMISSIONS_MAX_BYTES = 256 * 1024
 # Sign-in credentials, kept separate from the (public) permissions document so
 # password material never travels with the roles/users matrix. Shape:
 #   {"<username>": {"salt": "<hex>", "hash": "<hex>", "iterations": <int>}}
@@ -98,6 +104,84 @@ def _verify_password(password: str, record: dict) -> bool:
         return False
     candidate = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
     return hmac.compare_digest(candidate, expected)
+
+
+def _validate_single_role(role: object) -> tuple[str | None, str | None, bool]:
+    """Validate one role entry; return (error, role_id, grants_god)."""
+    if not isinstance(role, dict):
+        return "Each role must be an object.", None, False
+    role_id = role.get("id")
+    if not isinstance(role_id, str) or not role_id.strip():
+        return "Each role needs a non-empty string 'id'.", None, False
+    perms = role.get("permissions")
+    if not isinstance(perms, list) or not all(isinstance(p, str) for p in perms):
+        return f"Role '{role_id}' needs a 'permissions' list of strings.", role_id, False
+    return None, role_id, ADMIN_PERMISSION in perms
+
+
+def _validate_permissions_roles(roles: object) -> tuple[str | None, set[str]]:
+    """Validate the 'roles' list; return (error_or_None, ids of God roles)."""
+    if not isinstance(roles, list) or not roles:
+        return "Permissions document must contain a non-empty 'roles' list.", set()
+
+    role_ids: set[str] = set()
+    god_role_ids: set[str] = set()
+    for role in roles:
+        error, role_id, grants_god = _validate_single_role(role)
+        if error:
+            return error, set()
+        if role_id in role_ids:
+            return f"Duplicate role id '{role_id}'.", set()
+        role_ids.add(role_id)
+        if grants_god:
+            god_role_ids.add(role_id)
+    if not god_role_ids:
+        return (
+            f"At least one role must grant '{ADMIN_PERMISSION}' (God); "
+            "refusing to lock out administration."
+        ), set()
+    return None, god_role_ids
+
+
+def _validate_permissions_users(users: object, god_role_ids: set[str]) -> str | None:
+    """Validate the 'users' list; require at least one user with a God role."""
+    if not isinstance(users, list):
+        return "Permissions document must contain a 'users' list."
+    has_god_user = False
+    for user in users:
+        if not isinstance(user, dict):
+            return "Each user must be an object."
+        username = user.get("username")
+        if not isinstance(username, str) or not username.strip():
+            return "Each user needs a non-empty string 'username'."
+        role_id = user.get("roleId")
+        if role_id is not None and not isinstance(role_id, str):
+            return f"User '{username}' has an invalid 'roleId'."
+        if role_id in god_role_ids:
+            has_god_user = True
+    if not has_god_user:
+        return "At least one user must hold a God role; refusing to lock out administration."
+    return None
+
+
+def _validate_permissions_document(data: object) -> str | None:
+    """Return an error message if `data` isn't a persistable permissions
+    document, else None.
+
+    The PUT endpoint is not a security boundary (enforcement is client-side UI
+    gating), but the document it writes is shared by every operator of the
+    kiosk, so a bad write is a real availability problem. This guards the two
+    ways a write can strand the HMI: a malformed document that breaks the
+    roles/users matrix for everyone, and a document that leaves no God role or
+    no God user — which would permanently lock everybody out of the admin panel
+    that produced it. Shape mirrors static/permissions.js.
+    """
+    if not isinstance(data, dict):
+        return "Permissions document must be a JSON object."
+    error, god_role_ids = _validate_permissions_roles(data.get("roles"))
+    if error:
+        return error
+    return _validate_permissions_users(data.get("users"), god_role_ids)
 
 
 def _http_json(url: str, *, method: str = "GET", data: bytes | None = None,
@@ -360,8 +444,13 @@ def create_app() -> FastAPI:
     # Backend is the source of truth for the roles/users/permission matrix; the
     # client caches it in localStorage and falls back to built-in defaults when
     # the store is empty or unreachable. Enforcement itself is client-side UI
-    # gating (this is an operator console, not a security boundary), so these
-    # endpoints only persist/serve the config document.
+    # gating (this is an operator console, not a security boundary) and *write*
+    # authorization stays client-gated too (the admin panel only opens for God).
+    # The PUT still validates the document's integrity before persisting it,
+    # because the store is shared by every operator: it caps the body size and
+    # rejects a malformed or self-locking-out matrix so one bad write can't
+    # brick the HMI for everyone. If the bind ever stops being loopback-only,
+    # add real server-side authorization (session/role check) here.
     @app.get("/api/permissions/config")
     def get_permissions_config() -> dict:
         try:
@@ -372,8 +461,25 @@ def create_app() -> FastAPI:
         return {}  # empty → client uses its built-in defaults
 
     @app.put("/api/permissions/config")
-    def put_permissions_config(payload: dict | None = Body(default=None)) -> dict:
-        data = payload if isinstance(payload, dict) else {}
+    async def put_permissions_config(request: Request) -> dict:
+        # Cap the body first: this is a tiny roles/users record, so reject early
+        # on an oversized declared length, then hard-cap the bytes actually read
+        # (a client may under-report Content-Length).
+        declared = request.headers.get("content-length")
+        if declared is not None and declared.isdigit() and int(declared) > PERMISSIONS_MAX_BYTES:
+            raise HTTPException(status_code=413, detail="Permissions document too large.")
+        raw = await request.body()
+        if len(raw) > PERMISSIONS_MAX_BYTES:
+            raise HTTPException(status_code=413, detail="Permissions document too large.")
+        try:
+            data = json.loads(raw) if raw else None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid JSON: {exc}") from exc
+
+        error = _validate_permissions_document(data)
+        if error:
+            raise HTTPException(status_code=400, detail=error)
+
         try:
             PERMISSIONS_STORE.parent.mkdir(parents=True, exist_ok=True)
             PERMISSIONS_STORE.write_text(json.dumps(data, indent=2), encoding="utf-8")
