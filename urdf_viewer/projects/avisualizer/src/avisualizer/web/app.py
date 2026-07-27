@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 import re
 import secrets
+import threading
+import time
 from typing import Literal
 import urllib.error
 import urllib.request
@@ -104,6 +106,60 @@ def _verify_password(password: str, record: dict) -> bool:
         return False
     candidate = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
     return hmac.compare_digest(candidate, expected)
+
+
+# A well-formed dummy credential. Verifying a password against it burns the same
+# PBKDF2 work as a real check, so the "unknown username" branch of sign-in costs
+# the same time as "known username, wrong password" — otherwise the response
+# time leaks whether an account exists (username enumeration).
+_DUMMY_CREDENTIAL = _hash_password("timing-equaliser-not-a-real-account")
+
+# --- Sign-in throttling ----------------------------------------------------
+# Per-client failed-attempt backoff, in-memory only (resets on restart). Keyed
+# by client host: on a loopback kiosk that is a single bucket, i.e. a global
+# brute-force throttle. Deliberately NOT keyed per username — a per-username
+# 429 would reveal which usernames exist and let anyone lock a known operator
+# out. Attempts up to the threshold are free; past it the lockout doubles.
+_LOGIN_MAX_FAILURES = 5
+_LOGIN_BACKOFF_BASE_SEC = 1.0
+_LOGIN_BACKOFF_MAX_SEC = 60.0
+_LOGIN_FAILURES_MAX = 4096
+_login_failures: dict[str, tuple[int, float]] = {}
+_login_failures_lock = threading.Lock()
+
+
+def _login_retry_after(client: str) -> float:
+    """Seconds `client` must wait before another attempt, or 0 if unthrottled."""
+    with _login_failures_lock:
+        entry = _login_failures.get(client)
+    if not entry:
+        return 0.0
+    remaining = entry[1] - time.monotonic()
+    return remaining if remaining > 0 else 0.0
+
+
+def _record_login_failure(client: str) -> None:
+    """Count a failed attempt and arm exponential backoff past the threshold."""
+    with _login_failures_lock:
+        # Opportunistically drop expired buckets so the map can't grow without
+        # bound if attempts ever arrive from many distinct hosts.
+        if len(_login_failures) > _LOGIN_FAILURES_MAX:
+            now = time.monotonic()
+            for stale in [k for k, v in _login_failures.items() if v[1] <= now]:
+                del _login_failures[stale]
+        count = _login_failures.get(client, (0, 0.0))[0] + 1
+        over = count - _LOGIN_MAX_FAILURES
+        backoff = (
+            min(_LOGIN_BACKOFF_BASE_SEC * (2 ** over), _LOGIN_BACKOFF_MAX_SEC)
+            if over >= 0 else 0.0
+        )
+        _login_failures[client] = (count, time.monotonic() + backoff)
+
+
+def _clear_login_failures(client: str) -> None:
+    """Reset a client's failure streak (called after a successful sign-in)."""
+    with _login_failures_lock:
+        _login_failures.pop(client, None)
 
 
 def _validate_single_role(role: object) -> tuple[str | None, str | None, bool]:
@@ -494,14 +550,27 @@ def create_app() -> FastAPI:
     # document; the user's role/name come from that permissions document. Note
     # this authenticates identity for the operator console — the control gating
     # it drives is still UI-level, not a security boundary for the machine.
+    # Hardened against two classic sign-in weaknesses: a uniform 401 + a dummy
+    # PBKDF2 on the unknown-username path (so timing can't enumerate accounts),
+    # and per-client exponential backoff (so the store can't be brute-forced).
     @app.post("/api/auth/login")
-    def auth_login(payload: dict | None = Body(default=None)) -> dict:
+    def auth_login(request: Request, payload: dict | None = Body(default=None)) -> dict:
+        client = request.client.host if request.client else "unknown"
+        retry_after = _login_retry_after(client)
+        if retry_after > 0:
+            raise HTTPException(
+                status_code=429,
+                detail="Too many sign-in attempts; wait a moment and try again.",
+                headers={"Retry-After": str(int(retry_after) + 1)},
+            )
+
         data = payload if isinstance(payload, dict) else {}
         username = str(data.get("username", "")).strip()
         password = str(data.get("password", ""))
         # Uniform 401 (never reveal whether the username exists).
         invalid = HTTPException(status_code=401, detail="Username or password not recognised.")
         if not username or not password:
+            _record_login_failure(client)
             raise invalid
 
         try:
@@ -510,8 +579,18 @@ def create_app() -> FastAPI:
         except (OSError, ValueError):
             credentials = {}
         record = credentials.get(username) if isinstance(credentials, dict) else None
-        if not isinstance(record, dict) or not _verify_password(password, record):
+        if isinstance(record, dict):
+            password_ok = _verify_password(password, record)
+        else:
+            # Burn equivalent PBKDF2 work so an unknown username isn't rejected
+            # faster than a known one (defeats timing-based enumeration).
+            _verify_password(password, _DUMMY_CREDENTIAL)
+            password_ok = False
+        if not password_ok:
+            _record_login_failure(client)
             raise invalid
+
+        _clear_login_failures(client)
 
         # Look up the user's role/name in the (separate) permissions document.
         try:
