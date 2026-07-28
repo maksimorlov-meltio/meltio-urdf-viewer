@@ -21,6 +21,7 @@ import { createSpoolHighlight } from "./materials/spoolHighlight.js?v=1";
 import { createWireDrum } from "./materials/wireDrum.js?v=1";
 import { createFeederMaterials } from "./materials/feederMaterials.js?v=1";
 import { createSlicerBridge } from "./slicer/slicerBridge.js?v=1";
+import { createCloudPrintSim } from "./cloud/cloudPrintSim.js?v=1";
 // Notifications domain: one stateful factory owns the record map + all
 // notification UI (center, toasts, bell, details modal, history). The pure
 // format/catalog helpers live under ./notifications/ and are imported there.
@@ -816,6 +817,7 @@ const ANNOTATION_DEFINITIONS = [
 let robotRoot = null;
 let feederMaterials;
 let slicer;
+let cloudPrintSim;
 let jointStates = [];
 let activeLoadToken = 0;
 let activeAssetCacheBustToken = String(Date.now());
@@ -1009,7 +1011,6 @@ let lastPrintUsedGramsBySpool = {
 // grams, kind: "print" | "stopped" }. Persisted with the materials state; shown
 // in the materials-menu history view.
 const MATERIAL_USAGE_LOG_MAX = 200;
-let printSimulationConsumptionPending = false;
 const hotspotMaterialActionLoadingBySpool = {
   spool1: false,
   spool2: false,
@@ -2490,42 +2491,6 @@ function resolveCloudViewMode(value) {
   return "stl";
 }
 
-function resolveCloudPrintSimAxis(value) {
-  const normalized = typeof value === "string"
-    ? value.trim().toLowerCase()
-    : CLOUD_PRINT_SIM_DEFAULT_AXIS;
-
-  if (normalized === "x" || normalized === "y" || normalized === "z") {
-    return normalized;
-  }
-
-  return CLOUD_PRINT_SIM_DEFAULT_AXIS;
-}
-
-function resolveCloudPrintSimDirection(value) {
-  const normalized = typeof value === "string"
-    ? value.trim().toLowerCase()
-    : CLOUD_PRINT_SIM_DEFAULT_DIRECTION;
-
-  return normalized === "negative" ? "negative" : "positive";
-}
-
-function getCloudPrintSimAxisIndex(axis = cloudPrintSimAxis) {
-  const resolvedAxis = resolveCloudPrintSimAxis(axis);
-  return resolvedAxis === "x"
-    ? 0
-    : (resolvedAxis === "y" ? 1 : 2);
-}
-
-function getCloudPrintSimLayerStepMm(axis = cloudPrintSimAxis) {
-  const resolvedAxis = resolveCloudPrintSimAxis(axis);
-  if (resolvedAxis === "z") {
-    return Math.max(parsePositiveNumber(cloudPointVoxelSizeZMm, CLOUD_POINT_DEFAULT_VOXEL_Z_MM, 0.1), 0.1);
-  }
-
-  return Math.max(parsePositiveNumber(cloudPointVoxelSizeMm, CLOUD_POINT_DEFAULT_VOXEL_MM, 0.1), 0.1);
-}
-
 function updateCloudControlVisibility() {
   const mode = resolveCloudViewMode(cloudViewMode);
   const advancedEnabled = isAdvancedModeEnabled;
@@ -2572,211 +2537,6 @@ function updateCloudControlVisibility() {
   }
 
   updateCloudPrintSimulationControls();
-}
-
-function getCloudPointLayerSimulationMeta() {
-  if (!getCloudPointObject() || !getCloudPointObject().userData) {
-    return null;
-  }
-
-  return getCloudPointObject().userData.layerSimMeta || null;
-}
-
-function setCloudPrintSimulationPlaying(isPlaying) {
-  cloudPrintSimPlaying = Boolean(isPlaying) && Boolean(getCloudPointLayerSimulationMeta());
-  updateCloudPrintSimulationControls();
-}
-
-function updateCloudPrintSimulationControls() {
-  const hasLayerMeta = Boolean(getCloudPointLayerSimulationMeta());
-  const selectedGlobalStl = cloudStlFileSelectEl
-    ? String(cloudStlFileSelectEl.value || "").trim()
-    : "";
-  const canStartFromStl = Boolean(getCloudStlObject()) || Boolean(selectedGlobalStl);
-  const canPrint = hasLayerMeta || canStartFromStl;
-
-  if (cloudPrintSimPlayEl) {
-    cloudPrintSimPlayEl.disabled = !canPrint;
-    cloudPrintSimPlayEl.textContent = cloudPrintSimPlaying ? "Pause" : "Print";
-    cloudPrintSimPlayEl.setAttribute("aria-pressed", cloudPrintSimPlaying ? "true" : "false");
-  }
-
-  // NOTE: navPlayToggle (bottom Play) is now owned solely by updateBottomNavState
-  // and driven by the real-slicer printSim controller — not this legacy
-  // point-cloud system — so it is intentionally not touched here.
-
-  if (cloudPrintSimResetEl) {
-    cloudPrintSimResetEl.disabled = !canPrint;
-  }
-
-  if (cloudPrintSimProgressEl) {
-    cloudPrintSimProgressEl.disabled = !hasLayerMeta;
-  }
-}
-
-async function runCloudPrintSimulationPlayToggleAction() {
-  markUserActivity();
-
-  if (cloudPrintSimPlaying) {
-    setCloudPrintSimulationPlaying(false);
-    return false;
-  }
-
-  const readyForPrint = await ensureCloudPointPrintMode();
-  if (!readyForPrint) {
-    return false;
-  }
-
-  if (!isFocusedSpoolReadyForPrint({ showWarning: true })) {
-    setCloudStlStatus("Not enough material for selected print job");
-    return false;
-  }
-
-  if (cloudPrintSimProgress >= 0.999) {
-    setCloudPrintSimulationProgress(0);
-  }
-
-  printSimulationConsumptionPending = true;
-  setCloudPrintSimulationPlaying(true);
-  return true;
-}
-
-function upperBoundSortedFloatArray(values, target) {
-  let low = 0;
-  let high = values.length;
-
-  while (low < high) {
-    const mid = (low + high) >> 1;
-    if (values[mid] <= target) {
-      low = mid + 1;
-    } else {
-      high = mid;
-    }
-  }
-
-  return low;
-}
-
-function getCloudPrintSimVisibleCount(meta, progress) {
-  if (!meta || !meta.pointCount) {
-    return 0;
-  }
-
-  if (progress <= 0) {
-    return 0;
-  }
-
-  if (progress >= 1) {
-    return meta.pointCount;
-  }
-
-  if (meta.layerIndices && meta.layerIndices.length) {
-    const maxLayerIndex = Math.max(0, Number(meta.totalLayers || 1) - 1);
-    const visibleLayerIndex = Math.floor(clamp(progress, 0, 1) * maxLayerIndex);
-    return upperBoundSortedFloatArray(meta.layerIndices, visibleLayerIndex);
-  }
-
-  const maxVisibleZ = meta.zMin + ((meta.totalLayers * meta.layerStepMm) * progress);
-  return upperBoundSortedFloatArray(meta.zValues, maxVisibleZ);
-}
-
-function applyCloudPrintSimulationVisibility() {
-  const meta = getCloudPointLayerSimulationMeta();
-  if (!meta || !getCloudPointObject()) {
-    return;
-  }
-
-  const visibleCount = getCloudPrintSimVisibleCount(meta, cloudPrintSimProgress);
-
-  if (getCloudPointObject().isPoints && getCloudPointObject().geometry) {
-    getCloudPointObject().geometry.setDrawRange(0, visibleCount);
-    return;
-  }
-
-  if (getCloudPointObject().isInstancedMesh) {
-    getCloudPointObject().count = visibleCount;
-    return;
-  }
-
-  getCloudPointObject().traverse((node) => {
-    if (node.isInstancedMesh) {
-      node.count = visibleCount;
-    }
-  });
-}
-
-function setCloudPrintSimulationProgress(progress, options = {}) {
-  const { syncUi = true } = options;
-  cloudPrintSimProgress = clamp(progress, 0, 1);
-
-  if (syncUi) {
-    if (cloudPrintSimProgressEl) {
-      cloudPrintSimProgressEl.value = String(Math.round(cloudPrintSimProgress * CLOUD_PRINT_SIM_PROGRESS_STEPS));
-    }
-    if (cloudPrintSimProgressValueEl) {
-      cloudPrintSimProgressValueEl.textContent = `${Math.round(cloudPrintSimProgress * 100)}%`;
-    }
-  }
-
-  applyCloudPrintSimulationVisibility();
-}
-
-function resetCloudPrintSimulation(options = {}) {
-  const { keepPlaying = false } = options;
-  setCloudPrintSimulationProgress(0);
-  printSimulationConsumptionPending = false;
-  if (!keepPlaying) {
-    setCloudPrintSimulationPlaying(false);
-  }
-}
-
-function initializeCloudPrintSimulationForLoadedCloud() {
-  if (!getCloudPointLayerSimulationMeta()) {
-    setCloudPrintSimulationPlaying(false);
-    setCloudPrintSimulationProgress(0);
-    return;
-  }
-
-  if (CLOUD_PRINT_SIM_AUTO_START_ON_LOAD) {
-    setCloudPrintSimulationProgress(0);
-    setCloudPrintSimulationPlaying(true);
-    return;
-  }
-
-  setCloudPrintSimulationPlaying(false);
-  setCloudPrintSimulationProgress(1);
-}
-
-function updateCloudPrintSimulation(deltaSeconds) {
-  if (!cloudPrintSimPlaying) {
-    return;
-  }
-
-  const meta = getCloudPointLayerSimulationMeta();
-  if (!meta) {
-    setCloudPrintSimulationPlaying(false);
-    return;
-  }
-
-  const layerAdvance = cloudPrintSimSpeedLayersPerSec * deltaSeconds;
-  const progressAdvance = layerAdvance / Math.max(meta.totalLayers, 1);
-  const nextProgress = cloudPrintSimProgress + progressAdvance;
-
-  if (nextProgress >= 1) {
-    if (CLOUD_PRINT_SIM_LOOP_AT_END) {
-      setCloudPrintSimulationProgress(nextProgress % 1);
-    } else {
-      setCloudPrintSimulationProgress(1);
-      setCloudPrintSimulationPlaying(false);
-      if (printSimulationConsumptionPending) {
-        consumeMaterialForCompletedPrint();
-        printSimulationConsumptionPending = false;
-      }
-    }
-    return;
-  }
-
-  setCloudPrintSimulationProgress(nextProgress);
 }
 
 // ── Files menu gap knob ───────────────────────────────────────────────────
@@ -9825,27 +9585,27 @@ const cloudStl3D = createCloudStl3D({
   stlLoader,
   setCloudStlStatus,
   printSim,
-  setCloudPrintSimulationPlaying,
-  setCloudPrintSimulationProgress,
+  setCloudPrintSimulationPlaying: (...a) => cloudPrintSim.setCloudPrintSimulationPlaying(...a),
+  setCloudPrintSimulationProgress: (...a) => cloudPrintSim.setCloudPrintSimulationProgress(...a),
   beginInteractionQuality,
   resolveCloudViewMode,
   updateCloudControlVisibility,
   updateBottomNavState,
   computeObjectLocalBounds,
   clearPendingFrontDoorSequence,
-  getCloudPointLayerSimulationMeta,
+  getCloudPointLayerSimulationMeta: (...a) => cloudPrintSim.getCloudPointLayerSimulationMeta(...a),
   refreshSelectedPrintJobUsage: (...a) => feederMaterials.refreshSelectedPrintJobUsage(...a),
-  updateCloudPrintSimulationControls,
+  updateCloudPrintSimulationControls: (...a) => cloudPrintSim.updateCloudPrintSimulationControls(...a),
   teardownPrintBedSimulation,
   getSlicerPlacementWorldOffset: (...a) => slicer.getSlicerPlacementWorldOffset(...a),
-  resolveCloudPrintSimAxis,
-  resolveCloudPrintSimDirection,
-  getCloudPrintSimAxisIndex,
-  getCloudPrintSimLayerStepMm,
+  resolveCloudPrintSimAxis: (...a) => cloudPrintSim.resolveCloudPrintSimAxis(...a),
+  resolveCloudPrintSimDirection: (...a) => cloudPrintSim.resolveCloudPrintSimDirection(...a),
+  getCloudPrintSimAxisIndex: (...a) => cloudPrintSim.getCloudPrintSimAxisIndex(...a),
+  getCloudPrintSimLayerStepMm: (...a) => cloudPrintSim.getCloudPrintSimLayerStepMm(...a),
   buildVoxelCubeObject,
   buildSpriteObject,
   fetchSensorData,
-  initializeCloudPrintSimulationForLoadedCloud,
+  initializeCloudPrintSimulationForLoadedCloud: (...a) => cloudPrintSim.initializeCloudPrintSimulationForLoadedCloud(...a),
   hasLoadedCloudFileForPrint,
   updateSlicerModelPreview: (...a) => slicer.updateSlicerModelPreview(...a),
   markUserActivity,
@@ -9967,7 +9727,7 @@ cloudLibrary = createCloudLibrary({
   setToggleButtonState,
   getMaterialLabelById: (...a) => feederMaterials.getMaterialLabelById(...a),
   refreshSelectedPrintJobUsage: (...a) => feederMaterials.refreshSelectedPrintJobUsage(...a),
-  updateCloudPrintSimulationControls,
+  updateCloudPrintSimulationControls: (...a) => cloudPrintSim.updateCloudPrintSimulationControls(...a),
   setCloudStlStatus,
   markUserActivity,
   loadFileToSlicer: (...a) => slicer.loadFileToSlicer(...a),
@@ -10233,7 +9993,7 @@ feederMaterials = createFeederMaterials({
   spoolUsedAmountGramsByKey,
   startDockedPrint,
   updateBottomNavState,
-  updateCloudPrintSimulationControls,
+  updateCloudPrintSimulationControls: (...a) => cloudPrintSim.updateCloudPrintSimulationControls(...a),
   wrapJointValue,
 });
 const {
@@ -10386,6 +10146,55 @@ const {
   setSlicerMenuOpen,
   handleSlicerDockReady,
 } = slicer;
+
+cloudPrintSim = createCloudPrintSim({
+  CLOUD_POINT_DEFAULT_VOXEL_MM,
+  CLOUD_POINT_DEFAULT_VOXEL_Z_MM,
+  CLOUD_PRINT_SIM_AUTO_START_ON_LOAD,
+  CLOUD_PRINT_SIM_DEFAULT_AXIS,
+  CLOUD_PRINT_SIM_DEFAULT_DIRECTION,
+  CLOUD_PRINT_SIM_LOOP_AT_END,
+  CLOUD_PRINT_SIM_PROGRESS_STEPS,
+  clamp,
+  cloudPrintSimPlayEl,
+  cloudPrintSimProgressEl,
+  cloudPrintSimProgressValueEl,
+  cloudPrintSimResetEl,
+  cloudStlFileSelectEl,
+  consumeMaterialForCompletedPrint,
+  ensureCloudPointPrintMode,
+  getCloudPointObject,
+  getCloudPointVoxelSizeMm: () => cloudPointVoxelSizeMm,
+  getCloudPointVoxelSizeZMm: () => cloudPointVoxelSizeZMm,
+  getCloudPrintSimAxis: () => cloudPrintSimAxis,
+  getCloudPrintSimPlaying: () => cloudPrintSimPlaying,
+  getCloudPrintSimProgress: () => cloudPrintSimProgress,
+  getCloudPrintSimSpeedLayersPerSec: () => cloudPrintSimSpeedLayersPerSec,
+  getCloudStlObject,
+  isFocusedSpoolReadyForPrint,
+  markUserActivity,
+  parsePositiveNumber,
+  setCloudPrintSimPlayingState: (v) => { cloudPrintSimPlaying = v; },
+  setCloudPrintSimProgressState: (v) => { cloudPrintSimProgress = v; },
+  setCloudStlStatus,
+});
+const {
+  resolveCloudPrintSimAxis,
+  resolveCloudPrintSimDirection,
+  getCloudPrintSimAxisIndex,
+  getCloudPrintSimLayerStepMm,
+  getCloudPointLayerSimulationMeta,
+  setCloudPrintSimulationPlaying,
+  updateCloudPrintSimulationControls,
+  runCloudPrintSimulationPlayToggleAction,
+  upperBoundSortedFloatArray,
+  getCloudPrintSimVisibleCount,
+  applyCloudPrintSimulationVisibility,
+  setCloudPrintSimulationProgress,
+  resetCloudPrintSimulation,
+  initializeCloudPrintSimulationForLoadedCloud,
+  updateCloudPrintSimulation,
+} = cloudPrintSim;
 
 const notifications = createNotifications({
   topbarConnectionEl,
