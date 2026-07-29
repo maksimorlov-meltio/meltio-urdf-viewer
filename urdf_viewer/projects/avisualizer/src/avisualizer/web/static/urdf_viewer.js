@@ -9,6 +9,8 @@ import { createPrintSimulation } from "./sim/printSimulation.js?v=11";
 import { createSlicerClient } from "./sim/slicerClient.js";
 import { createMachineLink } from "./sim/machineLink.js";
 import { createPrePrintCheck } from "./sim/prePrintCheck.js";
+import { createDustExhaust } from "./sim/dustExhaust.js";
+import { createChamberInert } from "./sim/chamberInert.js";
 
 // Print-simulation controller. Created at boot once the scene exists; declared
 // here so the camera-guard helpers below can reference it before assignment.
@@ -180,6 +182,13 @@ const feederDriveDownEl = document.getElementById("feederDriveDown");
 const feederDriveSectionEl = document.getElementById("feederDriveSection");
 const feederCameraAnchorLeftEl = document.getElementById("feederCameraAnchorLeft");
 const feederCameraAnchorRightEl = document.getElementById("feederCameraAnchorRight");
+// Controls ▸ Feeder panel per-wheel jog (replaces the old wheel-switch + single
+// Up/Stop/Down "Feeder Drive"). Each button is a TOGGLE: click drives that
+// wheel, clicking the active one again stops it (see the click wiring below).
+const feederJogLeftUpEl = document.getElementById("feederJogLeftUp");
+const feederJogLeftDownEl = document.getElementById("feederJogLeftDown");
+const feederJogRightUpEl = document.getElementById("feederJogRightUp");
+const feederJogRightDownEl = document.getElementById("feederJogRightDown");
 const hotspotContextPanelEl = document.getElementById("hotspotContextPanel");
 const hotspotContextTitleEl = document.getElementById("hotspotContextTitle");
 const hotspotContextCloseEl = document.getElementById("hotspotContextClose");
@@ -497,6 +506,15 @@ scene.fog = new THREE.Fog(0x0b0a09, 400, 2200);
 const camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.05, 6000);
 camera.up.set(0, 0, 1);
 camera.position.set(1.5, 1.3, 1.1);
+
+// Fume/dust extraction plume from the top exhaust port — driven by the fan (see
+// setFanOn / the animate loop). Cosmetic; anchored to the top cover on load.
+const dustExhaust = createDustExhaust({ THREE, scene, camera, renderer });
+
+// Argon inertization fill — a rising cool-cyan gas that floods the build chamber
+// while a print is inerting; the front door fades see-through so it's visible
+// (see updateChamberInertSimulation / the animate loop). Cosmetic.
+const chamberInert = createChamberInert({ THREE, scene });
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
@@ -3584,6 +3602,19 @@ function applyCameraState(state) {
 
 function updateFeederCameraAnchorButtons() {
   const hasModel = Boolean(robotRoot);
+  // The Feeder View button now lives inside #feederDriveSection
+  // (data-requires-permission="machine.motion"). That permission gate
+  // snapshots/restores `.disabled` around deny/grant, which would otherwise
+  // fight with the hasModel-driven disable below (e.g. a deny snapshot taken
+  // before the model finished loading gets restored stale after sign-in).
+  // Re-check the live permission here so this function is always the final,
+  // correct word, in both directions, whenever it re-runs (model load,
+  // camera-anchor changes, or the MeltioPermissions.onChange hook below).
+  const permissionDenied = Boolean(
+    window.MeltioPermissions
+    && typeof window.MeltioPermissions.can === "function"
+    && !window.MeltioPermissions.can("machine.motion"),
+  );
   const buttonConfigs = [
     [feederCameraAnchorLeftEl, "left"],
     [feederCameraAnchorRightEl, "right"],
@@ -3595,18 +3626,14 @@ function updateFeederCameraAnchorButtons() {
     }
 
     const isActive = hasModel && activeFeederCameraAnchorSide === side;
-    buttonEl.disabled = !hasModel;
+    buttonEl.disabled = !hasModel || permissionDenied;
     buttonEl.classList.toggle("active", isActive);
     buttonEl.setAttribute("aria-pressed", isActive ? "true" : "false");
   }
 
-  // Feeder Drive controls (wheel switch + Up/Stop/Down) only make sense while the
-  // Feeder view is active, so reveal the section then and hide it otherwise.
-  if (feederDriveSectionEl) {
-    const feederActive = hasModel && Boolean(activeFeederCameraAnchorSide);
-    feederDriveSectionEl.hidden = !feederActive;
-    feederDriveSectionEl.setAttribute("aria-hidden", feederActive ? "false" : "true");
-  }
+  // The Feeder section (Feeder View toggle + per-wheel jog) is always visible
+  // in Controls now, regardless of whether the Feeder camera view is active
+  // (permission gating via data-requires-permission still applies).
 
   updateFeederWheelFloatingControls();
 }
@@ -4749,6 +4776,11 @@ function updateFeederDriveButtons() {
   setToggleButtonState(hotspotFeederDriveUpEl, upActive);
   setToggleButtonState(feederDriveDownEl, downActive);
   setToggleButtonState(hotspotFeederDriveDownEl, downActive);
+  // Controls ▸ Feeder panel per-wheel jog buttons (one active at a time).
+  setToggleButtonState(feederJogLeftUpEl, leftActive && upActive);
+  setToggleButtonState(feederJogLeftDownEl, leftActive && downActive);
+  setToggleButtonState(feederJogRightUpEl, rightActive && upActive);
+  setToggleButtonState(feederJogRightDownEl, rightActive && downActive);
   updateFilesSelectedSpoolFeederButtons();
   updateFeederDriveDirectionIndicator();
   updateFeederWheelFloatingControls();
@@ -9222,17 +9254,23 @@ async function startDockedPrint() {
     // Play the homing/probe routine, THEN start the actual print. Capturing the
     // bed baseline after homing means the print begins from the print position.
     runPrePrintHomingSequence(() => {
-      initPrintBedSimulation();      // capture nozzle tip + model height, save bed
-      printSim.play();               // visual bed trace (estimate; resynced to telemetry)
-      capturePrintViewCameraState(); // remember this framing for "Reset view"
-      if (machineConnected()) {
-        // Machine is authoritative for the actual print: command it, and let
-        // telemetry resync the on-screen reveal (onMachineTelemetry). A rejected
-        // command tears the visual down so we never animate a print that the
-        // machine refused to start.
-        commandMachinePrintStart();
-      }
-      updateBottomNavState();
+      // Deposition does not start yet: beginChamberPurge floods the chamber
+      // with argon first and only calls back once it reads fully inert (or
+      // the safety timeout fires), so the print can never start while the
+      // chamber is still purging.
+      beginChamberPurge(() => {
+        initPrintBedSimulation();      // capture nozzle tip + model height, save bed
+        printSim.play();               // visual bed trace (estimate; resynced to telemetry)
+        capturePrintViewCameraState(); // remember this framing for "Reset view"
+        if (machineConnected()) {
+          // Machine is authoritative for the actual print: command it, and let
+          // telemetry resync the on-screen reveal (onMachineTelemetry). A rejected
+          // command tears the visual down so we never animate a print that the
+          // machine refused to start.
+          commandMachinePrintStart();
+        }
+        updateBottomNavState();
+      });
     });
   } finally {
     if (slicerLoadToViewerEl) {
@@ -13120,6 +13158,303 @@ function getLinkWorldCenter(linkName) {
   return center;
 }
 
+// World position of the extraction-tube MOUTH — the black cylinder standing on
+// the top-back corner of the fixed frame. The plume rises in +Z out of the
+// mouth. The tube is on the fixed chassis (NOT the openable lid), so we anchor
+// to the chassis link (falls back to the fixed world point if it's not found).
+const DUST_EXHAUST_PORT_WORLD = new THREE.Vector3(0.45, -0.202, 1.858);
+const DUST_EXHAUST_ANCHOR_LINK = "chassis_link";
+
+function initDustExhaustAnchor() {
+  if (!robotRoot) {
+    return;
+  }
+  const anchor = robotRoot.getObjectByName(`link:${DUST_EXHAUST_ANCHOR_LINK}`);
+  dustExhaust.setAnchor(anchor || null, DUST_EXHAUST_PORT_WORLD);
+  syncDustExhaustFan();
+}
+
+// Mirror the current fan on/off + speed onto the plume (density + rise scale
+// with speed; nothing emits while the fan is off).
+function syncDustExhaustFan() {
+  const speed = Math.max(0, Math.min(100, Number(fanState?.speed) || 0));
+  dustExhaust.setFan(Boolean(fanState?.on), speed / 100);
+}
+
+// --- Argon inertization fill ------------------------------------------------
+// The build chamber floods with argon while a print inerts. We render a rising
+// cool-cyan gas volume inside the chamber and fade the FRONT DOOR see-through
+// while it purges, then re-solidify the door once inert. The fill fraction is
+// driven by the real chamber O2 reading when present, else synthesized during a
+// print. Chamber interior bounds (world) measured from the front door / bed /
+// top cover; nudge if the fill ever pokes outside the chamber.
+const CHAMBER_INERT_INTERIOR = {
+  minX: -0.36, maxX: 0.37, minY: -0.30, maxY: 0.47, floorZ: 0.33, ceilZ: 1.78,
+};
+const CHAMBER_AMBIENT_O2_PPM = 209000; // ~20.9% air
+const CHAMBER_INERT_O2_PPM = 50;       // inert target (matches CHAMBER_O2_SAFE_PPM)
+
+function initChamberInertBounds() {
+  chamberInert.setBounds(CHAMBER_INERT_INTERIOR);
+}
+
+// Front-door partial see-through for the inert view (0 = solid, 1 = glassy).
+// Keeps its OWN material snapshot (rebuilt when the robot reloads) rather than
+// sharing the Files see-through cache, so the two features never entangle and a
+// partial fade is independent of the Files "fully hide" behaviour.
+let frontDoorInertEntries = null;
+let frontDoorInertEntriesRoot = null;
+function getFrontDoorInertEntries() {
+  if (frontDoorInertEntriesRoot === robotRoot && frontDoorInertEntries) {
+    return frontDoorInertEntries;
+  }
+  const entries = [];
+  const link = robotRoot ? robotRoot.getObjectByName(`link:${FRONT_DOOR_LINK}`) : null;
+  if (link) {
+    link.traverse((object3d) => {
+      if (!object3d.isMesh || !object3d.material) {
+        return;
+      }
+      const materials = Array.isArray(object3d.material) ? object3d.material : [object3d.material];
+      for (const material of materials) {
+        if (!material || entries.some((e) => e.material === material)) {
+          continue;
+        }
+        entries.push({
+          object3d,
+          material,
+          baseOpacity: typeof material.opacity === "number" ? material.opacity : 1,
+          baseTransparent: Boolean(material.transparent),
+          baseDepthWrite: material.depthWrite !== false,
+          baseColor: material.color && material.color.isColor ? material.color.clone() : null,
+          baseRenderOrder: object3d.renderOrder,
+        });
+      }
+    });
+  }
+  // Only cache a NON-EMPTY result. The robot loads its (~7.5M-tri) meshes
+  // asynchronously, so the very first call — e.g. a purge triggered moments
+  // after page load — can race the front-door link not being attached to
+  // robotRoot yet. Caching that empty miss against the (soon stale) robotRoot
+  // reference would permanently poison the door fade for the rest of the
+  // session, since nothing else invalidates it once the fade amount stops
+  // changing. Keep retrying (cheap: one getObjectByName + a single-link
+  // traverse) until the link genuinely exists.
+  if (entries.length > 0) {
+    frontDoorInertEntries = entries;
+    frontDoorInertEntriesRoot = robotRoot;
+  }
+  return entries;
+}
+
+// Draw the faded door AFTER the chamberInert gas volume (renderOrder 5, see
+// sim/chamberInert.js) so the glass overlays the gas instead of the gas — now
+// depthTest-off so it isn't sliced by interior clutter — painting over the door.
+const DOOR_INERT_FADE_RENDER_ORDER = 6;
+
+// Some door sub-materials (frame trim, handle, indicator lenses) carry a
+// saturated brand/indicator colour. At ~0.34 opacity over the bright gas +
+// scene, those read as glaring yellow/green rectangles instead of glass. Any
+// base colour with chroma (max channel - min channel) above this reads as
+// "saturated" rather than a neutral glass/metal tone, and gets neutralized
+// toward a cool glass tint while the door is faded.
+const DOOR_INERT_SATURATION_CHROMA = 0.12;
+const DOOR_INERT_GLASS_TINT = new THREE.Color(0.74, 0.83, 0.87);
+
+let frontDoorInertFadeCurrent = 0;
+let frontDoorInertFadeApplied = null;
+function applyFrontDoorInertFade(amount) {
+  const a = Math.max(0, Math.min(1, amount));
+  if (frontDoorInertFadeApplied !== null && Math.abs(frontDoorInertFadeApplied - a) < 0.01) {
+    return;
+  }
+  const entries = getFrontDoorInertEntries();
+  for (const entry of entries) {
+    if (a <= 0.001) {
+      entry.material.opacity = entry.baseOpacity;
+      entry.material.transparent = entry.baseTransparent;
+      entry.material.depthWrite = entry.baseDepthWrite;
+      entry.object3d.renderOrder = entry.baseRenderOrder;
+      if (entry.baseColor && entry.material.color) {
+        entry.material.color.copy(entry.baseColor);
+      }
+    } else {
+      entry.material.transparent = true;
+      entry.material.depthWrite = false;
+      entry.object3d.renderOrder = DOOR_INERT_FADE_RENDER_ORDER;
+      const chroma = entry.baseColor
+        ? Math.max(entry.baseColor.r, entry.baseColor.g, entry.baseColor.b)
+          - Math.min(entry.baseColor.r, entry.baseColor.g, entry.baseColor.b)
+        : 0;
+      const saturated = chroma > DOOR_INERT_SATURATION_CHROMA;
+      // Saturated panels fade further than the neutral ones (a lower opacity
+      // ceiling) AND get pulled toward a cool glass tint, so no bright swatch
+      // survives at partial fade even before it's fully desaturated.
+      entry.material.opacity = entry.baseOpacity * (1 - (saturated ? 0.82 : 0.66) * a);
+      if (saturated && entry.baseColor && entry.material.color) {
+        entry.material.color.copy(entry.baseColor).lerp(DOOR_INERT_GLASS_TINT, a);
+      }
+    }
+    entry.material.needsUpdate = true;
+  }
+  frontDoorInertFadeApplied = a;
+  // NOTE: the SOURCE called requestRender() here. This viewer has no such
+  // render-request primitive; instead chamberInertActive() is folded into the
+  // animate loop's sceneActive check, which keeps frames rendering for the whole
+  // fade (and the idle heartbeat catches the final solid frame), so no explicit
+  // request is needed.
+}
+
+// --- Inert lifecycle state machine ------------------------------------------
+// idle -> purging -> inert -> holding -> evacuating -> idle
+//
+//  idle:       no gas. target 0.
+//  purging:    entered by beginChamberPurge() (from the print-start homing
+//              callback), BEFORE deposition. target 1; door glassy. Once the
+//              chamber reads fully inert (fill >= 0.98) the gated deposition
+//              callback fires and we move to "inert" — deposition is a GATE,
+//              never concurrent with the purge. A safety timeout fires the
+//              deposition anyway if the purge ever stalls, so a print can
+//              never deadlock waiting on it.
+//  inert:      deposition running. target 1; door eased back solid so the
+//              operator watches the print; a faint steady haze remains.
+//  holding:    entered from confirmPrintComplete()/confirmStopPrint() while
+//              gas is still present. target frozen at the current fill (gas
+//              neither rises nor drains on its own); door glassy again; the
+//              front door is LOCKED (see isChamberInertLocked) until purged.
+//  evacuating: entered from holding once the fan is switched on. target 0,
+//              drain rate scales with fan speed (a stronger fan clears the
+//              chamber faster). Turning the fan off pauses the drain (back to
+//              holding — gas stops leaving, it does not refill). Once the
+//              chamber reads clear (fill <= 0.02) we return to idle and the
+//              door unlocks.
+let inertPhase = "idle";
+let pendingDepositionCallback = null;
+let purgeSafetyTimeoutId = null;
+const CHAMBER_PURGE_SAFETY_TIMEOUT_MS = 20000; // a stalled purge must never deadlock a print
+const CHAMBER_INERT_DOOR_LOCK_FILL = 0.06; // below this, don't bother blocking the door
+
+function clearPurgeSafetyTimeout() {
+  if (purgeSafetyTimeoutId !== null) {
+    window.clearTimeout(purgeSafetyTimeoutId);
+    purgeSafetyTimeoutId = null;
+  }
+}
+
+// Fire the deposition the purge was gating (once) and move to "inert".
+function releasePendingDeposition() {
+  clearPurgeSafetyTimeout();
+  const onInertReady = pendingDepositionCallback;
+  pendingDepositionCallback = null;
+  inertPhase = "inert";
+  if (typeof onInertReady === "function") {
+    onInertReady();
+  }
+}
+
+// Called by startDockedPrint's homing callback INSTEAD OF starting deposition
+// directly: floods the chamber with argon first, and only calls
+// onInertReady() once the chamber reads fully inert — or the safety timeout
+// fires, so a stalled purge can never deadlock the print.
+function beginChamberPurge(onInertReady) {
+  clearPurgeSafetyTimeout();
+  inertPhase = "purging";
+  pendingDepositionCallback = onInertReady;
+  showPrintNotice("Inerting chamber with argon…");
+  purgeSafetyTimeoutId = window.setTimeout(() => {
+    purgeSafetyTimeoutId = null;
+    if (pendingDepositionCallback) {
+      releasePendingDeposition();
+    }
+  }, CHAMBER_PURGE_SAFETY_TIMEOUT_MS);
+}
+
+// Called when a print ends — finished (confirmPrintComplete) or cancelled
+// (confirmStopPrint), including a cancel mid-purge. Cancels any purge still
+// gating a deposition (so it can never fire after the print is already gone)
+// and, if gas is still in the chamber, holds it there (door locked) until the
+// operator runs the fan to clear it out. No gas present -> straight to idle.
+function endChamberInertForPrint() {
+  clearPurgeSafetyTimeout();
+  pendingDepositionCallback = null;
+  inertPhase = chamberInert.getFill() > 0.02 ? "holding" : "idle";
+}
+
+// True while gas is present enough that the operator shouldn't open the front
+// door (purging/inert/holding/evacuating with meaningful fill). Used by
+// runBottomNavDoorToggleAction to block the open action.
+function isChamberInertLocked() {
+  return inertPhase !== "idle" && chamberInert.getFill() > CHAMBER_INERT_DOOR_LOCK_FILL;
+}
+
+// Real-feed aware target for the phases that WANT gas present (purging/inert):
+// mirrors real chamber O2 telemetry toward the inert target when available,
+// else just requests full (synthesized purge for the local sim).
+function desiredPurgeTargetFill() {
+  const o2 = chamberAtmosphere && Number.isFinite(chamberAtmosphere.o2Ppm)
+    ? chamberAtmosphere.o2Ppm : null;
+  if (o2 === null) return 1;
+  const span = CHAMBER_AMBIENT_O2_PPM - CHAMBER_INERT_O2_PPM;
+  return Math.max(0, Math.min(1, (CHAMBER_AMBIENT_O2_PPM - o2) / span));
+}
+
+function updateChamberInertSimulation(dt) {
+  // Fan-driven transitions between holding <-> evacuating.
+  const fanRunning = Boolean(fanState && fanState.on && fanState.speed > 0.5);
+  if (inertPhase === "holding" && fanRunning) {
+    inertPhase = "evacuating";
+  } else if (inertPhase === "evacuating" && !fanRunning) {
+    inertPhase = "holding"; // pause the drain — gas stops leaving, doesn't refill
+  }
+
+  let targetFill;
+  switch (inertPhase) {
+    case "purging":
+    case "inert":
+      targetFill = desiredPurgeTargetFill();
+      break;
+    case "evacuating": {
+      const speed = Math.max(0, Math.min(100, Number(fanState.speed) || 0));
+      chamberInert.setFallRate(0.06 + 0.35 * (speed / 100));
+      targetFill = 0;
+      break;
+    }
+    case "holding":
+      targetFill = chamberInert.getFill(); // frozen — neither rises nor drains
+      break;
+    case "idle":
+    default:
+      targetFill = 0;
+      break;
+  }
+  chamberInert.setTarget(targetFill);
+  chamberInert.update(dt);
+  const fill = chamberInert.getFill();
+
+  if (inertPhase === "purging" && fill >= 0.98) {
+    releasePendingDeposition(); // -> "inert", fires the gated deposition once
+  } else if (inertPhase === "evacuating" && fill <= 0.02) {
+    inertPhase = "idle";
+  }
+
+  // Door see-through by phase: glassy while purging/holding/evacuating (the
+  // operator needs to see the gas), solid while actually depositing or idle.
+  const glassy = inertPhase === "purging" || inertPhase === "holding" || inertPhase === "evacuating";
+  // Gas ignores interior clutter (reads as a full haze) exactly while the door
+  // is glassy and meant to be seen through; once the door is solid again
+  // (inert/idle) drop back to normal depth-tested occlusion so the gas doesn't
+  // keep painting over the now-opaque door and hide the print underneath.
+  chamberInert.setUnoccluded(glassy);
+  const fadeTarget = glassy ? 1 : 0;
+  frontDoorInertFadeCurrent += (fadeTarget - frontDoorInertFadeCurrent) * Math.min(1, dt / 0.5);
+  if (frontDoorInertFadeCurrent < 0.002) frontDoorInertFadeCurrent = 0;
+  applyFrontDoorInertFade(frontDoorInertFadeCurrent);
+}
+
+function chamberInertActive() {
+  return chamberInert.isActive() || frontDoorInertFadeCurrent > 0.002 || inertPhase !== "idle";
+}
+
 function getWorldLowestPointFromLocalBounds(object3d, localBounds) {
   if (!object3d || !localBounds || localBounds.isEmpty()) {
     return null;
@@ -15521,6 +15856,8 @@ async function loadUrdf(urdfUrl) {
     enhanceFeederWheelMaterials();
     rebuildJointControls();
     synchronizeTopCoverControlState();
+    initDustExhaustAnchor();
+    initChamberInertBounds();
     assemblyAnnotationManager.rebuildFromRobot();
     clearFeederHeadRestoreTimeout();
     activeFeederCameraAnchorSide = null;
@@ -16018,6 +16355,9 @@ function confirmPrintComplete() {
   closePrintCompleteModal();
   printCompletionHandled = false;
   cancelPrePrintSequence();
+  // Print finished: if the chamber still has argon in it, hold it there
+  // (door locked) until the operator runs the fan to purge it out.
+  endChamberInertForPrint();
   setSlicerMenuOpen(false);
   if (printSim && printSim.getState() !== "idle") {
     printSim.reset();
@@ -16114,6 +16454,10 @@ function confirmStopPrint() {
   closePrintPauseNotice();
   setSlicerMenuOpen(false);  // close the Slicer flyout so it can't linger
   cancelPrePrintSequence(); // stop the homing routine if it's still running
+  // Print cancelled — possibly mid-purge. Cancel any purge still gating a
+  // deposition (it must never fire after the print is gone) and, if the
+  // chamber still has argon in it, hold it there (door locked) until purged.
+  endChamberInertForPrint();
 
   // Machine is authoritative: command the real stop. Fire-and-forget with a
   // logged failure — the visual teardown below proceeds either way, but a failed
@@ -16356,6 +16700,13 @@ function runBottomNavDoorToggleAction() {
     return didClose;
   }
 
+  // The chamber is still inert (or being purged/evacuated) — the operator
+  // must run the fan to clear the argon before the door can open.
+  if (isChamberInertLocked()) {
+    showPrintNotice("Chamber still inert with argon — run the fan to purge before opening the door.");
+    return false;
+  }
+
   const didOpen = runFrontDoorButtonAction(controls.target);
   updateBottomNavState();
   return didOpen;
@@ -16545,6 +16896,8 @@ function animate(nowMs = performance.now()) {
   updateInteractionQuality(nowMs);
   updateCloudPrintSimulation(deltaSeconds);
   printSim?.update(deltaSeconds);
+  dustExhaust.update(deltaSeconds);
+  updateChamberInertSimulation(deltaSeconds);
   const controlsChanged = controls.update();
   const sceneViewShiftActive = updateSceneViewShift(deltaSeconds);
   updateSpoolAssemblyHighlight(nowMs);
@@ -16561,7 +16914,9 @@ function animate(nowMs = performance.now()) {
     cameraTransitionState !== null ||
     jointControlTransitions.size > 0 ||
     Math.abs(materialsModelLiftCurrentM - materialsModelLiftTargetM) > 1e-5 ||
-    (printSim ? printSim.getState() === "playing" : false);
+    (printSim ? printSim.getState() === "playing" : false) ||
+    dustExhaust.isActive() ||
+    chamberInertActive();
   if (sceneActive || (nowMs - lastMainRenderMs) >= IDLE_RENDER_INTERVAL_MS) {
     renderer.render(scene, camera);
     lastMainRenderMs = nowMs;
@@ -17205,6 +17560,34 @@ if (feederDriveDownEl) {
   });
 }
 
+// Controls ▸ Feeder panel per-wheel jog: each button is a TOGGLE. Clicking the
+// wheel+direction that is already driving stops it; otherwise it starts (or
+// switches) that wheel in that direction via runFeederFloatingCommand().
+function runFeederJogToggle(side, direction) {
+  markUserActivity();
+  if (feederDriveSide === side && feederDriveVertical === direction) {
+    setFeederDriveStop();
+    return;
+  }
+  runFeederFloatingCommand(side, direction);
+}
+
+if (feederJogLeftUpEl) {
+  feederJogLeftUpEl.addEventListener("click", () => runFeederJogToggle("left", "up"));
+}
+
+if (feederJogLeftDownEl) {
+  feederJogLeftDownEl.addEventListener("click", () => runFeederJogToggle("left", "down"));
+}
+
+if (feederJogRightUpEl) {
+  feederJogRightUpEl.addEventListener("click", () => runFeederJogToggle("right", "up"));
+}
+
+if (feederJogRightDownEl) {
+  feederJogRightDownEl.addEventListener("click", () => runFeederJogToggle("right", "down"));
+}
+
 if (hotspotFeederDriveLeftEl) {
   hotspotFeederDriveLeftEl.addEventListener("click", () => {
     markUserActivity();
@@ -17585,6 +17968,17 @@ if (feederCameraAnchorLeftEl) {
     markUserActivity();
     focusFeederCameraAnchor("left");
   });
+}
+
+// The Feeder View button's `.disabled` is driven by hasModel (see
+// updateFeederCameraAnchorButtons), independently of the permission gate that
+// now also wraps it (#feederDriveSection has data-requires-permission). The
+// permission module snapshots/restores `.disabled` around deny/grant, so a
+// deny captured before the model finished loading would otherwise leave the
+// button stuck disabled after signing in. Re-run our own update on every
+// permission change so the hasModel-driven state always wins last.
+if (window.MeltioPermissions && typeof window.MeltioPermissions.onChange === "function") {
+  window.MeltioPermissions.onChange(() => updateFeederCameraAnchorButtons());
 }
 
 if (feederCameraAnchorRightEl) {
@@ -18024,6 +18418,7 @@ function setFanOn(on) {
   setTopbarUtilityToggleState(topbarFanToggleEl, on);
   syncTopbarUtilityErrorNotifications();
   applyFanSpin();
+  syncDustExhaustFan();
   refreshFanSettingsUI();
   persistUtilitySettings();
 }
@@ -18101,6 +18496,7 @@ document.getElementById("fanSettingsSpeed")?.addEventListener("input", (e) => {
   fanState.speed = Number(e.target.value) || 0;
   if (fanState.mode === "auto") { fanState.mode = "manual"; }
   applyFanSpin();
+  syncDustExhaustFan();
   refreshFanSettingsUI();
   persistUtilitySettings();
 });
@@ -18208,6 +18604,7 @@ attachNumpadToValue(document.getElementById("fanSettingsSpeedValue"), () => ({
     fanState.speed = n;
     if (fanState.mode === "auto") fanState.mode = "manual";
     applyFanSpin();
+    syncDustExhaustFan();
     refreshFanSettingsUI();
     persistUtilitySettings();
   },

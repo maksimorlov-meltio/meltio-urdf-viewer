@@ -19,7 +19,7 @@ import { buildLineSegmentBuffers, segmentsVisibleForProgress } from "./toolpathM
 import { buildTubeBuffers, INDICES_PER_SEGMENT } from "./toolpathTubes.js?v=1";
 
 const DEFAULT_CLIENT_LAYER_COUNT = 120; // synthetic layers for the clip-plane reveal
-const DEFAULT_SPEED_LAYERS_PER_SEC = 20;
+const DEFAULT_SPEED_LAYERS_PER_SEC = 8;
 // Slicer geometry is in millimetres; the scene is in metres. Used both to build
 // the toolpath buffers and to place the slicer's plate centre in the scene.
 const TOOLPATH_UNIT_SCALE = 0.001;
@@ -60,7 +60,7 @@ export function createPrintSimulation(context) {
   // deposition speed), scaled by a user multiplier. Null → fall back to the
   // layers/sec pacing (clip source, or no speed from the slicer).
   let printSecondsAt1x = null;
-  let speedMultiplier = 1;
+  let speedMultiplier = 0.5;
   let totalLayers = DEFAULT_CLIENT_LAYER_COUNT;
   let source = null; // "clip" | "toolpath"
 
