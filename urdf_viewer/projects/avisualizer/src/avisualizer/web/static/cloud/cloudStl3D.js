@@ -12,7 +12,9 @@ export function createCloudStl3D(ctx) {
     controls,
     stlLoader,
     setCloudStlStatus,
-    printSim,
+    // Lazy getter: printSim is assigned in urdf_viewer.js AFTER this factory is
+    // created, so a captured value would be frozen at null. Resolve it on use.
+    getPrintSim,
     setCloudPrintSimulationPlaying,
     setCloudPrintSimulationProgress,
     beginInteractionQuality,
@@ -349,6 +351,7 @@ export function createCloudStl3D(ctx) {
     teardownPrintBedSimulation();
     // Drop any slicer-solid preview so the next loaded part starts from the cloud
     // STL (not a stale hidden STL / leftover preview).
+    const printSim = getPrintSim();
     if (printSim && typeof printSim.setSolidPreview === "function") {
       printSim.setSolidPreview(false);
     }
@@ -1344,6 +1347,7 @@ export function createCloudStl3D(ctx) {
   async function autoPreparePrintSimulationForSelection() {
     // Never run a background slice while a docked print is starting/active — its
     // prepare() would race and could stomp the live print's toolpath source.
+    const printSim = getPrintSim();
     if (!printSim || getPrintSimAutoRunInProgress() || getIsDockedPrintActive()) {
       return;
     }

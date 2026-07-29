@@ -7,10 +7,21 @@
 // established, isConnected() stays false and every command rejects, so the
 // local simulation remains the authority and callers fall back gracefully.
 //
-// SAFETY: permissions.js only gates the UI (it disables buttons); it is NOT a
-// security boundary. Do NOT point `base` at a transport that can move the real
-// machine until the controller/firmware enforces role authorization
-// server-side for motion-bearing commands (jog, start/stop/pause, e-stop).
+// SAFETY (security): permissions.js only gates the UI (it disables buttons); it
+// is NOT a security boundary. The REAL authorization for motion MUST be enforced
+// server-side by the controller/firmware (role check on every motion-bearing
+// command) — a local process can POST to {base}/api/machine/* directly, bypassing
+// this client entirely. PRODUCTION PREREQUISITE (blocking): do NOT point `base`
+// at a transport that can move the real machine until that server-side role
+// authorization exists. This file cannot provide that guarantee.
+//
+// SAFETY (operational, in-repo): as accident-prevention distinct from the above,
+// motion-INITIATING commands (arm, start-print, resume) require an explicit
+// `allowMotion: true` acknowledgment in the config. Merely enabling the link
+// (e.g. `?machine=1` to watch telemetry) must NOT be able to start motion. This
+// is NOT a security control — it only stops the HMI itself from accidentally
+// commanding motion. De-escalating commands (stop, pause, emergency-stop) are
+// ALWAYS permitted (fail-safe: never block a stop).
 //
 // Controller contract this client expects (to be implemented by the machine
 // backend when it exists):
@@ -22,8 +33,13 @@
 
 const HEALTH_POLL_MS = 5000;
 
+// Commands that START or RESUME machine motion. Gated behind allowMotion.
+// Stop/pause/emergency-stop are intentionally excluded so a halt is never blocked.
+const MOTION_INITIATING_COMMANDS = new Set(["arm", "start-print", "resume"]);
+
 export function createMachineLink(config = {}) {
   const base = String(config.base || "").replace(/\/+$/, "");
+  const allowMotion = config.allowMotion === true;
   const onStateChange = typeof config.onStateChange === "function" ? config.onStateChange : () => {};
   const onTelemetry = typeof config.onTelemetry === "function" ? config.onTelemetry : () => {};
 
@@ -99,6 +115,16 @@ export function createMachineLink(config = {}) {
   async function command(name, payload) {
     if (!isConnected()) {
       throw new Error("machine link not connected");
+    }
+    if (MOTION_INITIATING_COMMANDS.has(name) && !allowMotion) {
+      // Accident-prevention gate (see the SAFETY note at the top). This is not a
+      // security boundary: the controller/firmware must still authorize motion
+      // server-side. It only stops the HMI from initiating motion unless the
+      // integrator explicitly acknowledged it via AVIS_MACHINE.allowMotion.
+      throw new Error(
+        `motion command "${name}" blocked: set AVIS_MACHINE.allowMotion = true `
+          + "only after the controller enforces server-side role authorization",
+      );
     }
     const res = await fetch(`${base}/api/machine/${name}`, {
       method: "POST",

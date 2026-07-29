@@ -156,6 +156,18 @@ place to start reading):
   Commands (`arm`/`startPrint`/`stop`/`pause`/`resume`/`emergencyStop`) return
   Promises. **UI gating is not a security boundary — real motion needs
   server-side/firmware role auth.**
+  - **Two independent gates (SEG-1).** (1) *Security* — the controller/firmware
+    MUST authorize every motion-bearing command server-side (a local process can
+    POST to `{base}/api/machine/*` directly, bypassing this client). This client
+    cannot provide that; it is a **blocking production prerequisite**. (2)
+    *Operational accident-prevention* — motion-**initiating** commands
+    (`arm`/`start-print`/`resume`) also require an explicit
+    `AVIS_MACHINE.allowMotion = true`, so merely enabling the link (e.g.
+    `?machine=1` to watch telemetry) can never start motion. De-escalating
+    commands (`stop`/`pause`/`emergency-stop`) are **always** allowed (fail-safe).
+    Covered by `tests/js/machineLinkMotionGate.test.mjs`.
+  - **Do NOT set `allowMotion: true` against a real `base` until gate (1) is in
+    place.**
 - **`prePrintCheck.js`** — the Start-print safety gate (`createPrePrintCheck`):
   `open()` runs the material + machine-signal checks, routes material blocks to
   the guided fix, and only proceeds past a signal block on an authorised override.

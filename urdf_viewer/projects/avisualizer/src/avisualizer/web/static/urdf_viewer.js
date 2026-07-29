@@ -7,14 +7,14 @@ import { fetchSensorData } from "./modules/api.js";
 import { buildSpriteObject, buildVoxelCubeObject } from "./modules/render.js";
 import { createPrintSimulation } from "./sim/printSimulation.js?v=12";
 import { createSlicerClient } from "./sim/slicerClient.js";
-import { createMachineLink } from "./sim/machineLink.js";
+import { createMachineLink } from "./sim/machineLink.js?v=2";
 import { createPrePrintCheck } from "./sim/prePrintCheck.js";
 import { createViewCubeController } from "./controllers/viewCube.js?v=1";
 import { createFeederPreviewController } from "./controllers/feederPreview.js?v=1";
 import { createAssemblyAnnotationManager } from "./controllers/annotationManager.js?v=1";
 import { createViewerScene } from "./core/viewerScene.js?v=1";
 import { createCloudLibrary } from "./cloud/cloudLibrary.js?v=1";
-import { createCloudStl3D } from "./cloud/cloudStl3D.js?v=2";
+import { createCloudStl3D } from "./cloud/cloudStl3D.js?v=3";
 import { createJointsCore } from "./kinematics/jointsCore.js?v=1";
 import { createTransparency } from "./robot/transparency.js?v=1";
 import { createSpoolHighlight } from "./materials/spoolHighlight.js?v=1";
@@ -3295,7 +3295,12 @@ function machineLinkConfig() {
   try {
     if (new URLSearchParams(window.location.search).get("machine") === "1") enabled = true;
   } catch (_e) { /* no-op */ }
-  return { enabled, base: String(cfg.base || "") };
+  // allowMotion is a separate, explicit acknowledgment: enabling the link (e.g.
+  // ?machine=1 to watch telemetry) must NOT be able to start machine motion.
+  // Only an integrator setting AVIS_MACHINE.allowMotion = true arms the
+  // motion-initiating commands — and only once the controller enforces
+  // server-side role authorization (see the SAFETY note in sim/machineLink.js).
+  return { enabled, base: String(cfg.base || ""), allowMotion: cfg.allowMotion === true };
 }
 
 // True when a real (or mock) machine is connected and telemetry is fresh.
@@ -3310,6 +3315,7 @@ function initMachineLink() {
   }
   machineLink = createMachineLink({
     base: cfg.base,
+    allowMotion: cfg.allowMotion,
     onStateChange: (next) => onMachineStateChange(next),
     onTelemetry: (snap) => onMachineTelemetry(snap),
   });
@@ -9584,7 +9590,7 @@ const cloudStl3D = createCloudStl3D({
   controls,
   stlLoader,
   setCloudStlStatus,
-  printSim,
+  getPrintSim: () => printSim,
   setCloudPrintSimulationPlaying: (...a) => cloudPrintSim.setCloudPrintSimulationPlaying(...a),
   setCloudPrintSimulationProgress: (...a) => cloudPrintSim.setCloudPrintSimulationProgress(...a),
   beginInteractionQuality,
