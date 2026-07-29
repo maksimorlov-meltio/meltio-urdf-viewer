@@ -1,0 +1,14 @@
+# Repo-wide LFS backstop.
+#
+# urdf_viewer/.gitattributes and _slicer_branch/.gitattributes already track
+# *.glb/*.gltf/*.obj (and a few app-specific patterns) for their own subtrees.
+# This root-level file exists so any large binary asset added ANYWHERE in the
+# repo -- including outside those two app trees, or before an app-specific
+# .gitattributes is written -- is routed to Git LFS instead of landing as a
+# regular Git blob. Deeper .gitattributes files still take precedence for the
+# patterns they define; this is only a fallback for patterns they don't.
+*.glb  filter=lfs diff=lfs merge=lfs -text
+*.gltf filter=lfs diff=lfs merge=lfs -text
+*.obj  filter=lfs diff=lfs merge=lfs -text
+*.stl  filter=lfs diff=lfs merge=lfs -text
+*.mp4  filter=lfs diff=lfs merge=lfs -text

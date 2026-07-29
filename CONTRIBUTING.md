@@ -36,9 +36,14 @@ optional (`avisualizer[pointcloud]`). Never rely on global Python packages.
 
 ## Validate before every PR (definition of green)
 
-There is **no active CI** at the repo root (the `*/​.github/` workflows live in
-subfolders and do not run here), so **these local commands are the contract** —
-run the ones relevant to what you touched, from the repo root (PowerShell):
+There **is** a root-level CI workflow (`.github/workflows/ci.yml`) that runs on
+every PR and every push to `main` — viewer pytest, slicer pytest, and frontend
+JS checks (syntax + import-resolution + unit tests). A PR is only healthy once
+that workflow is green; the `*/​.github/` workflows under `urdf_viewer/` and
+`_slicer_branch/` are per-app/legacy and do **not** run for this repo — ignore
+them. Run the same checks locally before pushing so you catch failures before
+CI does (**these local commands are the contract**) — run the ones relevant to
+what you touched, from the repo root (PowerShell):
 
 ```powershell
 # Python — per venv (run the suite whose app you touched; both if in doubt)

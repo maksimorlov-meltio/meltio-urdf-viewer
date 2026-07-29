@@ -59,5 +59,14 @@ jobs:
         run: node urdf_viewer/projects/avisualizer/tools/check_imports.mjs
       - name: frontend unit tests
         run: |
-          node --test "urdf_viewer/projects/avisualizer/tests/js/**/*.test.mjs"
-          node --test "_slicer_branch/projects/platform/tests/js/**/*.test.mjs"
+          # Quoted "**/*.test.mjs" globs are never expanded by the shell (they're
+          # passed to `node --test` as one literal, non-existent path), so this
+          # silently ran zero tests before. Use find+xargs instead, mirroring the
+          # node --check step above; -r means "don't invoke node --test at all"
+          # for an app that has no tests/js dir yet, instead of erroring.
+          find urdf_viewer/projects/avisualizer/tests/js \
+            -name '*.test.mjs' -print0 2>/dev/null \
+            | xargs -0 -r node --test
+          find _slicer_branch/projects/platform/tests/js \
+            -name '*.test.mjs' -print0 2>/dev/null \
+            | xargs -0 -r node --test
