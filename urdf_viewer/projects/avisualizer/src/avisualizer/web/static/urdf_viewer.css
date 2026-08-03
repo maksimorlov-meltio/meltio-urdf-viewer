@@ -18,10 +18,24 @@
   --ui-border-accent: rgba(240, 145, 58, 0.6);
   --ui-text-primary: #ededed;
   --ui-text-secondary: #bbbbbb;
-  --ui-text-muted: #8e8e8e;
+  /* Muted small-text (spool Initial/Used/Left @10px, subtitles, nh-labels).
+     Bumped #8e8e8e -> #9e9e9e for WCAG-AA margin: panels are translucent over the
+     lit 3D scene, so the on-surface ~5.4:1 erodes; #9e9e9e keeps >=4.5:1 even on
+     the lighter surfaces while staying clearly below secondary in the hierarchy. */
+  --ui-text-muted: #9e9e9e;
+  /* Disabled/inactive only (WCAG-exempt) — never used for live content text. */
   --ui-text-disabled: #666666;
   --ui-accent: #f0913a;
   --ui-accent-strong: #ffa24a;
+  /* Isometric "cube family" bottom-nav icon face tones (2026-08). Dark-theme
+     defaults here; body.light-mode overrides below so the faces stay visible
+     (not washed-out baked light-grey) when the nav background flips to white. */
+  --iso-c1: #dbe2ea;
+  --iso-c2: #c2cbd5;
+  --iso-c3: #9aa4b0;
+  --iso-int: #0a0d11;
+  --iso-acc: #f0913a;
+  --iso-seam: rgba(0, 0, 0, 0.30);
   /* Soft accent bg is NEUTRAL (low-alpha orange over black reads brown). Orange
      lives on borders + text instead. */
   --ui-accent-soft: rgba(255, 255, 255, 0.05);
@@ -34,6 +48,10 @@
   --ui-success: #43b56a;
   --ui-warning: #f0b53a;
   --ui-error: #ee5138;
+  /* Deeper red for WHITE-on-red fills (e.g. the critical count badge): white on
+     --ui-error is only 3.58:1, on --ui-error-strong it clears 5.2:1. Red TEXT on
+     dark keeps using --ui-error (which passes there). */
+  --ui-error-strong: #c8381f;
   --ui-danger-soft: rgba(238, 81, 56, 0.18);
   --ui-button-bg: linear-gradient(180deg, rgba(36, 36, 36, 0.96), rgba(26, 26, 26, 0.96));
   --ui-button-bg-hover: linear-gradient(180deg, rgba(47, 47, 47, 0.98), rgba(33, 33, 33, 0.98));
@@ -63,8 +81,8 @@
      bottom-nav door buttons signal state via green/red and must not go orange. */
   --ui-accent-success-soft: rgba(67, 181, 106, 0.2);
   --ui-accent-success-text: #cfeed9;
-  /* Minimum comfortable interactive target. */
-  --ui-tap-min: 36px;
+  /* Minimum comfortable interactive target (WCAG 2.5.5 AAA target size ~44px). */
+  --ui-tap-min: 44px;
   --ui-space-1: 4px;
   --ui-space-2: 8px;
   --ui-space-3: 12px;
@@ -712,7 +730,14 @@ body.settings-menu-open .topbar-settings-submenu {
   box-shadow: 0 0 0 3px rgba(255, 122, 122, 0.18);
 }
 
-.controls-panel {
+/* Materials shares this geometry (position/size/padding/chrome) so the two
+   popups read as the same panel component in two states — see every override
+   below (media queries + the "final overrides" layer) where `.controls-panel`
+   is joined by `.materials-menu-popup`. Materials keeps its OWN show/hide
+   ([hidden] + aria-hidden, toggled in JS) rather than the
+   .controls-panel-open/collapsed translateX transform used below. */
+.controls-panel,
+.materials-menu-popup {
   position: fixed;
   left: 14px;
   bottom: 14px;
@@ -824,25 +849,10 @@ body.controls-panel-open .controls-sidebar-toggle {
   box-shadow: 0 18px 36px rgba(0, 0, 0, 0.4);
 }
 
-.materials-menu-popup {
-  /* Docked to the BOTTOM-LEFT quadrant: left half width, bottom half height. */
-  position: fixed;
-  left: 10px;
-  right: auto;
-  transform: none;
-  bottom: 156px;
-  z-index: 19;
-  width: clamp(340px, 50vw, 580px);
-  max-width: calc(100vw - 20px);
-  max-height: min(52vh, calc(100dvh - 200px));
-  overflow-y: auto;
-  padding: 12px;
-  border: 1px solid rgba(255, 226, 203, 0.2);
-  border-radius: 18px;
-  background: linear-gradient(180deg, rgba(26, 26, 26, 0.92), rgba(19, 19, 19, 0.92));
-  backdrop-filter: blur(14px);
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.42);
-}
+/* Geometry now comes entirely from the shared `.controls-panel,
+   .materials-menu-popup` rules above/below — see the base rule near the top of
+   this file. (Previously Materials docked to its own bottom-left quadrant; that
+   is why this block is now empty of position/size declarations.) */
 
 /* "Return to slicer" — shown in the Materials header only when the operator was
    sent here by the print material gate from the slicer. Green "go back" accent
@@ -947,20 +957,21 @@ body.controls-panel-open .controls-sidebar-toggle {
 .materials-history-view[hidden] { display: none; }
 .materials-history-header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
 .materials-history-list {
+  /* The popup itself is the single scroll container (overflow-y: auto, shared
+     with .controls-panel) — no nested max-height/scrollbar here, or a short
+     history list would get a pointless second scrollbar inside the first. */
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  max-height: calc(100dvh - 320px);
-  overflow-y: auto;
+  gap: var(--ui-space-2);
 }
 .materials-history-item {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 8px 10px;
+  gap: var(--ui-space-1);
+  padding: var(--ui-space-2) var(--ui-space-3);
   border: 1px solid var(--ui-border-subtle);
   border-radius: var(--ui-radius-sm);
   background: rgba(21, 21, 21, 0.5);
@@ -1243,28 +1254,34 @@ body.light-mode .numeric-keypad-key-confirm {
 }
 
 .controls-panel:hover,
-.controls-panel:focus-within {
+.controls-panel:focus-within,
+.materials-menu-popup:hover,
+.materials-menu-popup:focus-within {
   overflow-y: auto;
 }
 
 /* Always show a thin scrollbar (not hover-only): on a touchscreen there is no
    hover, so a hover-revealed scrollbar left the operator with no hint that the
    panel scrolls — View/Assembly were silently clipped behind the bottom nav. */
-.controls-panel {
+.controls-panel,
+.materials-menu-popup {
   scrollbar-width: thin;
 }
 
-.controls-panel::-webkit-scrollbar {
+.controls-panel::-webkit-scrollbar,
+.materials-menu-popup::-webkit-scrollbar {
   width: 9px;
   height: 9px;
 }
 
-.controls-panel::-webkit-scrollbar-thumb {
+.controls-panel::-webkit-scrollbar-thumb,
+.materials-menu-popup::-webkit-scrollbar-thumb {
   background: rgba(255, 203, 160, 0.42);
   border-radius: 999px;
 }
 
-.controls-panel::-webkit-scrollbar-track {
+.controls-panel::-webkit-scrollbar-track,
+.materials-menu-popup::-webkit-scrollbar-track {
   background: transparent;
 }
 
@@ -1276,8 +1293,15 @@ body.light-mode .numeric-keypad-key-confirm {
   color: rgba(219, 248, 232, 0.95);
 }
 
-/* Simple header to match the Files menu (no sticky gradient overlay). */
+/* Simple header to match the Files menu (no sticky gradient overlay). Needs its
+   own flex row (unlike .cloud-model-popup-header / .materials-menu-popup-header,
+   which already had one) so the close (X) button added alongside the <h2> sits
+   top-right instead of stacking below the title. */
 .controls-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   margin-bottom: 10px;
   padding-bottom: 4px;
 }
@@ -1305,10 +1329,6 @@ body.light-mode .numeric-keypad-key-confirm {
 .control-subpanel:hover {
   border: none;
   background: transparent;
-}
-
-#feederDriveSection {
-  display: none;
 }
 
 .control-subpanel h3 {
@@ -1440,8 +1460,7 @@ body.light-mode .numeric-keypad-key-confirm {
 
 .annotation-nav-group-row > #annotationNavFrontDoor,
 .annotation-nav-group-row > #annotationNavSpoolsDoor,
-.annotation-nav-group-row > #annotationNavTopCover,
-.annotation-nav-group-row > #feederCameraAnchorLeft {
+.annotation-nav-group-row > #annotationNavTopCover {
   width: auto;
   min-width: 0;
   margin-inline: 0;
@@ -1523,7 +1542,7 @@ input[type="range"] {
 
 button,
 select {
-  border: 1px solid rgba(255, 187, 132, 0.5);
+  border: 1px solid var(--ui-border-subtle);
   border-radius: 8px;
   background: linear-gradient(180deg, rgba(28, 28, 28, 0.96), rgba(20, 20, 20, 0.96));
   color: var(--text-main);
@@ -1719,7 +1738,8 @@ body.light-mode .status-line {
   text-shadow: none;
 }
 
-body.light-mode .controls-panel {
+body.light-mode .controls-panel,
+body.light-mode .materials-menu-popup {
   background: linear-gradient(160deg, rgba(255, 255, 255, 0.92), rgba(255, 248, 242, 0.9));
   border-color: rgba(33, 33, 33, 0.25);
 }
@@ -1751,11 +1771,6 @@ body.light-mode .cloud-model-menu-toggle[aria-expanded="true"] {
 }
 
 body.light-mode .cloud-model-popup {
-  background: linear-gradient(180deg, rgba(252, 255, 253, 0.96), rgba(244, 252, 248, 0.96));
-  border: none;
-}
-
-body.light-mode .materials-menu-popup {
   background: linear-gradient(180deg, rgba(252, 255, 253, 0.96), rgba(244, 252, 248, 0.96));
   border: none;
 }
@@ -1796,7 +1811,8 @@ body.light-mode .control-note {
 }
 
 body.light-mode button,
-body.light-mode select {
+body.light-mode select,
+body.light-mode .spool-amount-input {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(255, 249, 244, 0.95));
   border-color: rgba(33, 33, 33, 0.38);
   color: #212121;
@@ -1831,7 +1847,21 @@ body.light-mode .joint-wheel-toggle.active {
   background: rgba(210, 119, 44, 0.9);
 }
 
+/* !important: a later unscoped rule (.drive-toggle-group button[aria-pressed],
+   further down this file) also carries !important and would otherwise keep
+   winning in light mode too, putting near-white text back on a near-transparent
+   fill. */
 body.light-mode .drive-toggle-group button[aria-pressed="true"] {
+  background: rgba(210, 119, 44, 0.9) !important;
+  border-color: rgba(100, 100, 100, 0.8) !important;
+  color: #ffffff !important;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35), 0 0 0 1px rgba(100, 100, 100, 0.22) !important;
+}
+
+/* Assembly Shortcuts quick-nav (Front Door / Top Door / Feeder) had no
+   light-mode counterpart at all: the pressed state's `color: #fff` sits on a
+   ~40%-alpha gradient, which reads near-white-on-pale over a white theme. */
+body.light-mode .annotation-nav-group button:not(:disabled)[aria-pressed="true"] {
   background: rgba(210, 119, 44, 0.9);
   border-color: rgba(100, 100, 100, 0.8);
   color: #ffffff;
@@ -1973,7 +2003,8 @@ body.light-mode .feeder-camera-placeholder {
     font-size: 28px;
   }
 
-  .controls-panel {
+  .controls-panel,
+  .materials-menu-popup {
     width: calc(100vw - 24px);
     left: 12px;
     bottom: 12px;
@@ -2448,7 +2479,8 @@ body.light-mode .topbar-icon[aria-expanded="true"] .ui-img-icon {
   font-size: 11px;
 }
 
-.controls-panel {
+.controls-panel,
+.materials-menu-popup {
   top: 84px;
   left: 0;
   bottom: auto;
@@ -2622,6 +2654,17 @@ body.cloud-menu-open .bottom-nav {
   stroke-linejoin: round;
 }
 
+/* Isometric "cube family" icon faces (Open Door / Top Door / Materials /
+   Files). These override the fill:none/stroke:currentColor rule above with
+   explicit theme-aware fills so the glyphs read as solid flat-3D cubes in
+   both dark and light mode (see --iso-* custom properties near --ui-accent). */
+.bottom-nav-item svg .iso-c1 { fill: var(--iso-c1); stroke: none; }
+.bottom-nav-item svg .iso-c2 { fill: var(--iso-c2); stroke: none; }
+.bottom-nav-item svg .iso-c3 { fill: var(--iso-c3); stroke: none; }
+.bottom-nav-item svg .iso-int { fill: var(--iso-int); stroke: none; }
+.bottom-nav-item svg .iso-acc { fill: var(--iso-acc); stroke: none; }
+.bottom-nav-item svg .iso-seam { fill: none; stroke: var(--iso-seam); stroke-width: 1; stroke-linecap: round; }
+
 .bottom-nav-item span {
   font-size: 12px;
   letter-spacing: 0.01em;
@@ -2644,6 +2687,18 @@ body.cloud-menu-open .bottom-nav {
 body.light-mode .status-panel.app-topbar {
   border-color: rgba(55, 55, 55, 0.2);
   background: linear-gradient(180deg, rgba(255, 251, 248, 0.9), rgba(255, 248, 242, 0.9));
+}
+
+/* Isometric cube-family nav icon faces (light theme): dark-grey tones so the
+   cube reads clearly against the light nav bar, instead of the dark-theme's
+   pale faces washing out to near-white-on-white. */
+body.light-mode {
+  --iso-c1: #7c8794;
+  --iso-c2: #69737f;
+  --iso-c3: #545d69;
+  --iso-int: #2b303a;
+  --iso-acc: #d97e26;
+  --iso-seam: rgba(0, 0, 0, 0.34);
 }
 
 /* Option-3 bottom nav is card-less in both themes: just a hairline under the bar. */
@@ -2683,15 +2738,24 @@ body.light-mode .topbar-icon {
   background: rgba(255, 255, 255, 0.6);
 }
 
+/* The backdrop-filter blur on these panels samples the dark, busy 3D scene
+   behind them. At <1.0 opacity that blurred scene still bleeds through as a
+   persistent diagonal smudge across the rows in light mode (the dark-theme
+   panel hid it fine against a dark scene, light mode does not). Go near-opaque
+   and drop the blur entirely so rows stay clean and legible. */
 body.light-mode .topbar-settings-menu {
   border-color: rgba(55, 55, 55, 0.24);
-  background: linear-gradient(180deg, rgba(255, 251, 248, 0.95), rgba(255, 248, 242, 0.95));
+  background: linear-gradient(180deg, rgba(255, 253, 250, 0.99), rgba(252, 247, 242, 0.99));
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 body.light-mode .topbar-settings-submenu,
 body.light-mode .advanced-timeout-warning-card {
   border-color: rgba(55, 55, 55, 0.24);
-  background: linear-gradient(180deg, rgba(255, 251, 248, 0.96), rgba(255, 248, 242, 0.96));
+  background: linear-gradient(180deg, rgba(255, 253, 250, 0.99), rgba(252, 247, 242, 0.99));
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 body.light-mode .topbar-settings-menu button {
@@ -2755,10 +2819,40 @@ body.materials-menu-open .advanced-mode-indicator {
   pointer-events: none;
 }
 
-.topbar-settings-menu button.advanced-mode-active {
-  border-color: rgba(111, 232, 180, 0.46);
-  background: rgba(49, 102, 79, 0.28);
-  color: #d4ffe5;
+/* This row (a passive STATUS indicator: "is Advanced Mode on?") also picks up
+   aria-pressed="true", which elsewhere means "the shared pressed look" — a
+   solid orange/grey gradient fill used for real toggle/nav buttons. That made
+   a status row look like the menu's primary call-to-action. Give it its own
+   quieter treatment instead: normal row chrome + an accent ring + a small "ON"
+   pill, so nav rows and this mode-status row read as visually distinct.
+   #ID + .class specificity reliably beats the shared [aria-pressed] selector
+   regardless of source order. */
+#settingsAdvancedModeToggle.advanced-mode-active {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border-color: var(--ui-border-accent);
+  color: var(--ui-text-primary);
+  box-shadow: none;
+}
+#settingsAdvancedModeToggle.advanced-mode-active::after {
+  content: "ON";
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: var(--ui-font-weight-bold);
+  letter-spacing: 0.06em;
+  color: var(--ui-accent);
+  border: 1px solid var(--ui-border-accent);
+  background: rgba(240, 145, 58, 0.12);
+}
+body.light-mode #settingsAdvancedModeToggle.advanced-mode-active {
+  background: rgba(255, 255, 255, 0.8);
+  border-color: rgba(210, 119, 44, 0.75);
+  color: #2e2e2e;
 }
 
 .advanced-pin-modal,
@@ -2890,6 +2984,16 @@ body.materials-menu-open .advanced-mode-indicator {
   border: 1px solid rgba(226, 176, 74, 0.32);
 }
 .print-complete-note[hidden] { display: none; }
+/* Inline warning-triangle glyph replaces the emoji "⚠" to match the rest of
+   the icon system; fixed --ui-warning tint (independent of the note's own
+   data-status recolouring) since it always accompanies this same cooldown copy. */
+.print-complete-note-icon {
+  width: 14px;
+  height: 14px;
+  margin-right: 3px;
+  vertical-align: -2px;
+  color: var(--ui-warning);
+}
 #printCompleteAtmosphere[data-status="safe"] { color: #7ee0a0; }
 #printCompleteAtmosphere[data-status="warn"] { color: #e2b04a; }
 #printCompleteAtmosphere[data-status="danger"] { color: #ff7a7a; }
@@ -3132,7 +3236,7 @@ button.btn-danger:hover {
 
 .calendar-screen-title-wrap h2 {
   margin: 0;
-  font-size: 22px;
+  font-size: var(--ui-font-size-screen-title);
   color: var(--ui-text-primary);
 }
 
@@ -3178,7 +3282,7 @@ button.btn-danger:hover {
 
 .notif-history-title-wrap h2 {
   margin: 0;
-  font-size: 22px;
+  font-size: var(--ui-font-size-screen-title);
   color: var(--ui-text-primary);
 }
 
@@ -3569,7 +3673,8 @@ body.light-mode .advanced-mode-indicator.is-inactive {
     display: none;
   }
 
-  .controls-panel {
+  .controls-panel,
+  .materials-menu-popup {
     top: 74px;
     left: 8px;
     bottom: auto;
@@ -3819,11 +3924,14 @@ body.light-mode .advanced-mode-indicator.is-inactive {
   padding: 6px 8px;
 }
 
+/* Source filters (incl. "Cloud") are a plain tab selector, not a door/connection
+   safety state — green is reserved for those, so the selected tab takes the
+   one-accent (orange) treatment instead of its own bespoke green fill. */
 .cloud-source-filter[aria-pressed="true"] {
-  background: linear-gradient(180deg, rgba(122, 233, 182, 0.85), rgba(62, 194, 142, 0.8));
-  border-color: rgba(151, 248, 203, 0.88);
-  color: #073425;
-  box-shadow: 0 0 0 1px rgba(160, 242, 203, 0.24), 0 8px 18px rgba(10, 38, 29, 0.3);
+  background: var(--ui-state-selected-bg);
+  border-color: var(--ui-state-selected-border);
+  color: var(--ui-text-primary);
+  box-shadow: var(--ui-shadow-accent);
 }
 
 .cloud-search-row {
@@ -4278,9 +4386,9 @@ body.light-mode .cloud-source-filter {
 }
 
 body.light-mode .cloud-source-filter[aria-pressed="true"] {
-  border-color: rgba(52, 134, 97, 0.5);
-  background: linear-gradient(180deg, rgba(157, 236, 198, 0.9), rgba(129, 220, 177, 0.88));
-  color: rgba(8, 62, 42, 0.94);
+  border-color: rgba(210, 119, 44, 0.85);
+  background: rgba(252, 233, 217, 0.94);
+  color: #333333;
 }
 
 body.light-mode .cloud-search-input {
@@ -4516,6 +4624,33 @@ input[type="checkbox"]:focus-visible,
   box-shadow: 0 0 0 4px rgba(70, 201, 131, 0.2);
 }
 
+/* Connection is conveyed by SHAPE + colour + word (never colour alone). The
+   label span always spells out the state; the dot reinforces it: solid green =
+   connected, solid amber = connecting, hollow red ring = disconnected. State
+   classes are toggled by onMachineStateChange(); default (no class) = connected. */
+/* The chip's own background/border used to stay success-green regardless of
+   state — only the 8px dot recoloured — so a disconnected machine still read
+   as "green = fine" at a glance. Recolour the whole chip per state. */
+.topbar-connection.conn-connecting {
+  border-color: rgba(240, 181, 58, 0.4);
+  background: rgba(74, 61, 24, 0.42);
+  color: #ffe9b8;
+}
+.topbar-connection.conn-disconnected {
+  border-color: rgba(238, 81, 56, 0.42);
+  background: rgba(74, 30, 26, 0.42);
+  color: #ffd6cd;
+}
+.topbar-connection.conn-connecting .connection-dot {
+  background: var(--ui-warning);
+  box-shadow: 0 0 0 4px rgba(240, 181, 58, 0.2);
+}
+.topbar-connection.conn-disconnected .connection-dot {
+  background: transparent;
+  border: 2px solid var(--ui-error);
+  box-shadow: 0 0 0 4px rgba(238, 81, 56, 0.18);
+}
+
 .topbar-clock {
   color: var(--ui-text-primary);
   font-size: clamp(24px, 2vw, 32px);
@@ -4561,6 +4696,7 @@ body.light-mode .topbar-icon[aria-expanded="true"] svg {
 }
 
 .controls-panel,
+.materials-menu-popup,
 .cloud-model-popup,
 .hotspot-context-panel {
   border: 1px solid var(--ui-border-subtle);
@@ -4569,7 +4705,8 @@ body.light-mode .topbar-icon[aria-expanded="true"] svg {
 }
 
 /* Match the Files menu padding (10px) so top/bottom gaps and inner width align. */
-.controls-panel {
+.controls-panel,
+.materials-menu-popup {
   padding: 10px;
 }
 
@@ -4589,8 +4726,9 @@ body.light-mode .topbar-icon[aria-expanded="true"] svg {
 
 .control-subpanel h3,
 .cloud-model-popup-header h3,
+.materials-menu-popup-header h3,
 .hotspot-context-header h3 {
-  font-size: 16px;
+  font-size: var(--ui-font-size-panel-title);
   font-weight: var(--ui-font-weight-semibold);
   letter-spacing: 0.01em;
   text-transform: none;
@@ -5103,6 +5241,19 @@ body.cloud-menu-open #cloudModelPopup #hotspotContextPanel {
   color: var(--ui-text-muted);
 }
 
+/* Status is never colour-only: a leading glyph (in the status colour) accompanies
+   the word (Ready / Low / Empty / Not enough / Not assigned). Glyphs are plain
+   monochrome symbols (inherit currentColor) so they stay on-theme. */
+.spool-select-status::before {
+  margin-right: 4px;
+  font-weight: var(--ui-font-weight-bold);
+}
+.spool-select-status.status-ready::before { content: "\2713"; }        /* check */
+.spool-select-status.status-low::before { content: "\25B2"; }          /* caution triangle */
+.spool-select-status.status-empty::before,
+.spool-select-status.status-not-enough::before { content: "\2715"; }   /* cross */
+.spool-select-status.status-unassigned::before { content: "\25CB"; }   /* hollow ring */
+
 .cloud-material-action-row {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -5178,6 +5329,9 @@ body.light-mode .spool-select-card.is-active,
 body.light-mode .spool-select-card[aria-pressed="true"] {
   border-color: rgba(107, 107, 107, 0.74);
   background: rgba(252, 233, 217, 0.94);
+  /* The card's OWN text-primary rule (dark-theme near-white) would otherwise
+     keep winning over this background — pin it dark for the selected card. */
+  color: #333333;
 }
 
 body.light-mode .spool-select-name {
@@ -5190,12 +5344,22 @@ body.light-mode .cloud-materials-current {
   color: #505050;
 }
 
+/* .spool-select-amount always sets its OWN color: var(--ui-text-primary) (a
+   light-theme colour that's never redefined for light mode), which wins over
+   the inherited .spool-select-meta colour above regardless of card state —
+   so the loaded-amount value (e.g. "4880g") was near-invisible in light mode,
+   worst on the warm selected-card background. Pin it dark explicitly. */
+body.light-mode .spool-select-amount {
+  color: #333333;
+}
+
 @media (max-width: 980px) {
   .machine-title {
     font-size: 18px;
   }
 
-  .controls-panel {
+  .controls-panel,
+  .materials-menu-popup {
     padding: 12px;
   }
 
@@ -5310,7 +5474,7 @@ body.light-mode .cloud-materials-current {
 
 .notification-center-header h3 {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--ui-font-size-panel-title);
   font-weight: var(--ui-font-weight-semibold);
   color: var(--ui-text-primary);
 }
@@ -5369,18 +5533,10 @@ body.light-mode .cloud-materials-current {
   opacity: 0.78;
 }
 
-.notification-card.severity-critical {
-  border-color: rgba(218, 97, 97, 0.58);
-  box-shadow: inset 0 0 0 1px rgba(208, 92, 92, 0.15);
-}
-
-.notification-card.severity-warning {
-  border-color: rgba(230, 168, 61, 0.5);
-}
-
-.notification-card.severity-info {
-  border-color: rgba(255, 166, 94, 0.44);
-}
+/* Severity is now conveyed by the single tokenized left-stripe further down
+   this file (.notification-card.severity-* { border-left: ... }) — this older
+   pass's full 4-side translucent border-color/box-shadow used to double up
+   with it, showing as a stripe PLUS a mismatched tint on the other 3 edges. */
 
 .notification-card-header {
   display: grid;
@@ -5494,7 +5650,7 @@ body.light-mode .cloud-materials-current {
 }
 
 .notification-card-actions button {
-  min-height: 40px;
+  min-height: 44px;
   padding: 8px 12px;
   font-size: 12px;
 }
@@ -5518,7 +5674,7 @@ body.light-mode .cloud-materials-current {
 }
 
 .notification-center-footer button {
-  min-height: 36px;
+  min-height: 44px;
   font-size: 12px;
   padding: 7px 11px;
 }
@@ -5788,8 +5944,10 @@ body.cloud-menu-open .bottom-nav {
 
   /* Clear the bottom nav: it sits at bottom:20px and is ~186px tall (158px item
      + 7px bar padding ×2 + borders), so its top edge is ~206px from the viewport
-     bottom. Popups keep an ~8px gap above that. */
-  .controls-panel {
+     bottom. Popups keep an ~8px gap above that. Materials shares the Controls
+     rect exactly here too (top/bottom/max-height/width). */
+  .controls-panel,
+  .materials-menu-popup {
     top: 122px;
     left: 0;
     bottom: auto;
@@ -5801,12 +5959,6 @@ body.cloud-menu-open .bottom-nav {
     top: 122px;
     bottom: 214px;
     width: min(470px, calc(100vw - 24px));
-  }
-
-  /* The Materials sheet rises from the Materials button to sit just above the
-     nav (nav top ≈206px from bottom). */
-  .materials-menu-popup {
-    bottom: 214px;
   }
 
   .assembly-annotation {
@@ -5934,7 +6086,8 @@ body.cloud-menu-open .bottom-nav {
     padding: 12px 16px;
   }
 
-  .controls-panel {
+  .controls-panel,
+  .materials-menu-popup {
     top: 96px;
     left: 0;
     bottom: auto;
@@ -6205,7 +6358,9 @@ body.light-mode .bottom-nav .bottom-nav-item[aria-pressed="true"] {
    right action icons. No debug row (Model/Mesh status hidden for end users). */
 .status-panel.app-topbar {
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  grid-template-areas: "left center right";
+  grid-template-areas:
+    "left center right"
+    "print print print";
   align-items: center;
 }
 .topbar-debug-status {
@@ -6271,7 +6426,8 @@ body.light-mode .bottom-nav .bottom-nav-item[aria-pressed="true"] {
     grid-template-areas:
       "left right"
       "center center"
-      "debug debug";
+      "debug debug"
+      "print print";
   }
 
   .topbar-center {
@@ -6299,7 +6455,8 @@ body.light-mode .bottom-nav .bottom-nav-item[aria-pressed="true"] {
     grid-template-areas:
       "left"
       "right"
-      "center";
+      "center"
+      "print";
     row-gap: 6px;
   }
   .topbar-left { flex-wrap: wrap; row-gap: 4px; }
@@ -6311,7 +6468,6 @@ body.light-mode .bottom-nav .bottom-nav-item[aria-pressed="true"] {
     flex-wrap: wrap;
     row-gap: 6px;
   }
-  .topbar-print-progress { order: 99; }
 }
 
 /* --- Print simulation control row (shown in Files mode) ------------------- */
@@ -7236,7 +7392,7 @@ body.files-collapsed-for-print #navDoorToggle { order: 3; }
 
 .perm-modal-actions { display: flex; justify-content: flex-end; gap: var(--ui-space-2); }
 .perm-btn-primary {
-  min-height: 36px;
+  min-height: 44px;
   padding: 0 var(--ui-space-4);
   border-radius: var(--ui-radius-sm);
   border: 1px solid transparent;
@@ -7247,7 +7403,7 @@ body.files-collapsed-for-print #navDoorToggle { order: 3; }
 }
 .perm-btn-primary:hover { background: var(--ui-button-primary-bg-hover); }
 .perm-btn-quiet {
-  min-height: 36px;
+  min-height: 44px;
   padding: 0 var(--ui-space-4);
   border-radius: var(--ui-radius-sm);
   border: 1px solid var(--ui-border-subtle);
@@ -7257,7 +7413,7 @@ body.files-collapsed-for-print #navDoorToggle { order: 3; }
 }
 .perm-btn-quiet:hover { color: var(--ui-text-primary); border-color: var(--ui-border-strong); }
 .perm-btn-danger {
-  min-height: 34px;
+  min-height: 44px;
   padding: 0 var(--ui-space-3);
   border-radius: var(--ui-radius-sm);
   border: 1px solid var(--ui-danger-soft);
@@ -7395,7 +7551,9 @@ body.files-collapsed-for-print #navDoorToggle { order: 3; }
 
 /* Badge colour by highest unacknowledged severity. */
 .topbar-notification-toggle .topbar-notification-badge.badge-critical {
-  background: var(--ui-error);
+  /* Deeper red so the white count digits clear WCAG AA (white on --ui-error is
+     3.58:1; on --ui-error-strong it is ~5.2:1). */
+  background: var(--ui-error-strong);
   color: #fff;
 }
 .topbar-notification-toggle .topbar-notification-badge.badge-warning {
@@ -7404,6 +7562,9 @@ body.files-collapsed-for-print #navDoorToggle { order: 3; }
 }
 
 /* Row left accent by severity (in addition to the existing icon/label tint). */
+.notification-card.severity-critical, .notification-card.severity-warning, .notification-card.severity-info {
+  border-color: var(--ui-border-subtle);
+}
 .notification-card.severity-critical { border-left: 3px solid var(--ui-error); }
 .notification-card.severity-warning { border-left: 3px solid var(--ui-warning); }
 .notification-card.severity-info { border-left: 3px solid var(--ui-accent); }
@@ -7471,7 +7632,7 @@ body.files-collapsed-for-print #navDoorToggle { order: 3; }
 .notification-toast-desc { margin: 2px 0 0; font-size: var(--ui-font-size-label); color: var(--ui-text-secondary); overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .notification-toast-actions { grid-area: actions; display: flex; gap: var(--ui-space-2); margin-top: 4px; }
 .notification-toast-actions button {
-  min-height: 28px;
+  min-height: 44px;
   padding: 0 var(--ui-space-3);
   border-radius: var(--ui-radius-sm);
   border: 1px solid var(--ui-border-subtle);
@@ -7489,11 +7650,114 @@ body.files-collapsed-for-print #navDoorToggle { order: 3; }
 .notification-toast-close {
   grid-area: close;
   align-self: start;
-  width: 22px; height: 22px;
+  display: grid;
+  place-items: center;
+  width: 44px; height: 44px;
+  margin: -8px -8px 0 0;
   border: none; background: transparent;
   color: var(--ui-text-muted); cursor: pointer; font-size: 13px;
 }
 .notification-toast-close:hover { color: var(--ui-text-primary); }
+
+/* "Fix this" in the notification-center list is the primary CTA of the three
+   card actions (Acknowledge / View details / Fix this) — give it the same
+   accent-bordered treatment as the toast's "View" button so both surfaces
+   read as one language, instead of three visually-identical grey buttons. */
+.notification-resolve-btn {
+  border: 1px solid var(--ui-border-accent);
+  background: var(--ui-button-primary-bg);
+  color: var(--ui-button-primary-text);
+}
+.notification-resolve-btn:hover {
+  background: var(--ui-button-primary-bg-hover);
+}
+
+/* ============================================================================
+   Light mode: notification toasts + notification-center cards.
+   These stayed on the dark `--ui-surface-overlay` / literal-dark-rgba card
+   backgrounds regardless of theme, while their plain <button> children got
+   forced light by the blanket `body.light-mode button` rule further up —
+   the result was black cards with white buttons stapled on. Give every
+   dark literal surface in this family an explicit light counterpart, and
+   pin the text/icon colours that were riding on the (never-relit) dark-theme
+   --ui-text-primary/secondary/muted tokens.
+   ========================================================================== */
+body.light-mode .notification-toast {
+  background: linear-gradient(180deg, rgba(255, 253, 249, 0.97), rgba(252, 247, 241, 0.97));
+  border-color: rgba(33, 33, 33, 0.16);
+}
+body.light-mode .notification-toast-title { color: #2e2e2e; }
+body.light-mode .notification-toast-desc { color: #565656; }
+body.light-mode .notification-toast-close {
+  background: transparent;
+  border: none;
+  color: #6e6e6e;
+}
+body.light-mode .notification-toast-close:hover { color: #262626; }
+body.light-mode .notification-toast-view {
+  color: #8a4712 !important;
+}
+body.light-mode .notification-resolve-btn {
+  border-color: rgba(210, 119, 44, 0.6);
+  background: rgba(214, 119, 44, 0.1);
+  color: #8a4712;
+}
+body.light-mode .notification-resolve-btn:hover {
+  background: rgba(214, 119, 44, 0.17);
+}
+
+body.light-mode .notification-card {
+  background: rgba(255, 255, 255, 0.86);
+  border-color: rgba(33, 33, 33, 0.14);
+}
+body.light-mode .notification-card.is-acknowledged {
+  background: rgba(244, 241, 236, 0.86);
+}
+body.light-mode .notification-severity-icon {
+  background: rgba(20, 20, 20, 0.05);
+  border-color: rgba(33, 33, 33, 0.16);
+}
+body.light-mode .notification-card.severity-critical .notification-severity-icon,
+body.light-mode .notification-severity-label.severity-critical {
+  color: #c8381f;
+}
+body.light-mode .notification-card.severity-warning .notification-severity-icon,
+body.light-mode .notification-severity-label.severity-warning {
+  color: #8a6a1f;
+}
+body.light-mode .notification-card.severity-info .notification-severity-icon,
+body.light-mode .notification-severity-label.severity-info {
+  color: #b35a12;
+}
+body.light-mode .notification-severity-label,
+body.light-mode .notification-status-label {
+  border-color: rgba(33, 33, 33, 0.18);
+}
+body.light-mode .notification-status-label.status-active { color: #4a4a4a; }
+body.light-mode .notification-status-label.status-acknowledged { color: #6a6a6a; }
+body.light-mode .notification-status-label.status-resolved { color: #8a8a8a; }
+body.light-mode .notification-recommended-action {
+  background: rgba(20, 20, 20, 0.04);
+  border-color: rgba(33, 33, 33, 0.14);
+  color: #4a4a4a;
+}
+body.light-mode .notification-empty-state {
+  background: rgba(20, 20, 20, 0.03);
+  border-color: rgba(33, 33, 33, 0.22);
+}
+body.light-mode .notification-filter-chips button {
+  background: rgba(20, 20, 20, 0.045);
+  border-color: rgba(33, 33, 33, 0.2);
+  color: #4a4a4a;
+}
+body.light-mode .notification-filter-chips button[aria-selected="true"] {
+  background: rgba(214, 119, 44, 0.15);
+  border-color: rgba(210, 119, 44, 0.55);
+  color: #262626;
+}
+body.light-mode .notification-chip-count {
+  background: rgba(20, 20, 20, 0.08);
+}
 
 /* ============================================================================
    Meltio Design System (2026-07-20): IBM Plex Mono on data / value readouts.
@@ -7640,19 +7904,21 @@ body.files-collapsed-for-print #navDoorToggle { order: 3; }
   border-color: rgba(255, 255, 255, 0.6) !important;
 }
 
-/* --- 5. Blue secondary accent ---------------------------------------------
-   Quiet / secondary / link actions carry the blue accent (orange stays primary
-   for values + primary actions). Text + border only, no fill. */
+/* --- 5. Quiet / secondary actions ------------------------------------------
+   These were blue-accented (Sign out / Unload / Usage history / Close, etc.),
+   a stray third colour alongside the one-accent (orange) + door/connection
+   green system. Fold them onto the neutral scale instead — "quiet" reads as
+   quiet, and green/orange both stay reserved for their own semantics. */
 .btn-quiet,
 .btn-secondary,
 button.is-secondary {
-  color: var(--ui-accent-secondary) !important;
+  color: var(--ui-text-secondary) !important;
 }
 .btn-quiet:hover,
 .btn-secondary:hover,
 button.is-secondary:hover {
-  color: var(--ui-accent-secondary-strong) !important;
-  border-color: var(--ui-accent-secondary-border) !important;
+  color: var(--ui-text-primary) !important;
+  border-color: var(--ui-border-strong) !important;
 }
 a:not(.btn):not([class*="nav"]) {
   color: var(--ui-accent-secondary);
@@ -7689,7 +7955,8 @@ a:not(.btn):not([class*="nav"]):hover {
   color: var(--ui-text-secondary);
 }
 .spool-select-type {
-  text-transform: uppercase;
+  /* Feed-type badge text ("Spool" / "Drum") is now sentence case at the
+     source — don't re-uppercase it here. */
   color: var(--ui-text-muted);
 }
 .spool-select-amount {
@@ -7711,10 +7978,40 @@ a:not(.btn):not([class*="nav"]):hover {
   padding: 9px 10px;
   font-size: 13px;
 }
-/* Compact the feeder cards + controls to suit the narrower bottom-left dock. */
+/* Compact the feeder cards + controls to suit the panel's width. */
 .materials-menu-popup .materials-feeder-switch { gap: 8px; }
 .materials-menu-popup .spool-select-card { padding: 10px 12px; }
 .materials-menu-popup .control-row { margin-top: 6px; }
+
+/* ==========================================================================
+   Materials popup ↔ Controls panel parity pass (2026-07-27). Geometry is now
+   shared (see the `.controls-panel, .materials-menu-popup` rules throughout
+   this file); this section matches the INTERNAL rhythm too — flat sectioned
+   content (no card-in-a-card), consistent control heights, single scroll
+   container — so the two popups read as one component in two states.
+   ========================================================================== */
+/* Controls uses flat, border-less .control-subpanel sections; give the
+   Materials feeder section the same flat treatment instead of the bordered
+   "cloud-materials-panel" card (that card style stays intact for its other
+   use in the Files menu — this only un-cards it inside Materials). */
+.materials-menu-popup .materials-menu-panel {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+/* First row loses its top margin, mirroring .control-row:first-of-type — keeps
+   the gap under the header identical to the Controls panel's first section. */
+.materials-menu-popup .materials-menu-panel > *:first-child {
+  margin-top: 0;
+}
+/* The amount input is a plain <input>, not a <select>, so it doesn't pick up
+   the global select { min-height: 44px }. Match it — and its Load/Unload/
+   Feed-type/Material siblings — to the same control height Controls uses. */
+.materials-menu-popup .spool-amount-input {
+  height: 44px;
+}
 
 /* ==========================================================================
    Topbar utility settings popovers (Fan / Chiller) — 2026-07-21.
@@ -7752,8 +8049,8 @@ a:not(.btn):not([class*="nav"]):hover {
   color: var(--ui-text-primary);
 }
 .topbar-utility-settings-close {
-  width: 26px;
-  height: 26px;
+  width: 44px;
+  height: 44px;
   padding: 0;
   display: grid;
   place-items: center;
@@ -8044,6 +8341,66 @@ a:not(.btn):not([class*="nav"]):hover {
   background: linear-gradient(180deg, rgba(224, 145, 81, 0.5), rgba(113, 113, 113, 0.5));
 }
 
+/* ============================================================================
+   Light mode: fan/chiller utility popover + numeric keypad.
+   Same family of bug as the notifications above — these ride var(--ui-modal-
+   bg)/--ui-text-muted (never relit) or literal dark rgba washes, so the
+   popover card and its internal tracks/steppers stayed dark while their
+   plain <button> children turned white via the blanket light-mode rule.
+   ========================================================================== */
+body.light-mode .topbar-utility-settings {
+  background: linear-gradient(180deg, rgba(255, 253, 249, 0.98), rgba(252, 247, 241, 0.98));
+  border-color: rgba(33, 33, 33, 0.18);
+}
+body.light-mode .topbar-utility-settings-header h3 {
+  color: #2e2e2e;
+}
+body.light-mode .topbar-utility-label,
+body.light-mode .numpad-title,
+body.light-mode .numpad-range,
+body.light-mode .numpad-display .numpad-unit {
+  color: #6e6e6e;
+}
+body.light-mode .topbar-utility-value {
+  color: #8a4712;
+}
+body.light-mode .topbar-utility-switch {
+  background: rgba(20, 20, 20, 0.08);
+}
+body.light-mode .topbar-utility-switch::before {
+  background: #6e6e6e;
+}
+body.light-mode .topbar-utility-switch[aria-pressed="true"] {
+  background: rgba(214, 135, 71, 0.22);
+}
+body.light-mode .topbar-utility-segmented {
+  background: rgba(20, 20, 20, 0.05);
+}
+body.light-mode .topbar-utility-segmented button.is-active {
+  background: rgba(20, 20, 20, 0.1);
+  color: #2e2e2e;
+}
+body.light-mode .topbar-utility-stepper button,
+body.light-mode .topbar-utility-value.is-editable {
+  background: rgba(20, 20, 20, 0.04);
+}
+body.light-mode .numpad {
+  background: linear-gradient(180deg, rgba(255, 253, 249, 0.99), rgba(252, 247, 241, 0.99));
+  border-color: rgba(33, 33, 33, 0.18);
+}
+body.light-mode .numpad-display {
+  background: rgba(20, 20, 20, 0.04);
+  color: #8a4712;
+}
+body.light-mode .numpad-ok {
+  border-color: rgba(210, 119, 44, 0.6);
+  background: rgba(214, 119, 44, 0.16);
+  color: #2e2e2e;
+}
+body.light-mode .numpad-ok:hover {
+  background: rgba(214, 119, 44, 0.24);
+}
+
 /* ==========================================================================
    Accounts & login (permissions.js) — 2026-07-21. Account chip near the
    machine title + Settings header, initials-monogram avatar. Design-system
@@ -8319,8 +8676,103 @@ a:not(.btn):not([class*="nav"]):hover {
   color: var(--ui-text-primary);
   border-color: var(--ui-border-accent);
 }
+/* --ui-text-primary is a light colour that never gets redefined for light mode
+   (light mode overrides text per-element instead), so the selected step button
+   above renders near-white text on its own near-white/cream light-mode surface —
+   invisible. Give it explicit dark text + a visible warm-tinted fill instead. */
+body.light-mode .move-step-btn.is-active {
+  background: rgba(214, 119, 44, 0.16);
+  color: #333333;
+  border-color: rgba(210, 119, 44, 0.85);
+}
 .move-step-unit { font-family: var(--ui-font-mono); font-size: 11px; color: var(--ui-text-muted); }
 .move-presets { margin-top: 12px; }
+
+/* ==========================================================================
+   Controls ▸ Feeder panel (2026-07-28) — Feeder View camera toggle + per-wheel
+   Up/Down jog. Replaces the old single-wheel "Feeder Drive" (wheel-switch +
+   Up/Stop/Down) and the separate "Assembly Shortcuts" section. Jog buttons
+   mirror .move-btn's sizing/hover/active treatment so the Feeder panel reads
+   as the same family as the Move panel above it.
+   ========================================================================== */
+.feeder-view-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-sm);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--ui-text-primary);
+  font-size: 13px;
+  font-weight: var(--ui-font-weight-medium);
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: border-color 0.12s ease, color 0.12s ease, background 0.12s ease;
+}
+.feeder-view-toggle:hover:not(:disabled) { border-color: var(--ui-border-accent); color: var(--ui-accent); }
+.feeder-view-toggle:disabled { opacity: 0.5; cursor: not-allowed; }
+.feeder-view-toggle.active,
+.feeder-view-toggle[aria-pressed="true"] {
+  border-color: var(--ui-border-accent);
+  background: linear-gradient(180deg, rgba(214, 135, 71, 0.42), rgba(103, 103, 103, 0.42));
+  color: var(--ui-text-primary);
+  box-shadow: var(--ui-shadow-accent);
+}
+.feeder-view-icon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.feeder-jog-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.feeder-jog-col {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+.feeder-jog-col-label {
+  text-align: center;
+  font-family: var(--ui-font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ui-text-muted);
+}
+.feeder-jog-btn {
+  min-height: 44px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-sm);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--ui-text-primary);
+  font-size: 16px;
+  cursor: pointer;
+  transition: border-color 0.12s ease, color 0.12s ease, background 0.12s ease;
+}
+.feeder-jog-btn:hover:not(:disabled) { border-color: var(--ui-border-accent); color: var(--ui-accent); }
+.feeder-jog-btn:active:not(:disabled) { background: rgba(240, 145, 58, 0.16); }
+.feeder-jog-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.feeder-jog-btn.active,
+.feeder-jog-btn[aria-pressed="true"] {
+  border-color: var(--ui-border-accent);
+  background: rgba(240, 145, 58, 0.22);
+  color: var(--ui-text-primary);
+}
 
 /* A control subpanel gated by permission (Move / Feeder Drive) stays VISIBLE but
    dimmed + non-interactive when the signed-in level lacks the capability, so the
@@ -8359,35 +8811,39 @@ a:not(.btn):not([class*="nav"]):hover {
 
 /* ── Print progress pill (topbar, visible from every screen while printing) ── */
 .topbar-print-progress {
+  grid-area: print;
   display: none;
   align-items: center;
-  gap: 10px;
-  height: 40px;
-  padding: 0 14px;
-  margin-left: 4px;
-  border: 1px solid var(--ui-border-subtle);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.05);
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+  margin-top: 8px;
+  padding: 7px 14px 1px;
+  border-top: 1px solid var(--ui-border-subtle);
   font-family: var(--ui-font-mono);
   color: var(--ui-text-primary);
   white-space: nowrap;
+  flex-wrap: wrap;
 }
-body.print-progress-active .topbar-print-progress { display: inline-flex; }
+body.print-progress-active .topbar-print-progress { display: flex; }
 .topbar-print-progress .tpp-label {
   font-size: 10.5px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--ui-text-muted);
 }
+/* Print progress is the operator's primary glance during a print, so while it
+   is showing it should out-weigh the (merely ambient) topbar clock — see the
+   .topbar-clock demotion below. */
 .topbar-print-progress .tpp-pct {
-  font-size: 14px;
+  font-size: var(--ui-font-size-screen-title);
   font-weight: var(--ui-font-weight-semibold);
   color: var(--ui-accent);
   font-variant-numeric: tabular-nums;
 }
 .topbar-print-progress .tpp-bar {
   width: 84px;
-  height: 6px;
+  height: 10px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.14);
   overflow: hidden;
@@ -8404,8 +8860,29 @@ body.print-progress-active .topbar-print-progress { display: inline-flex; }
   color: var(--ui-text-secondary, var(--ui-text-muted));
   font-variant-numeric: tabular-nums;
 }
+/* Absolute wall-clock finish estimate ("Finishes tomorrow 08:15"), separated
+   from the relative ETA by a dot. Hidden (empty) while paused / unknown. */
+.topbar-print-progress .tpp-finish {
+  font-size: 12px;
+  color: var(--ui-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.topbar-print-progress .tpp-finish:not(:empty)::before {
+  content: "· ";
+  color: var(--ui-text-muted);
+}
 .topbar-print-progress.is-paused .tpp-pct { color: #7fd4a0; }
 .topbar-print-progress.is-paused .tpp-bar-fill { background: #7fd4a0; }
+
+/* Demote the clock to ambient while a print's progress pill is showing — the
+   percentage/bar is the primary glance now, not the time of day. Specificity
+   (body class + element) beats the plain `.topbar-clock` rule (incl. its
+   portrait-profile media-query override) regardless of source order. */
+body.print-progress-active .topbar-clock {
+  font-size: 18px;
+  font-weight: var(--ui-font-weight-medium);
+  color: var(--ui-text-secondary);
+}
 
 /* Files menu is a PURE file browser now — Spool 1/2 cards, the feeder-wheel
    selector and the Feeder Up/Stop/Down controls no longer belong here (feeder
@@ -8705,19 +9182,4 @@ body.light-mode .topbar-icon[aria-expanded="true"] .ui-img-icon {
   #navMaterialsToggle .spool-wire { transition: none; }
 }
 
-/* ---- Top Door: side arrows signal the roof lifting ------------------------
-   The open (roof-lifted) glyph carries .roof-arrows — two up-arrows beside the
-   eaves. They rise + fade in when the open glyph is rendered (cover opening),
-   so the lift reads at a glance. Without the animation (reduced motion) they
-   simply show, since the default state is fully visible. */
-#annotationNavTopCover .roof-arrows {
-  animation: top-door-arrows-rise 480ms cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-@keyframes top-door-arrows-rise {
-  0%   { opacity: 0; transform: translateY(3px); }
-  55%  { opacity: 1; }
-  100% { opacity: 1; transform: translateY(0); }
-}
-@media (prefers-reduced-motion: reduce) {
-  #annotationNavTopCover .roof-arrows { animation: none; }
-}
+

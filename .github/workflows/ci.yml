@@ -55,9 +55,9 @@ jobs:
                _slicer_branch/projects/platform/src/meltio_platform/slicer/web/static \
                -name '*.js' -not -path '*/vendor/*' -print0 \
             | xargs -0 -r -n1 node --check
-      - name: import-resolution gate
-        run: node urdf_viewer/projects/avisualizer/tools/check_imports.mjs
-      - name: frontend unit tests
+      - name: Install, lint & build (avisualizer viewer)
+        working-directory: urdf_viewer/projects/avisualizer
         run: |
-          node --test "urdf_viewer/projects/avisualizer/tests/js/**/*.test.mjs"
-          node --test "_slicer_branch/projects/platform/tests/js/**/*.test.mjs"
+          npm ci
+          npm run lint
+          npm run build

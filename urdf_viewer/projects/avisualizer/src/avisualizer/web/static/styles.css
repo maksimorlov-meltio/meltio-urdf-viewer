@@ -1,9 +1,13 @@
+@import "/static/meltio-design-system.css";
+
 :root {
   color-scheme: dark;
-  --panel-bg: rgba(10, 19, 33, 0.8);
-  --panel-border: rgba(118, 179, 255, 0.35);
-  --text-main: #e7f5ff;
-  --text-muted: #98adc2;
+  /* Meltio Design System (2026-07-20): neutral-black + IBM Plex, orange as accent. */
+  --panel-bg: rgba(22, 22, 22, 0.8);
+  --panel-border: rgba(255, 255, 255, 0.1);
+  --text-main: #ebebeb;
+  --text-muted: #929292;
+  --accent: #f0913a;
   --title-size: 36px;
   --main-heading-size: 18px;
   --sub-heading-size: 15px;
@@ -46,8 +50,8 @@ body {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-  background: radial-gradient(circle at top, #1f3e60 0%, #0b1220 45%, #060a12 100%);
+  font-family: "IBM Plex Sans", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  background: radial-gradient(circle at top, #171717 0%, #0c0c0c 45%, #080808 100%);
   color: var(--text-main);
 }
 
@@ -105,7 +109,7 @@ body {
   padding: 8px 10px;
   border: 1px solid var(--panel-border);
   border-radius: 12px;
-  background: rgba(8, 14, 24, 0.78);
+  background: rgba(16, 16, 16, 0.78);
   backdrop-filter: blur(6px);
 }
 
@@ -118,7 +122,7 @@ body {
   padding: 6px;
   border: 1px solid var(--panel-border);
   border-radius: 9px;
-  background: rgba(8, 14, 24, 0.78);
+  background: rgba(16, 16, 16, 0.78);
   backdrop-filter: blur(6px);
 }
 
@@ -132,7 +136,7 @@ body {
   width: 12px;
   height: 108px;
   border-radius: 6px;
-  border: 1px solid rgba(118, 179, 255, 0.35);
+  border: 1px solid rgba(255, 180, 118, 0.35);
   background: linear-gradient(
     to top,
     hsl(281deg 95% 50%) 0%,
@@ -168,7 +172,7 @@ body {
 }
 
 .control-subpanel {
-  border: 1px solid rgba(118, 179, 255, 0.25);
+  border: 1px solid rgba(255, 180, 118, 0.25);
   border-radius: 10px;
   padding: var(--subpanel-padding);
   margin-bottom: var(--subpanel-gap);
@@ -235,7 +239,7 @@ body {
   height: 4px;
   transform: translateY(-50%);
   border-radius: 999px;
-  background: rgba(118, 179, 255, 0.2);
+  background: rgba(255, 180, 118, 0.2);
   z-index: 1;
 }
 
@@ -248,7 +252,7 @@ body {
   height: 4px;
   transform: translateY(-50%);
   border-radius: 999px;
-  background: #7ab8ff;
+  background: #ffb67a;
   z-index: 2;
 }
 
@@ -285,7 +289,7 @@ body {
   margin-top: -4px;
   border: 1px solid rgba(255, 255, 255, 0.8);
   border-radius: 50%;
-  background: #e7f5ff;
+  background: #fff2e7;
   pointer-events: auto;
 }
 
@@ -294,7 +298,7 @@ body {
   height: 10px;
   border: 1px solid rgba(255, 255, 255, 0.8);
   border-radius: 50%;
-  background: #e7f5ff;
+  background: #fff2e7;
   pointer-events: auto;
 }
 
@@ -306,11 +310,11 @@ body {
 .controls-panel button {
   width: 100%;
   margin-top: 0;
-  border: 1px solid rgba(118, 179, 255, 0.4);
+  border: 1px solid rgba(255, 180, 118, 0.4);
   border-radius: 8px;
   padding: 2px 8px;
   height: var(--control-height);
-  background: rgba(8, 14, 24, 0.9);
+  background: rgba(16, 16, 16, 0.9);
   color: var(--text-main);
   font-size: var(--control-font-size);
 }
@@ -355,9 +359,9 @@ body {
   align-items: center;
   justify-content: center;
   border: none;
-  box-shadow: inset 0 0 0 1px rgba(118, 179, 255, 0.5);
+  box-shadow: inset 0 0 0 1px rgba(255, 180, 118, 0.5);
   border-radius: 10px;
-  background: rgba(8, 14, 24, 0.92);
+  background: rgba(16, 16, 16, 0.92);
   color: var(--text-main);
   cursor: pointer;
   font-weight: 600;
@@ -366,8 +370,8 @@ body {
 }
 
 .settings-button:hover {
-  box-shadow: inset 0 0 0 1px rgba(146, 200, 255, 0.95);
-  background: rgba(16, 26, 42, 0.96);
+  box-shadow: inset 0 0 0 1px rgba(255, 195, 146, 0.95);
+  background: rgba(29, 29, 29, 0.96);
 }
 
 .settings-panel {
@@ -383,7 +387,7 @@ body {
   padding: 12px;
   border: 1px solid var(--panel-border);
   border-radius: 12px;
-  background: rgba(8, 14, 24, 0.95);
+  background: rgba(16, 16, 16, 0.95);
   backdrop-filter: blur(8px);
 }
 
@@ -428,8 +432,8 @@ body.settings-modal-open .color-scale-panel {
 .settings-actions #applySettings:hover,
 .settings-group button:hover,
 .controls-panel button:hover {
-  border-color: rgba(146, 200, 255, 0.9);
-  background: rgba(16, 26, 42, 0.96);
+  border-color: rgba(255, 195, 146, 0.9);
+  background: rgba(29, 29, 29, 0.96);
 }
 
 .tab-content {
@@ -437,7 +441,7 @@ body.settings-modal-open .color-scale-panel {
 }
 
 .settings-group {
-  border: 1px solid rgba(118, 179, 255, 0.25);
+  border: 1px solid rgba(255, 180, 118, 0.25);
   border-radius: 10px;
   padding: var(--subpanel-padding);
   display: grid;
@@ -474,7 +478,7 @@ body.settings-modal-open .color-scale-panel {
   width: 16px;
   height: 16px;
   margin: 0;
-  accent-color: #7ab8ff;
+  accent-color: #ffb67a;
 }
 
 .settings-group button {

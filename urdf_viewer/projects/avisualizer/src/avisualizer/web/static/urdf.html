@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>URDF Viewer</title>
-  <link rel="stylesheet" href="/static/urdf_viewer.css?v=229" />
+  <link rel="stylesheet" href="/static/urdf_viewer.css?v=241" />
 </head>
 <body class="controls-panel-collapsed">
   <div class="status-panel app-topbar">
@@ -13,9 +13,9 @@
         <p class="machine-title">M600-PRO-1</p>
         <p class="machine-subtitle">Meltio</p>
       </div>
-      <p class="topbar-connection" aria-label="Connection status">
+      <p class="topbar-connection" aria-label="Connection status" data-i18n-attr="aria-label:topbar.connectionStatus">
         <span class="connection-dot" aria-hidden="true"></span>
-        <span>Connected</span>
+        <span data-i18n="topbar.connected">Connected</span>
       </p>
     </div>
 
@@ -24,13 +24,18 @@
       <span id="topbarDate" class="topbar-date" aria-live="polite">---</span>
     </div>
 
+    <!-- Print progress lives on its own full-width row BELOW the left/center/right
+         line (grid-area: print) so it never overlaps the centred clock/date or the
+         account chip while a print is running. -->
+    <div id="topbarPrintProgress" class="topbar-print-progress" role="status" aria-label="Print progress" aria-live="polite" hidden>
+      <span class="tpp-label" data-i18n="topbar.printing">Printing</span>
+      <span id="topbarPrintPct" class="tpp-pct">0%</span>
+      <span class="tpp-bar"><span id="topbarPrintBar" class="tpp-bar-fill"></span></span>
+      <span id="topbarPrintEta" class="tpp-eta">ETA —</span>
+      <span id="topbarPrintFinish" class="tpp-finish"></span>
+    </div>
+
     <div class="topbar-right" aria-label="Top bar actions">
-      <div id="topbarPrintProgress" class="topbar-print-progress" role="status" aria-label="Print progress" aria-live="polite" hidden>
-        <span class="tpp-label">Printing</span>
-        <span id="topbarPrintPct" class="tpp-pct">0%</span>
-        <span class="tpp-bar"><span id="topbarPrintBar" class="tpp-bar-fill"></span></span>
-        <span id="topbarPrintEta" class="tpp-eta">ETA —</span>
-      </div>
       <button id="topbarChillerToggle" class="topbar-icon" type="button" aria-label="Chiller" aria-pressed="false">
         <svg class="thermo-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
           <path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z" />
@@ -41,7 +46,7 @@
       <button id="topbarFanToggle" class="topbar-icon" type="button" aria-label="Fan" aria-pressed="false">
         <svg class="ui-img-icon" style="--icon: url('/static/icons/ventilation.png?v=3')" aria-hidden="true" focusable="false"></svg>
       </button>
-      <button id="topbarPanToggle" class="topbar-icon" type="button" aria-label="Pan controls" aria-pressed="false">
+      <button id="topbarPanToggle" class="topbar-icon" type="button" aria-label="Controls" title="Controls" aria-pressed="false">
         <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
           <path d="M12 4v16M4 12h16" />
           <path d="m12 4 2.5 2.5M12 4 9.5 6.5M12 20l2.5-2.5M12 20l-2.5-2.5" />
@@ -74,6 +79,12 @@
             <h3>Notifications</h3>
             <p id="notificationActiveCount" class="notification-center-count" aria-live="polite">0 active notifications</p>
           </div>
+          <button id="notificationCenterClose" class="cloud-header-icon-button" type="button" aria-label="Close notifications">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M6 6l12 12" />
+              <path d="M18 6L6 18" />
+            </svg>
+          </button>
         </header>
 
         <div class="notification-filter-chips" role="tablist" aria-label="Filter notifications by severity">
@@ -138,17 +149,17 @@
             data-requires-permission="setup.network"
             data-perm-hide
           >
-            Advanced Settings
+            Advanced settings
           </button>
         </div>
 
         <section class="topbar-settings-section" aria-label="Setup section">
           <p class="topbar-settings-section-title">Setup</p>
           <div class="topbar-settings-setup-actions" role="group" aria-label="Setup actions">
-            <button id="settingsSetupFirmwareButton" type="button" data-requires-permission="setup.firmware">Firmware Update</button>
+            <button id="settingsSetupFirmwareButton" type="button" data-requires-permission="setup.firmware">Firmware update</button>
             <button id="settingsSetupChangelogButton" type="button">Changelog</button>
             <button id="settingsSetupTimelapseButton" type="button">Timelapse</button>
-            <button id="settingsSetupBedMaintenanceButton" type="button">Bed Maintenance</button>
+            <button id="settingsSetupBedMaintenanceButton" type="button">Bed maintenance</button>
             <button id="settingsLightToggle" type="button" aria-pressed="false">Light Mode: Off</button>
           </div>
         </section>
@@ -156,12 +167,12 @@
         <section
           id="settingsAdvancedMenu"
           class="topbar-settings-submenu"
-          aria-label="Advanced Settings"
+          aria-label="Advanced settings"
           aria-hidden="true"
           hidden
         >
           <header class="topbar-settings-submenu-header">
-            <h4>Advanced Settings</h4>
+            <h4>Advanced settings</h4>
             <button id="settingsAdvancedClose" type="button" aria-label="Close advanced settings">Close</button>
           </header>
           <div class="topbar-settings-advanced-actions" role="group" aria-label="Advanced settings actions" data-requires-permission="setup.network" data-perm-hide>
@@ -187,12 +198,12 @@
             <button id="settingsCalibrateClose" type="button" aria-label="Close calibrate tools">Close</button>
           </header>
           <div class="topbar-settings-calibrate-actions" role="group" aria-label="Calibrate actions" data-requires-permission="setup.calibration" data-perm-hide>
-            <button id="settingsCalibrateFeederButton" type="button">Feeder Calibration</button>
-            <button id="settingsCalibrateWorkingDistanceButton" type="button">Working Distance Calibration</button>
-            <button id="settingsCalibrateLoadCellButton" type="button">Load Cell Calibration</button>
-            <button id="settingsCalibrateArmServiceButton" type="button" data-advanced-required="true" disabled>Arm Service</button>
-            <button id="settingsCalibrateLaserFocusButton" type="button">Laser Focus Test</button>
-            <button id="settingsCalibrateNozzleProbeButton" type="button">Nozzle Probe Alignment</button>
+            <button id="settingsCalibrateFeederButton" type="button">Feeder calibration</button>
+            <button id="settingsCalibrateWorkingDistanceButton" type="button">Working distance calibration</button>
+            <button id="settingsCalibrateLoadCellButton" type="button">Load cell calibration</button>
+            <button id="settingsCalibrateArmServiceButton" type="button" data-advanced-required="true" disabled>Arm service</button>
+            <button id="settingsCalibrateLaserFocusButton" type="button">Laser focus test</button>
+            <button id="settingsCalibrateNozzleProbeButton" type="button">Nozzle probe alignment</button>
           </div>
         </section>
       </div>
@@ -265,12 +276,18 @@
     aria-controls="controlsPanel"
     aria-expanded="false"
   >
-    Menu
+    Controls
   </button>
 
   <div id="controlsPanel" class="controls-panel" aria-hidden="true">
     <div class="controls-panel-header">
       <h2>Controls</h2>
+      <button id="controlsPanelClose" class="cloud-header-icon-button" type="button" aria-label="Close controls panel">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M6 6l12 12" />
+          <path d="M18 6L6 18" />
+        </svg>
+      </button>
     </div>
 
     <!-- Dev/model controls removed from the operator Controls panel but kept hidden
@@ -325,24 +342,31 @@
       <p id="motionStatus" class="control-note">Motion: idle</p>
     </section>
 
-    <!-- Feeder Drive appears only while the Feeder view is active (see the
-         "Feeder" shortcut below / feederCameraAnchorLeft). Wheel switch chooses
-         WHICH wheel rotates; Up/Stop/Down drives it. -->
-    <section id="feederDriveSection" class="control-subpanel" data-requires-permission="machine.motion" hidden aria-hidden="true">
-      <h3>Feeder Drive</h3>
-      <div class="control-row">
-        <label class="control-label">Wheel</label>
-        <div class="drive-toggle-group drive-toggle-group-two" role="group" aria-label="Select which feeder wheel rotates">
-          <button id="feederDriveLeft" type="button">Wheel 1</button>
-          <button id="feederDriveRight" type="button">Wheel 2</button>
+    <!-- Unified Feeder section (2026-07-28): a Feeder View camera toggle plus
+         per-wheel Up/Down jog, replacing the old "Feeder Drive" (wheel-switch +
+         single Up/Stop/Down) and the separate "Assembly Shortcuts" section.
+         Always visible (not gated on the Feeder camera view being active); jog
+         buttons are TOGGLES (click again to stop) driven by
+         runFeederFloatingCommand()/setFeederDriveStop(). -->
+    <section id="feederDriveSection" class="control-subpanel feeder-panel" data-requires-permission="machine.motion">
+      <h3>Feeder</h3>
+      <button id="feederCameraAnchorLeft" class="feeder-view-toggle" type="button" aria-pressed="false">
+        <svg class="feeder-view-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M4 8.2h3.4l1.3-2h6.6l1.3 2H20v11.4H4Z" />
+          <circle cx="12" cy="13.6" r="3.6" />
+        </svg>
+        <span>Feeder View</span>
+      </button>
+      <div class="feeder-jog-grid" role="group" aria-label="Feeder wheel jog controls">
+        <div class="feeder-jog-col">
+          <span class="feeder-jog-col-label">Left wheel</span>
+          <button id="feederJogLeftUp" class="feeder-jog-btn" type="button" aria-pressed="false" aria-label="Left feeder wheel up">&#9650;</button>
+          <button id="feederJogLeftDown" class="feeder-jog-btn" type="button" aria-pressed="false" aria-label="Left feeder wheel down">&#9660;</button>
         </div>
-      </div>
-      <div class="control-row">
-        <label class="control-label" for="feederDriveUp">Direction</label>
-        <div class="drive-toggle-group" role="group" aria-label="Feeder drive direction">
-          <button id="feederDriveUp" type="button">Up</button>
-          <button id="feederDriveStop" type="button" class="active">Stop</button>
-          <button id="feederDriveDown" type="button">Down</button>
+        <div class="feeder-jog-col">
+          <span class="feeder-jog-col-label">Right wheel</span>
+          <button id="feederJogRightUp" class="feeder-jog-btn" type="button" aria-pressed="false" aria-label="Right feeder wheel up">&#9650;</button>
+          <button id="feederJogRightDown" class="feeder-jog-btn" type="button" aria-pressed="false" aria-label="Right feeder wheel down">&#9660;</button>
         </div>
       </div>
     </section>
@@ -355,14 +379,22 @@
       <p id="cloudStlStatus">Cloud: idle</p>
     </div>
 
-    <section class="control-subpanel">
-      <h3>Assembly Shortcuts</h3>
-      <div class="annotation-nav-group annotation-nav-group-row" role="group" aria-label="Assembly action shortcuts">
-        <button id="annotationNavFrontDoor" type="button" aria-pressed="false">Front Door</button>
-        <button id="annotationNavSpoolsDoor" type="button" aria-pressed="false" hidden aria-hidden="true" tabindex="-1">Materials</button>
-        <button id="feederCameraAnchorLeft" type="button" aria-pressed="false">Feeder</button>
-      </div>
-    </section>
+    <!-- Retired controls: the old single-wheel "Feeder Drive" (wheel-switch +
+         Up/Stop/Down) and the former "Assembly Shortcuts" door buttons are
+         superseded by the Feeder section above and the bottom-nav door buttons,
+         but their JS wiring (updateFeederDriveButtons, runTopCoverButtonAction,
+         the annotation-nav click wiring, etc.) still resolves these ids, so keep
+         them in the DOM, hidden. -->
+    <div hidden aria-hidden="true">
+      <button id="feederDriveLeft" type="button">Wheel 1</button>
+      <button id="feederDriveRight" type="button">Wheel 2</button>
+      <button id="feederDriveUp" type="button">Up</button>
+      <button id="feederDriveStop" type="button" class="active">Stop</button>
+      <button id="feederDriveDown" type="button">Down</button>
+      <button id="annotationNavFrontDoor" type="button" aria-pressed="false">Front Door</button>
+      <button id="controlsTopCoverButton" type="button" aria-pressed="false">Top Door</button>
+      <button id="annotationNavSpoolsDoor" type="button" aria-pressed="false">Materials</button>
+    </div>
 
     <section class="control-subpanel">
       <h3>View</h3>
@@ -395,7 +427,7 @@
 
   <div id="cloudModelPopup" class="cloud-model-popup" aria-hidden="true" hidden>
     <div class="cloud-model-popup-header">
-      <h3>Files</h3>
+      <h3 data-i18n="files.title">Files</h3>
       <div class="cloud-model-popup-header-actions">
         <button
           id="cloudStlRefreshFiles"
@@ -459,7 +491,7 @@
             <p id="filesMaterialCurrentMaterial" class="cloud-materials-current">Material: Not assigned</p>
           </div>
 
-          <p id="filesMaterialAssignmentStatus" class="control-note">Spool 1: Not assigned</p>
+          <p id="filesMaterialAssignmentStatus" class="control-note">Feeder 1: Not assigned</p>
 
           <div id="hotspotContextPanel" class="hotspot-context-panel" aria-hidden="true" hidden>
             <section id="hotspotMaterialsPanel" class="hotspot-context-section" hidden>
@@ -467,7 +499,7 @@
                 <button id="hotspotSpoolCard1" class="spool-select-card" type="button" aria-pressed="true" data-spool-key="spool1">
                   <span class="spool-select-card-header">
                     <span class="spool-select-icon" aria-hidden="true"></span>
-                    <span class="spool-select-name">Spool 1</span>
+                    <span class="spool-select-name">Feeder 1</span>
                   </span>
                   <span id="hotspotSpool1Material" class="spool-select-material">Not assigned</span>
                   <span class="spool-select-data-row">
@@ -491,7 +523,7 @@
                 <button id="hotspotSpoolCard2" class="spool-select-card" type="button" aria-pressed="false" data-spool-key="spool2">
                   <span class="spool-select-card-header">
                     <span class="spool-select-icon" aria-hidden="true"></span>
-                    <span class="spool-select-name">Spool 2</span>
+                    <span class="spool-select-name">Feeder 2</span>
                   </span>
                   <span id="hotspotSpool2Material" class="spool-select-material">Not assigned</span>
                   <span class="spool-select-data-row">
@@ -515,7 +547,7 @@
                 <button id="filesSpoolCard1" class="spool-select-card" type="button" aria-pressed="true" data-spool-key="spool1" hidden>
                   <span class="spool-select-card-header">
                     <span class="spool-select-icon" aria-hidden="true"></span>
-                    <span class="spool-select-name">Spool 1</span>
+                    <span class="spool-select-name">Feeder 1</span>
                   </span>
                   <span id="filesSpool1Material" class="spool-select-material">Not assigned</span>
                   <span class="spool-select-data-row">
@@ -531,7 +563,7 @@
                 <button id="filesSpoolCard2" class="spool-select-card" type="button" aria-pressed="false" data-spool-key="spool2" hidden>
                   <span class="spool-select-card-header">
                     <span class="spool-select-icon" aria-hidden="true"></span>
-                    <span class="spool-select-name">Spool 2</span>
+                    <span class="spool-select-name">Feeder 2</span>
                   </span>
                   <span id="filesSpool2Material" class="spool-select-material">Not assigned</span>
                   <span class="spool-select-data-row">
@@ -568,7 +600,7 @@
                 </div>
               </div>
 
-              <p id="hotspotMaterialAssignmentStatus" class="control-note">Spool 1: Not assigned</p>
+              <p id="hotspotMaterialAssignmentStatus" class="control-note">Feeder 1: Not assigned</p>
               <p id="hotspotMaterialUsageStatus" class="control-note">Used: 0g | Left: 800g</p>
               <p id="hotspotMaterialRequiredStatus" class="control-note">Required: 120g</p>
               <p id="hotspotMaterialPrintWarning" class="control-note hotspot-material-warning" hidden>Not enough material</p>
@@ -814,7 +846,7 @@
         />
         <span id="printSimProgressValue" class="print-sim-progress-value">0%</span>
       </label>
-      <p id="printSimStatus" class="print-sim-status" aria-live="polite">Select a model, then Prepare</p>
+      <p id="printSimStatus" class="print-sim-status" aria-live="polite">Select a model, then Slice</p>
     </div>
 
     <div class="cloud-slicer-embed-section">
@@ -863,7 +895,7 @@
           </span>
           <span id="materialsSpool1Material" class="spool-select-material">Not assigned</span>
           <span class="spool-select-meta">
-            <span id="materialsSpool1Type" class="spool-select-type">SPOOL</span>
+            <span id="materialsSpool1Type" class="spool-select-type">Spool</span>
             <span class="spool-select-meta-sep" aria-hidden="true">·</span>
             <span id="materialsSpool1Amount" class="spool-select-amount">800g</span>
             <span class="spool-select-meta-sep" aria-hidden="true">·</span>
@@ -878,7 +910,7 @@
           </span>
           <span id="materialsSpool2Material" class="spool-select-material">Not assigned</span>
           <span class="spool-select-meta">
-            <span id="materialsSpool2Type" class="spool-select-type">SPOOL</span>
+            <span id="materialsSpool2Type" class="spool-select-type">Spool</span>
             <span class="spool-select-meta-sep" aria-hidden="true">·</span>
             <span id="materialsSpool2Amount" class="spool-select-amount">450g</span>
             <span class="spool-select-meta-sep" aria-hidden="true">·</span>
@@ -961,45 +993,64 @@
 
   <nav class="bottom-nav" aria-label="Primary actions">
     <button id="navDoorToggle" class="bottom-nav-item" type="button" aria-pressed="false">
-      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-        <path d="M6 3h12v18H6z" />
-        <path d="M10 3v18" />
-        <circle cx="14.5" cy="12" r="0.9" />
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" data-mode="door-closed">
+        <g>
+          <path class="iso-c1" d="M12 3 20 7.5 12 12 4 7.5Z" />
+          <path class="iso-c3" d="M4 7.5 12 12 12 20 4 15.5Z" />
+          <path class="iso-c2" d="M12 12 20 7.5 20 15.5 12 20Z" />
+          <path class="iso-seam" d="M6 9 6 16" />
+        </g>
       </svg>
-      <span>Open Door</span>
+      <span data-i18n="nav.openDoor">Open Door</span>
     </button>
 
     <button id="annotationNavTopCover" class="bottom-nav-item" type="button" aria-pressed="false">
-      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-        <path d="M4 11L12 5L20 11Z" />
-        <path d="M6 11H18V21H6Z" />
-        <path d="M10 21V15.5H14V21" />
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" data-mode="top-closed">
+        <g>
+          <path class="iso-c1" d="M12 3 20 7.5 12 12 4 7.5Z" />
+          <path class="iso-c3" d="M4 7.5 12 12 12 20 4 15.5Z" />
+          <path class="iso-c2" d="M12 12 20 7.5 20 15.5 12 20Z" />
+          <path class="iso-seam" d="M8 5.25 16 9.75" />
+        </g>
       </svg>
-      <span>Top Door</span>
+      <span data-i18n="nav.topDoor">Top Door</span>
     </button>
 
     <button id="navMaterialsToggle" class="bottom-nav-item" type="button" aria-pressed="false">
-      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"></svg>
-      <span>Materials</span>
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" data-mode="materials-idle">
+        <g>
+          <path class="iso-c1" d="M12 3 20 7.5 12 12 4 7.5Z" />
+          <path class="iso-c3" d="M4 7.5 12 12 12 20 4 15.5Z" />
+          <path class="iso-c2" d="M12 12 20 7.5 20 15.5 12 20Z" />
+          <path class="iso-seam" d="M18 9 18 16" />
+        </g>
+      </svg>
+      <span data-i18n="nav.materials">Materials</span>
     </button>
 
     <button id="navFilesToggle" class="bottom-nav-item" type="button" aria-pressed="false">
-      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"></svg>
-      <span>Files</span>
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" data-mode="outline">
+        <g>
+          <path class="iso-c2" d="M12 15 20 11 12 7 4 11Z" />
+          <path class="iso-c1" d="M12 12 18 9 12 6 6 9Z" />
+          <path class="iso-c1" style="opacity:.7" d="M12 9 16 7 12 5 8 7Z" />
+        </g>
+      </svg>
+      <span data-i18n="nav.files">Files</span>
     </button>
 
-    <button id="navPlayToggle" class="bottom-nav-item" type="button" aria-pressed="false" aria-label="Play" hidden>
+    <button id="navPlayToggle" class="bottom-nav-item" type="button" aria-pressed="false" aria-label="Play" data-i18n-attr="aria-label:nav.play" hidden>
       <svg class="ui-img-icon" style="--icon: url('/static/icons/Play.png?v=2')" aria-hidden="true" focusable="false"></svg>
-      <span>Play</span>
+      <span data-i18n="nav.play">Play</span>
     </button>
 
-    <button id="navSlicerToggle" class="bottom-nav-item" type="button" aria-pressed="false" aria-label="Slicer" hidden>
+    <button id="navSlicerToggle" class="bottom-nav-item" type="button" aria-pressed="false" aria-label="Slicer" data-i18n-attr="aria-label:nav.slicer" hidden>
       <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
         <path d="M12 3l9 5-9 5-9-5 9-5Z" />
         <path d="M3 12l9 5 9-5" />
         <path d="M3 16l9 5 9-5" />
       </svg>
-      <span>Slicer</span>
+      <span data-i18n="nav.slicer">Slicer</span>
     </button>
   </nav>
 
@@ -1154,7 +1205,7 @@
           <dd id="printCompleteMaterial">-</dd>
         </div>
         <div class="print-stop-summary-row">
-          <dt>Spool remaining</dt>
+          <dt>Feeder remaining</dt>
           <dd id="printCompleteSpool">-</dd>
         </div>
         <div class="print-stop-summary-row">
@@ -1175,8 +1226,13 @@
         </div>
       </dl>
       <p id="printCompleteCooldownNote" class="print-complete-note">
-        ⚠ Let the part cool under argon before opening the chamber — freshly
-        deposited metal is very hot and oxidises in air.
+        <svg class="print-complete-note-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M12 3.5 2 20.5h20L12 3.5Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+          <path d="M12 9.5v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+          <circle cx="12" cy="17.2" r="1" fill="currentColor" />
+        </svg>
+        Let the part cool under argon before opening the chamber — freshly
+        deposited metal is very hot and oxidizes in air.
       </p>
       <p id="printCompleteAtmosphereNote" class="print-complete-note" hidden></p>
       <div class="advanced-pin-actions">
@@ -1251,7 +1307,7 @@
       <div id="notificationDetailsBody" class="notification-details-body"></div>
       <div class="notification-details-actions">
         <button id="notificationDetailsAcknowledge" type="button">Acknowledge</button>
-        <button id="notificationDetailsResolve" type="button">Resolve</button>
+        <button id="notificationDetailsResolve" type="button" title="Open Settings to fix this">Fix this</button>
       </div>
     </div>
   </div>
@@ -1387,6 +1443,9 @@
   </script>
   <script src="/static/permissions.js?v=9"></script>
   <script src="/static/error_codes.js?v=2"></script>
-  <script type="module" src="/static/urdf_viewer.js?v=446"></script>
+  <!-- App entry. `npm run build` rewrites this src to the content-hashed bundle in
+       static/dist/ (that hash is the cache-buster — no more manual ?v=). For raw-
+       source local editing, run `npm run build:dev` to point it back at the source. -->
+  <script type="module" data-app-entry src="/static/dist/urdf_viewer-5AC24XW3.js"></script>
 </body>
 </html>
