@@ -19,7 +19,7 @@ import { buildLineSegmentBuffers, segmentsVisibleForProgress } from "./toolpathM
 import { buildTubeBuffers, INDICES_PER_SEGMENT } from "./toolpathTubes.js?v=1";
 
 const DEFAULT_CLIENT_LAYER_COUNT = 120; // synthetic layers for the clip-plane reveal
-const DEFAULT_SPEED_LAYERS_PER_SEC = 20;
+const DEFAULT_SPEED_LAYERS_PER_SEC = 8;
 // Slicer geometry is in millimetres; the scene is in metres. Used both to build
 // the toolpath buffers and to place the slicer's plate centre in the scene.
 const TOOLPATH_UNIT_SCALE = 0.001;
@@ -60,7 +60,7 @@ export function createPrintSimulation(context) {
   // deposition speed), scaled by a user multiplier. Null → fall back to the
   // layers/sec pacing (clip source, or no speed from the slicer).
   let printSecondsAt1x = null;
-  let speedMultiplier = 1;
+  let speedMultiplier = 0.5;
   let totalLayers = DEFAULT_CLIENT_LAYER_COUNT;
   let source = null; // "clip" | "toolpath"
 
@@ -436,9 +436,27 @@ export function createPrintSimulation(context) {
     thermalBuffers = null;
   }
 
+  // Static solid preview (pre-print): show ONLY the placed slicer solid so the
+  // viewer scene reflects the sliced part's exact orientation + placement (it is
+  // parented into the same correctly-oriented frame as the toolpath). Set by the
+  // host when a real toolpath is prepared and no print is running.
+  let solidPreview = false;
+
+  function setSolidPreview(on) {
+    solidPreview = Boolean(on);
+    applyViewVisibility();
+  }
+
   // Show only the active view's object. Falls back to the toolpath when the
   // requested view has no data (e.g. thermal before a Slice+Simulate).
   function applyViewVisibility() {
+    if (solidPreview && !playing && stlMeshObject) {
+      if (toolpathObject) toolpathObject.visible = false;
+      if (toolpathTubeObject) toolpathTubeObject.visible = false;
+      if (thermalObject) thermalObject.visible = false;
+      stlMeshObject.visible = true;
+      return;
+    }
     let effective = viewMode;
     if (effective === "thermal" && !thermalObject) effective = "toolpath";
     if (effective === "stl" && !stlMeshObject) effective = "toolpath";
@@ -626,9 +644,13 @@ export function createPrintSimulation(context) {
     if (progress >= 1) {
       progress = 0;
     }
+    // Leave the static solid-preview mode; a running print uses the normal view
+    // (toolpath/tube revealing over time).
+    solidPreview = false;
     playing = true;
     state.set(SimState.PLAYING);
     setStatus("printing...");
+    applyViewVisibility();
     return true;
   }
 
@@ -775,6 +797,56 @@ export function createPrintSimulation(context) {
     return target.applyMatrix4(toolpathObject.matrixWorld);
   }
 
+  // Post-print stats for the completion summary: layer count, real 1x print
+  // time, path length, deposited height, and a simulated thermal summary
+  // (peak / average relative heat 0..1 + the hottest layer). Best-effort; any
+  // field is null when the underlying data is absent.
+  function getStats() {
+    const tp = toolpathBuffers || null;
+    const layerCount = tp && Number.isFinite(tp.layerCount) ? tp.layerCount : null;
+    const pathLengthMm = tp && Number.isFinite(tp.pathLengthMm) ? tp.pathLengthMm : null;
+
+    let heightMm = null;
+    if (tp && tp.positions && tp.positions.length >= 3) {
+      let minZ = Infinity, maxZ = -Infinity;
+      for (let i = 2; i < tp.positions.length; i += 3) {
+        const z = tp.positions[i];
+        if (z < minZ) minZ = z;
+        if (z > maxZ) maxZ = z;
+      }
+      if (Number.isFinite(minZ) && Number.isFinite(maxZ)) {
+        heightMm = (maxZ - minZ) / TOOLPATH_UNIT_SCALE; // metres → mm
+      }
+    }
+
+    let thermal = null;
+    const thermalPayload = typeof getSlicerThermal === "function" ? getSlicerThermal() : null;
+    const segs = Array.isArray(thermalPayload?.segments) ? thermalPayload.segments : [];
+    if (segs.length) {
+      let peak = 0, sum = 0, n = 0;
+      const layerSum = new Map(), layerN = new Map();
+      for (const s of segs) {
+        const score = Number(s?.score);
+        if (!Number.isFinite(score)) continue;
+        peak = Math.max(peak, score);
+        sum += score; n += 1;
+        const L = Number.isFinite(s?.layer) ? s.layer : 0;
+        layerSum.set(L, (layerSum.get(L) || 0) + score);
+        layerN.set(L, (layerN.get(L) || 0) + 1);
+      }
+      if (n > 0) {
+        let hottestLayer = null, hottestAvg = -1;
+        for (const [L, tot] of layerSum) {
+          const a = tot / (layerN.get(L) || 1);
+          if (a > hottestAvg) { hottestAvg = a; hottestLayer = L; }
+        }
+        thermal = { peak, avg: sum / n, hottestLayer, hottestLayerAvg: hottestAvg, samples: n };
+      }
+    }
+
+    return { source, layerCount, printSeconds: printSecondsAt1x, pathLengthMm, heightMm, thermal };
+  }
+
   return {
     SimState,
     prepare,
@@ -782,11 +854,13 @@ export function createPrintSimulation(context) {
     pause,
     togglePlay,
     reset,
+    getStats,
     getPrintObject,
     getSource,
     getCurrentDepositionPointWorld,
     setViewMode,
     getViewMode,
+    setSolidPreview,
     setStyle,
     getStyle,
     hasTubeView,

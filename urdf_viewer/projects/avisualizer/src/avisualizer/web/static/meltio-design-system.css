@@ -1,0 +1,59 @@
+/* ============================================================================
+   Meltio Design System — font foundation
+   Source: "Meltio Slicer Design Review" (docs/design/Meltio-Slicer-Design-Review.html)
+   IBM Plex Sans (UI) + IBM Plex Mono (data / values), bundled locally for the
+   offline HMI (no CDN at runtime). Latin woff2, single file per weight.
+   Applied 2026-07-20: neutral-black surfaces + IBM Plex + orange as a SPARING
+   accent (matte buttons; orange only for active/focus/borders/values).
+   ========================================================================== */
+
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/static/vendor/fonts/IBMPlexSans-Regular.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/static/vendor/fonts/IBMPlexSans-Medium.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/static/vendor/fonts/IBMPlexSans-SemiBold.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/static/vendor/fonts/IBMPlexSans-Bold.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/static/vendor/fonts/IBMPlexMono-Regular.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/static/vendor/fonts/IBMPlexMono-Medium.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/static/vendor/fonts/IBMPlexMono-SemiBold.woff2") format("woff2");
+}

@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+import binascii
+from datetime import datetime, timezone
+import hashlib
+import hmac
 import json
 import mimetypes
 import os
 from pathlib import Path
 import re
+import secrets
 from typing import Literal
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 
 import uvicorn
 from fastapi import Body, FastAPI, HTTPException, Query, Request
@@ -16,6 +22,8 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from .services.machine_controlservice import ControlServiceMachine
+from .services.machine_mock import get_machine as _get_mock_machine
 from .services.sensor_pointcloud import load_attribute_series, load_sensor_pointcloud
 
 
@@ -28,6 +36,17 @@ DEFAULT_DATASET_NAME = "small-torture-test_1-0-0"
 PERMISSIONS_STORE = DATABASE_ROOT / "permissions.json"
 # Engine/M600 error+warning code catalog (see /api/error-codes).
 ERROR_CODES_STORE = DATABASE_ROOT / "error_codes.json"
+# --- Operator sessions + machine-command authorization ---------------------
+# Login (/api/auth/login) mints a server-side session and sets this HttpOnly
+# cookie; privileged endpoints (POST /api/machine/command) resolve the operator
+# from it and enforce a permission — never trusting the client's own gating.
+SESSION_COOKIE = "avis_session"
+SESSION_TTL_SECONDS = 12 * 60 * 60  # 12h backstop; the UI also auto-signs-out when idle
+# Permission a role must hold to issue machine commands.
+MACHINE_COMMAND_PERMISSION = "machine.command"
+# Append-only JSON-lines audit trail of accepted machine commands (who/when/what),
+# written under DATABASE_ROOT so it moves with the data dir (and tests redirect it).
+COMMAND_AUDIT_LOG_NAME = "command_audit.log"
 
 # Optional external slicer (aslicer) integration. Disabled unless AVIS_SLICER_URL
 # is set, so the viewer runs fully standalone by default. See docs/PRINT_SIM.md.
@@ -53,6 +72,67 @@ def _slicer_ui_url() -> str | None:
     if explicit:
         return explicit.rstrip("/")
     return _slicer_base_url()
+
+
+# --- Real-machine backend (M600Pro.Platform ControlService) ----------------
+# The viewer talks to a real M600 by proxying to the machine's local
+# ControlService REST API. Like the slicer, it is DISABLED unless configured:
+# with no AVIS_MACHINE_URL the viewer uses its in-process mock and runs fully
+# standalone. When set (e.g. "http://localhost:5080"), telemetry comes from the
+# real machine. Command forwarding stays OFF (read-only) unless AVIS_MACHINE_READONLY=0.
+_controlservice_machine: ControlServiceMachine | None = None
+
+
+def _machine_base_url() -> str | None:
+    url = os.environ.get("AVIS_MACHINE_URL", "").strip()
+    return url.rstrip("/") if url else None
+
+
+def _machine_readonly() -> bool:
+    return os.environ.get("AVIS_MACHINE_READONLY", "1").strip().lower() not in ("0", "false", "no")
+
+
+def get_machine():
+    """Resolve the machine backend used by the /api/machine/* endpoints.
+
+    Returns the real ControlService adapter when AVIS_MACHINE_URL is set, else the
+    in-process mock — so the HTTP endpoints and the whole JS UI never change.
+    """
+    base = _machine_base_url()
+    if not base:
+        return _get_mock_machine()
+    global _controlservice_machine
+    if _controlservice_machine is None or _controlservice_machine.base_url != base:
+        _controlservice_machine = ControlServiceMachine(base, readonly=_machine_readonly())
+    return _controlservice_machine
+
+
+def _origin_of(url: str | None) -> str | None:
+    """Return the ``scheme://host[:port]`` origin of ``url``, or None."""
+    if not url:
+        return None
+    parts = urlsplit(url)
+    if not parts.scheme or not parts.netloc:
+        return None
+    return f"{parts.scheme}://{parts.netloc}"
+
+
+def _allowed_cors_origins() -> list[str]:
+    """Cross-origin allowlist for the browser API.
+
+    The only legitimate cross-origin caller is the embedded slicer UI, which
+    fetches STL files from us (see ``/api/stl/file``) while running on its own
+    origin. Same-origin requests from the viewer's own page do not use CORS at
+    all, so we never need a wildcard. Restricting to the configured slicer
+    origin stops any other site the operator has open from reading the console's
+    data (sensor CSVs, machine state, model files) over CORS.
+    """
+    origins: list[str] = []
+    for url in (_slicer_ui_url(), _slicer_base_url()):
+        origin = _origin_of(url)
+        if origin and origin not in origins:
+            origins.append(origin)
+    return origins
 
 
 def _http_json(url: str, *, method: str = "GET", data: bytes | None = None,
@@ -291,13 +371,29 @@ def create_app() -> FastAPI:
     app = FastAPI(title="avisualizer web", version="0.1.0")
     # Allow the embedded slicer UI (a different origin) to fetch STL files from us
     # so "Load to slicer" can pre-load the chosen model. Read-only GETs, no creds.
+    # Scoped to the configured slicer origin(s) only — never a wildcard — so no
+    # other site the operator has open can read the console's data over CORS.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=_allowed_cors_origins(),
         allow_methods=["GET"],
         allow_headers=["*"],
     )
     app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+    @app.middleware("http")
+    async def _security_headers(request: Request, call_next):
+        """Baseline hardening headers on every response.
+
+        Deliberately conservative so the existing (inline-heavy) UI is not
+        broken: no restrictive Content-Security-Policy is imposed here. We only
+        stop MIME sniffing of the model/sensor payloads and keep model-file URLs
+        out of the Referer sent to any embedded third-party origin.
+        """
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        return response
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     app.mount("/assets", StaticFiles(directory=str(ASSETS_ROOT)), name="assets")
 
@@ -306,30 +402,185 @@ def create_app() -> FastAPI:
         return FileResponse(STATIC_DIR / "index.html")
 
     @app.get("/urdf")
-    def urdf_index() -> FileResponse:
-        return FileResponse(STATIC_DIR / "urdf.html")
+    def urdf_index() -> Response:
+        # Serve the console shell, auto-enabling the live machine link whenever a
+        # real machine is configured (AVIS_MACHINE_URL). This makes the integration
+        # "always on" on the machine with no URL flag, while a plain standalone run
+        # (no AVIS_MACHINE_URL) is untouched and keeps using the local mock demo.
+        html = (STATIC_DIR / "urdf.html").read_text(encoding="utf-8")
+        machine_on = _machine_base_url() is not None
+        readonly = _machine_readonly()
+        config = (
+            "<script>window.AVIS_MACHINE = { enabled: "
+            f"{'true' if machine_on else 'false'}, base: \"\", readonly: "
+            f"{'true' if readonly else 'false'} }};</script>\n  "
+        )
+        if machine_on:
+            # Load the read-only program-library browse panel (Files menu). Only
+            # when a machine is configured, so the standalone demo is untouched.
+            config += (
+                '<link rel="stylesheet" href="/static/machine_library.css">\n  '
+                '<script src="/static/machine_library.js" defer></script>\n  '
+            )
+        marker = '<script type="module" data-app-entry'
+        html = html.replace(marker, config + marker, 1)
+        return HTMLResponse(html)
 
-    # --- Roles & permissions config -------------------------------------------
-    # Backend is the source of truth for the roles/users/permission matrix; the
-    # client caches it in localStorage and falls back to built-in defaults when
-    # the store is empty or unreachable. Enforcement itself is client-side UI
-    # gating (this is an operator console, not a security boundary), so these
-    # endpoints only persist/serve the config document.
-    @app.get("/api/permissions/config")
-    def get_permissions_config() -> dict:
+    # --- Roles, users & login -------------------------------------------------
+    # Backend is the source of truth for the roles/users/permission matrix. Users
+    # authenticate with username + password against the stored table; passwords
+    # are salted + PBKDF2-hashed and NEVER sent to the client. The config served
+    # to the browser is stripped of auth secrets (salt/passwordHash). UI gating
+    # by the returned mode level remains a client-side convenience, but login now
+    # actually validates server-side.
+    def _load_permissions_doc() -> dict:
         try:
             if PERMISSIONS_STORE.exists():
                 return json.loads(PERMISSIONS_STORE.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             pass
-        return {}  # empty → client uses its built-in defaults
+        return {}
+
+    def _public_permissions_doc(doc: dict) -> dict:
+        """Same doc with per-user auth secrets removed (safe to send to the UI)."""
+        pub = dict(doc)
+        pub_users = []
+        for user in doc.get("users", []) or []:
+            if not isinstance(user, dict):
+                continue
+            pub_users.append({
+                k: v for k, v in user.items() if k not in ("salt", "passwordHash")
+            })
+        pub["users"] = pub_users
+        return pub
+
+    def _hash_password(password: str, salt_hex: str) -> str:
+        salt = binascii.unhexlify(salt_hex)
+        dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 100000)
+        return binascii.hexlify(dk).decode()
+
+    def _role_for(doc: dict, role_id: str) -> dict | None:
+        for role in doc.get("roles", []) or []:
+            if isinstance(role, dict) and role.get("id") == role_id:
+                return role
+        return None
+
+    # Server-side session store: token -> minimal operator record. In-process and
+    # scoped to this app instance (so tests get a clean store per create_app()).
+    _sessions: dict[str, dict] = {}
+
+    def _operator_from_request(request: Request) -> dict | None:
+        """Resolve the signed-in operator from the session cookie, or None."""
+        token = request.cookies.get(SESSION_COOKIE)
+        if not token:
+            return None
+        return _sessions.get(token)
+
+    def _append_command_audit(operator: dict, command: str, args: dict, ack: dict) -> None:
+        """Append one JSON line recording an accepted (authorised + dispatched)
+        machine command. Best-effort: an audit-sink hiccup never fails a command
+        that has already been sent to the machine."""
+        entry = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "operatorId": operator.get("id"),
+            "operatorName": operator.get("name"),
+            "command": command,
+            "args": args,
+            "ackId": ack.get("id"),
+            "accepted": ack.get("accepted"),
+        }
+        audit_path = DATABASE_ROOT / COMMAND_AUDIT_LOG_NAME
+        try:
+            audit_path.parent.mkdir(parents=True, exist_ok=True)
+            with audit_path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except OSError:
+            pass
+
+    @app.get("/api/permissions/config")
+    def get_permissions_config() -> dict:
+        return _public_permissions_doc(_load_permissions_doc())
+
+    @app.post("/api/auth/login")
+    def auth_login(response: Response, payload: dict | None = Body(default=None)) -> dict:
+        data = payload if isinstance(payload, dict) else {}
+        username = str(data.get("username", "")).strip()
+        password = str(data.get("password", ""))
+        doc = _load_permissions_doc()
+        match = None
+        for user in doc.get("users", []) or []:
+            if isinstance(user, dict) and str(user.get("username", "")).strip().lower() == username.lower():
+                match = user
+                break
+        # Constant-ish-time: always compute a hash even on unknown user.
+        salt_hex = (match or {}).get("salt") or binascii.hexlify(b"0" * 16).decode()
+        expected = (match or {}).get("passwordHash") or ""
+        candidate = _hash_password(password, salt_hex)
+        if not match or not expected or not hmac.compare_digest(candidate, expected):
+            raise HTTPException(status_code=401, detail="Username or password not recognised")
+        role = _role_for(doc, match.get("roleId")) or {}
+        user = {
+            "id": match.get("id"),
+            "name": match.get("name"),
+            "username": match.get("username"),
+            "roleId": match.get("roleId"),
+            "roleName": role.get("name"),
+            "rank": role.get("rank", 0),
+            "permissions": role.get("permissions", []),
+            "avatarColor": match.get("avatarColor"),
+        }
+        # Establish a server-side session so later privileged calls identify this
+        # operator without trusting the client. HttpOnly => not readable from JS;
+        # the browser returns it automatically on same-origin requests.
+        token = secrets.token_urlsafe(32)
+        _sessions[token] = {
+            "id": user["id"],
+            "name": user["name"],
+            "roleId": user["roleId"],
+        }
+        response.set_cookie(
+            SESSION_COOKIE,
+            token,
+            httponly=True,
+            samesite="strict",
+            max_age=SESSION_TTL_SECONDS,
+            path="/",
+        )
+        return {"ok": True, "user": user}
+
+    @app.post("/api/auth/logout")
+    def auth_logout(request: Request, response: Response) -> dict:
+        token = request.cookies.get(SESSION_COOKIE)
+        if token:
+            _sessions.pop(token, None)
+        response.delete_cookie(SESSION_COOKIE, path="/")
+        return {"ok": True}
 
     @app.put("/api/permissions/config")
     def put_permissions_config(payload: dict | None = Body(default=None)) -> dict:
         data = payload if isinstance(payload, dict) else {}
+        # The client never holds password hashes, so merge incoming users onto the
+        # stored ones to PRESERVE each user's salt/passwordHash (a naive overwrite
+        # would wipe every credential). Roles/matrix are replaced as sent.
+        existing = _load_permissions_doc()
+        existing_users = {u.get("id"): u for u in existing.get("users", []) or [] if isinstance(u, dict)}
+        merged_users = []
+        for user in data.get("users", []) or []:
+            if not isinstance(user, dict):
+                continue
+            prev = existing_users.get(user.get("id"), {})
+            merged = dict(prev)
+            merged.update({k: v for k, v in user.items() if k not in ("salt", "passwordHash")})
+            merged_users.append(merged)
+        if merged_users or "users" in data:
+            data = dict(data)
+            data["users"] = merged_users
+        serialized = json.dumps(data, indent=2)
+        if len(serialized.encode("utf-8")) > 512 * 1024:
+            raise HTTPException(status_code=413, detail="Permissions document too large")
         try:
             PERMISSIONS_STORE.parent.mkdir(parents=True, exist_ok=True)
-            PERMISSIONS_STORE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            PERMISSIONS_STORE.write_text(serialized, encoding="utf-8")
         except OSError as exc:
             raise HTTPException(status_code=500, detail=f"Could not save permissions: {exc}") from exc
         return {"ok": True}
@@ -572,6 +823,131 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=502, detail=f"Slicer unreachable: {exc.reason}") from exc
         except Exception as exc:  # noqa: BLE001 - surface as bad gateway, keep viewer usable
             raise HTTPException(status_code=502, detail=f"Slicer proxy failure: {exc}") from exc
+
+    # --- Machine link (telemetry + commands) ----------------------------------
+    # The console's single seam to the machine. Backed today by the in-process
+    # mock (services/machine_mock.py) so the whole print flow runs with no
+    # hardware; the real M600 adapter implements the same snapshot()/command()
+    # contract behind these two endpoints. See static/sim/machineLink.js.
+    #
+    # Telemetry (state) is read-only and open; issuing COMMANDS is guarded by a
+    # real, server-side operator identity + permission check (see below), and
+    # every accepted command is written to the audit log. Client-side gating is
+    # a convenience only and is never trusted here.
+    @app.get("/api/machine/state")
+    def machine_state() -> dict:
+        return get_machine().snapshot()
+
+    @app.post("/api/machine/command")
+    def machine_command(request: Request, payload: dict | None = Body(default=None)) -> dict:
+        # 1) Authenticate: the caller must hold a valid operator session.
+        operator = _operator_from_request(request)
+        if operator is None:
+            raise HTTPException(status_code=401, detail="Sign in to control the machine")
+        # 2) Authorise: the operator's role must grant machine-command rights.
+        doc = _load_permissions_doc()
+        role = _role_for(doc, operator.get("roleId")) or {}
+        if MACHINE_COMMAND_PERMISSION not in (role.get("permissions") or []):
+            raise HTTPException(status_code=403, detail="Not authorised to issue machine commands")
+        # 3) Validate + dispatch.
+        data = payload if isinstance(payload, dict) else {}
+        command = data.get("command")
+        if not isinstance(command, str) or not command:
+            raise HTTPException(status_code=400, detail="command is required")
+        args = data.get("args") if isinstance(data.get("args"), dict) else {}
+        ack = get_machine().command(command, args)
+        ack["id"] = data.get("id")
+        # 4) Audit the accepted (authorised + dispatched) command.
+        _append_command_audit(operator, command, args, ack)
+        return ack
+
+    # --- Machine program library (read-only browse) ---------------------------
+    # Surfaces the machine's stored G-code programs + the Meltio Cloud catalog in
+    # the Files menu. Read-only; returns empty lists when no real machine is
+    # configured (standalone demo), so the endpoint is always safe to call.
+    @app.get("/api/machine/library")
+    def machine_library() -> dict:
+        machine = get_machine()
+        if isinstance(machine, ControlServiceMachine):
+            return machine.library()
+        return {"local": [], "cloud": []}
+
+    @app.get("/api/machine/cloud-status")
+    def machine_cloud_status() -> dict:
+        machine = get_machine()
+        if isinstance(machine, ControlServiceMachine):
+            return machine.cloud_status()
+        return {
+            "connected": False, "online": False, "enrolled": False, "reachable": False,
+            "controlServiceConnected": False, "note": "", "serial": "",
+        }
+
+    @app.get("/api/machine/library/image")
+    def machine_library_image(
+        request: Request,
+        kind: str = Query(...),
+        id: str = Query(...),
+        variant: str = Query(default="thumbnail"),
+    ) -> Response:
+        machine = get_machine()
+        if not isinstance(machine, ControlServiceMachine):
+            raise HTTPException(status_code=404, detail="No machine library configured")
+        if kind not in ("local", "cloud") or variant not in ("thumbnail", "preview"):
+            raise HTTPException(status_code=400, detail="invalid kind/variant")
+        status, content_type, body, etag = machine.library_image(
+            kind, id, variant, if_none_match=request.headers.get("if-none-match")
+        )
+        if status == 304:
+            return Response(status_code=304, headers=({"ETag": etag} if etag else {}))
+        if status >= 400 or not body:
+            raise HTTPException(status_code=404, detail="image unavailable")
+        headers = {"Cache-Control": "no-cache"}
+        if etag:
+            headers["ETag"] = etag
+        return Response(content=body, media_type=content_type or "image/png", headers=headers)
+
+    # --- Session / machine inventory stubs ------------------------------------
+    # Minimal stand-ins so the console (and the embedded slicer) can resolve the
+    # current operator and the connected machine. The real deployment replaces
+    # these with the Meltio dashboard's identity + machine-registry services.
+    @app.get("/api/me")
+    def whoami(request: Request) -> dict:
+        # Reflect the real session when one is present, so the console (and any
+        # server-side check) sees the authenticated operator + their permissions.
+        operator = _operator_from_request(request)
+        if operator is not None:
+            doc = _load_permissions_doc()
+            role = _role_for(doc, operator.get("roleId")) or {}
+            return {
+                "id": operator.get("id"),
+                "name": operator.get("name"),
+                "role": operator.get("roleId"),
+                "roleName": role.get("name"),
+                "permissions": role.get("permissions", []),
+                "authenticated": True,
+            }
+        # Signed-out default: the anonymous operator view.
+        return {
+            "id": "operator",
+            "name": "Operator",
+            "role": "operator",
+            "authenticated": False,
+        }
+
+    @app.get("/api/machines")
+    def machines() -> dict:
+        snap = get_machine().snapshot()
+        return {
+            "machines": [
+                {
+                    "id": "m600-pro-1",
+                    "name": "M600-PRO-1",
+                    "model": "M600 Pro",
+                    "connected": snap.get("connected", False),
+                    "state": snap.get("state"),
+                }
+            ]
+        }
 
     return app
 

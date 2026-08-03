@@ -9,6 +9,12 @@ import { createPrintSimulation } from "./sim/printSimulation.js?v=11";
 import { createSlicerClient } from "./sim/slicerClient.js";
 import { createMachineLink } from "./sim/machineLink.js";
 import { createPrePrintCheck } from "./sim/prePrintCheck.js";
+import { createDustExhaust } from "./sim/dustExhaust.js";
+import { createChamberInert } from "./sim/chamberInert.js";
+import { t, applyDomTranslations } from "./i18n/index.js";
+// Hydrate static HTML copy (data-i18n / data-i18n-attr) from the active locale.
+// Runs at module load; JS-driven copy uses t(...) directly.
+applyDomTranslations();
 
 // Print-simulation controller. Created at boot once the scene exists; declared
 // here so the camera-guard helpers below can reference it before assignment.
@@ -27,6 +33,7 @@ const reloadModelEl = document.getElementById("reloadModel");
 const resetViewEl = document.getElementById("resetView");
 const lightModeToggleEl = document.getElementById("lightModeToggle");
 const controlsPanelEl = document.getElementById("controlsPanel");
+const controlsPanelCloseEl = document.getElementById("controlsPanelClose");
 const controlsSidebarToggleEl = document.getElementById("controlsSidebarToggle");
 const navControlsToggleEl = document.getElementById("navControlsToggle");
 const navDoorToggleEl = document.getElementById("navDoorToggle");
@@ -78,6 +85,7 @@ const topbarConnectionEl = document.querySelector(".topbar-connection");
 const topbarNotificationsToggleEl = document.getElementById("topbarNotificationsToggle");
 const topbarNotificationBadgeEl = document.getElementById("topbarNotificationBadge");
 const topbarNotificationCenterEl = document.getElementById("topbarNotificationCenter");
+const notificationCenterCloseEl = document.getElementById("notificationCenterClose");
 const notificationActiveCountEl = document.getElementById("notificationActiveCount");
 const notificationFilterAllEl = document.getElementById("notificationFilterAll");
 const notificationFilterCriticalEl = document.getElementById("notificationFilterCritical");
@@ -177,9 +185,15 @@ const feederDriveStopEl = document.getElementById("feederDriveStop");
 const feederDriveRightEl = document.getElementById("feederDriveRight");
 const feederDriveUpEl = document.getElementById("feederDriveUp");
 const feederDriveDownEl = document.getElementById("feederDriveDown");
-const feederDriveSectionEl = document.getElementById("feederDriveSection");
 const feederCameraAnchorLeftEl = document.getElementById("feederCameraAnchorLeft");
 const feederCameraAnchorRightEl = document.getElementById("feederCameraAnchorRight");
+// Controls ▸ Feeder panel per-wheel jog (replaces the old wheel-switch + single
+// Up/Stop/Down "Feeder Drive"). Each button is a TOGGLE: click drives that
+// wheel, clicking the active one again stops it (see the click wiring below).
+const feederJogLeftUpEl = document.getElementById("feederJogLeftUp");
+const feederJogLeftDownEl = document.getElementById("feederJogLeftDown");
+const feederJogRightUpEl = document.getElementById("feederJogRightUp");
+const feederJogRightDownEl = document.getElementById("feederJogRightDown");
 const hotspotContextPanelEl = document.getElementById("hotspotContextPanel");
 const hotspotContextTitleEl = document.getElementById("hotspotContextTitle");
 const hotspotContextCloseEl = document.getElementById("hotspotContextClose");
@@ -367,6 +381,10 @@ const motionStatusEl = document.getElementById("motionStatus");
 const annotationNavFrontDoorEl = document.getElementById("annotationNavFrontDoor");
 const annotationNavSpoolsDoorEl = document.getElementById("annotationNavSpoolsDoor");
 const annotationNavTopCoverEl = document.getElementById("annotationNavTopCover");
+// Top-door control inside the Controls panel (Assembly Shortcuts). Mirrors the
+// bottom-nav Top Door button, but stays reachable while a print is docked (the
+// nav button is hidden then) so the operator can still open the roof mid-print.
+const controlsTopCoverButtonEl = document.getElementById("controlsTopCoverButton");
 const quickFrontDoorToggleEl = document.getElementById("quickFrontDoorToggle");
 const annotationLayerEl = document.getElementById("annotationLayer");
 const feederWheelFloatingLeftEl = document.getElementById("feederWheelFloatingLeft");
@@ -453,10 +471,9 @@ function initializeStatusLineStates() {
 
 const REST_RENDER_PIXEL_RATIO = 1.5;
 const INTERACTION_RENDER_PIXEL_RATIO = 1.0;
-// Idle render throttle: when nothing is moving, drop from per-frame rendering to
-// this heartbeat so a heavy static scene stops pegging the GPU (keeps the UI
-// responsive). Never fully stops — a missed change self-heals within one tick.
-const IDLE_RENDER_INTERVAL_MS = 1000 / 12;
+// On-demand rendering: when nothing is moving, the loop issues NO WebGL draws
+// (idle GPU cost drops to ~0). After the last user input we keep drawing for a
+// short settle window so input-driven transitions finish smoothly.
 const IDLE_RENDER_ACTIVE_WINDOW_MS = 600;
 const INTERACTION_QUALITY_HOLD_MS = 220;
 // Realtime shadows double the draw-call count (every mesh is drawn again into
@@ -497,6 +514,15 @@ scene.fog = new THREE.Fog(0x0b0a09, 400, 2200);
 const camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.05, 6000);
 camera.up.set(0, 0, 1);
 camera.position.set(1.5, 1.3, 1.1);
+
+// Fume/dust extraction plume from the top exhaust port — driven by the fan (see
+// setFanOn / the animate loop). Cosmetic; anchored to the top cover on load.
+const dustExhaust = createDustExhaust({ THREE, scene, camera, renderer });
+
+// Argon inertization fill — a rising cool-cyan gas that floods the build chamber
+// while a print is inerting; the front door fades see-through so it's visible
+// (see updateChamberInertSimulation / the animate loop). Cosmetic.
+const chamberInert = createChamberInert({ THREE, scene });
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
@@ -728,7 +754,12 @@ const PRINT_POSITION_X_MM = 143;
 const PRINT_POSITION_Y_MM = 2;
 // Pre-print homing/probe routine (played before every print): Z rises to a fixed
 // "touch" height and drops PRINT_PROBE_RETRACT_MM, repeated PRINT_PROBE_CYCLES times.
-const PRINT_PROBE_TOUCH_Z_MM = 530;
+// The touch height is calibrated so the deployed palpador just KISSES the build
+// plate without penetrating it. Measured geometry (fixed head): palpador tip world
+// Z = 1195.7 mm; plate top = 680.88 + z_axis(mm); so gap = 514.82 − z_axis. The old
+// value (530) drove the plate ~15 mm THROUGH the palpador (visible collision). 513
+// leaves ~1.8 mm clearance at the closest approach — a clean touch, no intersection.
+const PRINT_PROBE_TOUCH_Z_MM = 513;
 const PRINT_PROBE_RETRACT_MM = 5;
 const PRINT_PROBE_CYCLES = 3;
 const PRINT_PROBE_MOVE_DURATION_SEC = 0.5;
@@ -795,59 +826,79 @@ const TOP_COVER_BUTTON_CLOSE_RESET_DURATION_MS = 980;
 const TOP_COVER_BUTTON_PERP_Y_SIDE = -1;
 const TOP_COVER_BUTTON_Y_ROTATION_RAD = THREE.MathUtils.degToRad(30);
 const NAV_FILES_ICON_FILES_SVG = '<path d="M4 5h10l6 6v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5Z" /><path d="M14 5v6h6" />';
-// Materials spool: a realistic filament reel that spins and pays out wire.
-//   .spool-spin  = the outer flange rim, the wound-filament coil (an inner ring
-//                  with a small GAP on the upper-right where the strand leaves —
-//                  this loose-end gap both looks like real wound filament AND
-//                  makes the spin visible, since a bare ring can't), and a large
-//                  centre hub bore. It ROTATES on activate. Its bbox is the rim,
-//                  so a fill-box/centre transform-origin turns it about the hub.
-//   .spool-wire  = a straight strand rooted at the RIGHT CORNER of the rim that
-//                  feeds up; drawn via stroke-dashoffset (pathLength=100), so
-//                  idle = retracted into the spool, active = fed out the side.
+// Materials spool (2026-07-29 redesign): a side-on wire REEL — two flanges
+// joined by a barrel with wound-wire courses across it — not a pair of
+// concentric rings (which read as a camera aperture/iris, not a spool).
+//   .spool-spin  = the whole reel (both flanges, the barrel sides, the wound
+//                  courses). It tumbles on activate (rotate about its centre);
+//                  because top/bottom flanges are identical, it settles back
+//                  into a spool silhouette rather than an arbitrary tilt.
+//   .spool-wire  = a straight strand off the top-right of the reel that feeds
+//                  out; drawn via stroke-dashoffset (pathLength=100), so idle =
+//                  retracted into the spool, active = fed out and up.
 const SPOOL_ICON_OUTLINE_SVG =
   '<g class="spool-spin">' +
-    '<circle cx="11.5" cy="14" r="6.6" />' +
-    '<path d="M15.88 12.99A4.5 4.5 0 1 1 14.21 10.41" />' +
-    '<circle cx="11.5" cy="14" r="2.5" />' +
+    '<ellipse cx="12" cy="6.3" rx="6" ry="2.1" />' +
+    '<ellipse cx="12" cy="17.7" rx="6" ry="2.1" />' +
+    '<path d="M6 6.3V17.7M18 6.3V17.7" />' +
+    '<path d="M7 9.6 17 11.6M7 13 17 15" />' +
   '</g>' +
-  '<path class="spool-wire" pathLength="100" d="M17.03 10.41V3.2" />';
-// Files nav icon morphs outline -> solid when its menu is open (the "active =
-// solid fill" selection style): a FOLDER, closed outline vs. filled accent. The
-// solid subpath carries .nav-icon-solid so CSS fills it with the accent.
+  '<path class="spool-wire" pathLength="100" d="M17.8 7.3 22 3.2" />';
+// Materials nav icon (2026-08 isometric "cube family" redesign, theme-aware):
+// same flat-3D cube family as Open Door / Top Door / Files. Idle = a plain
+// cube with a right-face seam; active (materials menu open) lifts the right
+// face in the accent colour with a dark interior, matching the other
+// cube-family active states. Superseded the constant spool glyph (still used
+// for the drum/spool cards elsewhere) as the nav button's own icon.
+const MATERIALS_ICON_IDLE_SVG =
+  '<g><path class="iso-c1" d="M12 3 20 7.5 12 12 4 7.5Z"/><path class="iso-c3" d="M4 7.5 12 12 12 20 4 15.5Z"/><path class="iso-c2" d="M12 12 20 7.5 20 15.5 12 20Z"/><path class="iso-seam" d="M18 9 18 16"/></g>';
+const MATERIALS_ICON_ACTIVE_SVG =
+  '<g><path class="iso-c1" d="M12 3 20 7.5 12 12 4 7.5Z"/><path class="iso-c3" d="M4 7.5 12 12 12 20 4 15.5Z"/><path class="iso-int" d="M12 12 20 7.5 20 15.5 12 20Z"/><path class="iso-acc" d="M15.5 10 23.5 5.5 23.5 13.5 15.5 18Z"/></g>';
+// Files nav icon (2026-08 isometric "cube family" redesign, theme-aware):
+// stacked flat-3D layers, idle vs. a "spread apart" active state with an
+// accent top layer. Faces use the shared .iso-* classes (see
+// .bottom-nav-item svg .iso-* in urdf_viewer.css) which resolve to
+// theme-aware --iso-* custom properties instead of baked hex fills, so the
+// icon stays visible in both dark and light mode.
 const FILES_ICON_OUTLINE_SVG =
-  '<path d="M4 7a1.6 1.6 0 0 1 1.6-1.6h3.2l1.8 2.2h7.8A1.6 1.6 0 0 1 20 9.2V18a1.6 1.6 0 0 1-1.6 1.6H5.6A1.6 1.6 0 0 1 4 18V7Z" />';
+  '<g><path class="iso-c2" d="M12 15 20 11 12 7 4 11Z"/><path class="iso-c1" d="M12 12 18 9 12 6 6 9Z"/><path class="iso-c1" style="opacity:.7" d="M12 9 16 7 12 5 8 7Z"/></g>';
 const FILES_ICON_SOLID_SVG =
-  '<path class="nav-icon-solid" d="M4 7a1.6 1.6 0 0 1 1.6-1.6h3.2l1.8 2.2h7.8A1.6 1.6 0 0 1 20 9.2V18a1.6 1.6 0 0 1-1.6 1.6H5.6A1.6 1.6 0 0 1 4 18V7Z" />';
-// Door button icon set: a closed-door glyph and an ajar (open) glyph that swap
-// with the door state, plus the stop-square it becomes while a print is underway
-// (see updateBottomNavState / the door click handler).
+  '<g><path class="iso-c2" d="M12 17 20 13 12 9 4 13Z"/><path class="iso-c1" d="M12 12 18 9 12 6 6 9Z"/><path class="iso-acc" d="M12 7 16 5 12 3 8 5Z"/></g>';
+// Door / Top-door icon set (2026-07-29 redesign): both glyphs are the SAME
+// M600 enclosure silhouette — a tall cabinet on small casters — so the two
+// bottom-nav buttons read as one machine-representative family rather than a
+// generic door + an unrelated house glyph. Only the feature each button
+// controls (the front door leaf vs. the top lid) changes between them, and
+// only the state-specific piece changes between closed/open.
+// NOTE: Top Door's glyphs were superseded by the isometric cube design below
+// (2026-08); NAV_MACHINE_BODY_SVG remains in use by the (still line-art) Open
+// Door icon only.
+const NAV_MACHINE_BODY_SVG =
+  '<rect x="5" y="6" width="14" height="15" rx="1.3" />' +
+  '<path d="M8.5 21v1.4M15.5 21v1.4" />';
+// Front door: the console/screen (fixed, mounted right of the door — see the
+// resting-view M600 model) never moves; only the door leaf on the left swings.
+// Closed: a flush seam + handle knob. Open: hinge stays at the seam (x11),
+// the leaf swings out past the cabinet's left edge, knob riding with it.
+const NAV_DOOR_ICON_CONSOLE = '<rect x="12.6" y="12.4" width="3.6" height="4.6" rx="0.6" />';
+// Open Door (2026-08 isometric "cube family" redesign, theme-aware): idle is
+// a plain flat-3D cube with a seam down the left (door) face; active lifts
+// that face up-left in the accent colour, revealing a dark interior cavity —
+// same .iso-* class convention as the other cube-family nav icons (see
+// .bottom-nav-item svg .iso-* in urdf_viewer.css).
 const NAV_DOOR_ICON_DOOR_SVG =
-  '<path d="M6 3h12v18H6z" /><path d="M10 3v18" /><circle cx="14.5" cy="12" r="0.9" />';
-// Ajar (open) glyph mirrored so the door opens from the RIGHT — hinge on the
-// left, free edge + knob on the right — matching the closed glyph (knob right).
+  '<g><path class="iso-c1" d="M12 3 20 7.5 12 12 4 7.5Z"/><path class="iso-c3" d="M4 7.5 12 12 12 20 4 15.5Z"/><path class="iso-c2" d="M12 12 20 7.5 20 15.5 12 20Z"/><path class="iso-seam" d="M6 9 6 16"/></g>';
 const NAV_DOOR_ICON_DOOR_OPEN_SVG =
-  '<path d="M3 21h18" /><path d="M10 3l8 2v15h-8z" /><circle cx="16" cy="12.5" r="0.9" />';
+  '<g><path class="iso-c1" d="M12 3 20 7.5 12 12 4 7.5Z"/><path class="iso-c2" d="M12 12 20 7.5 20 15.5 12 20Z"/><path class="iso-int" d="M4 7.5 12 12 12 20 4 15.5Z"/><path class="iso-acc" d="M0.5 5.5 8.5 10 8.5 18 0.5 13.5Z"/></g>';
 const NAV_DOOR_ICON_STOP_SVG = '<rect x="6" y="6" width="12" height="12" rx="1.5" />';
-// Top-cover glyphs: a HOUSE (closed-triangle roof on a square body, with a
-// centred arched double-door) whose ROOF lifts when the cover is open. The roof
-// is a closed triangle whose base caps the open-topped walls, so closed = a
-// proper house silhouette; open = the whole roof translated up ~2u AND two side
-// arrows (.roof-arrows) appear beside the eaves, rising in to signal the lift
-// (see #annotationNavTopCover .roof-arrows CSS). The roof is narrowed to x4..20
-// so the arrows have room to sit outside the eaves.
-const TOP_DOOR_ICON_DOOR = 'M10 21V15.5H14V21';
-// Walls are a CLOSED box: the top edge (y11) stays drawn even when the roof
-// lifts off, so the house body keeps its full outline under the raised lid.
-const TOP_DOOR_ICON_WALLS = 'M6 11H18V21H6Z';
-const TOP_DOOR_ICON_ARROWS =
-  '<path class="roof-arrows" d="M2.5 5.5V2.5M1.3 3.9 2.5 2.5 3.7 3.9M21.5 5.5V2.5M20.3 3.9 21.5 2.5 22.7 3.9" />';
+// Top cover (2026-08 isometric "cube family" redesign, theme-aware): a
+// flat-3D cube. Closed = a plain three-face cube with a top-face seam. Open =
+// the top face lifts off (accent) revealing a dark opening underneath. Same
+// .iso-* class convention as the other cube-family nav icons.
 const TOP_DOOR_ICON_CLOSED_SVG =
-  '<path d="M4 11L12 5L20 11Z" /><path d="' + TOP_DOOR_ICON_WALLS + '" /><path d="' + TOP_DOOR_ICON_DOOR + '" />';
-// Open: roof lifted a full 3.5u above the box top line (was ~2u) — clearly higher.
+  '<g><path class="iso-c1" d="M12 3 20 7.5 12 12 4 7.5Z"/><path class="iso-c3" d="M4 7.5 12 12 12 20 4 15.5Z"/><path class="iso-c2" d="M12 12 20 7.5 20 15.5 12 20Z"/><path class="iso-seam" d="M8 5.25 16 9.75"/></g>';
 const TOP_DOOR_ICON_OPEN_SVG =
-  '<path d="M4 7.5L12 1.5L20 7.5Z" /><path d="' + TOP_DOOR_ICON_WALLS + '" /><path d="' + TOP_DOOR_ICON_DOOR + '" />' +
-  TOP_DOOR_ICON_ARROWS;
+  '<g><path class="iso-c3" d="M4 7.5 12 12 12 20 4 15.5Z"/><path class="iso-c2" d="M12 12 20 7.5 20 15.5 12 20Z"/><path class="iso-int" d="M12 3 20 7.5 12 12 4 7.5Z"/><path class="iso-acc" d="M12 0.5 20 5 12 9.5 4 5Z"/></g>';
 const ANNOTATION_UPDATE_INTERVAL_MS = 0;
 const ANNOTATION_CLICK_ACTIVE_HOLD_MS = 2200;
 const ENABLE_ANNOTATION_OCCLUSION = false;
@@ -1940,11 +1991,15 @@ function showNotificationToast(notification) {
     layer.firstElementChild.remove();
   }
 
-  // All arrival toasts (incl. critical) auto-dismiss after 10s — or sooner when
-  // the operator switches menus (see clearNotificationToasts). The notification
-  // itself stays in the notification center list either way.
+  // Warning/Info arrival toasts auto-dismiss after 10s — or sooner when the
+  // operator switches menus (see clearNotificationToasts). Critical toasts
+  // persist and require an explicit dismiss (View/Acknowledge/✕) so an urgent
+  // alert can never silently disappear unnoticed. The notification itself
+  // always stays in the notification center list either way.
   toast._dismissToast = dismiss;
-  window.setTimeout(dismiss, 10000);
+  if (!isCritical) {
+    window.setTimeout(dismiss, 10000);
+  }
 }
 
 // Dismiss every visible arrival toast (used on a 10s timeout per-toast, and when
@@ -1974,6 +2029,10 @@ function getNotificationSignalsSnapshot() {
 
   if (globalSignals == null) {
     snapshot.internetConnected = internetConnectedFromUi;
+    // No live machine telemetry — reflect the real door state from the scene
+    // instead of the hardcoded mock value, so the pre-print checklist actually
+    // fails when a door is left open.
+    snapshot.doorsClosed = !isFrontDoorOpen() && !isTopCoverOpen();
   }
 
   if (typeof snapshot.machineArmedState === "boolean" && snapshot.machineArmedRequired == null) {
@@ -2144,7 +2203,7 @@ function renderNotificationCard(notification) {
       <div class="notification-card-actions">
         <button type="button" title="Mark as seen (keeps the issue in the list)" data-notification-action="acknowledge" data-notification-id="${escapeHtml(notification.id)}"${acknowledgeDisabled ? " disabled" : ""}>Acknowledge</button>
         <button type="button" data-notification-action="details" data-notification-id="${escapeHtml(notification.id)}">View details</button>
-        <button type="button" class="notification-resolve-btn" title="Open Settings to fix this" data-notification-action="resolve" data-notification-id="${escapeHtml(notification.id)}">Resolve</button>
+        <button type="button" class="notification-resolve-btn" title="Open Settings to fix this" data-notification-action="resolve" data-notification-id="${escapeHtml(notification.id)}">Fix this</button>
       </div>
     </article>
   `;
@@ -2420,8 +2479,26 @@ const feederWheelEnabled = {
 };
 const jointControlTransitions = new Map();
 let previousAnimationMs = performance.now();
-let lastMainRenderMs = 0;
 let lastUserActivityMs = previousAnimationMs;
+// On-demand rendering: the animate loop issues a WebGL draw only when the scene
+// changed. `renderDirty` is set by requestRender() (and setJointValue) for
+// one-off/async changes; continuous motions are detected in the loop's
+// `sceneActive` check. Starts true so the first frame draws.
+let renderDirty = true;
+function requestRender() {
+  renderDirty = true;
+}
+// Safety net for on-demand rendering: GLTF/STL/texture loaders share Three's
+// DefaultLoadingManager. Whenever its queue drains (an async asset finished and
+// was likely added to the scene), request a draw — so newly-loaded meshes appear
+// even if the load completed long after the click that triggered it.
+{
+  const prevManagerOnLoad = THREE.DefaultLoadingManager.onLoad;
+  THREE.DefaultLoadingManager.onLoad = () => {
+    if (typeof prevManagerOnLoad === "function") prevManagerOnLoad();
+    requestRender();
+  };
+}
 let interactionQualityUntilMs = previousAnimationMs;
 let isInteractionQualityActive = false;
 let interactionShadowsPaused = false;
@@ -3334,7 +3411,7 @@ function setAdvancedModeEnabled(isEnabled) {
   if (settingsAdvancedModeToggleEl) {
     settingsAdvancedModeToggleEl.setAttribute("aria-pressed", isAdvancedModeEnabled ? "true" : "false");
     settingsAdvancedModeToggleEl.classList.toggle("advanced-mode-active", isAdvancedModeEnabled);
-    settingsAdvancedModeToggleEl.textContent = "Advanced Settings";
+    settingsAdvancedModeToggleEl.textContent = "Advanced settings";
   }
   if (settingsExitAdvancedModeEl) {
     settingsExitAdvancedModeEl.hidden = !isAdvancedModeEnabled;
@@ -3584,6 +3661,19 @@ function applyCameraState(state) {
 
 function updateFeederCameraAnchorButtons() {
   const hasModel = Boolean(robotRoot);
+  // The Feeder View button now lives inside #feederDriveSection
+  // (data-requires-permission="machine.motion"). That permission gate
+  // snapshots/restores `.disabled` around deny/grant, which would otherwise
+  // fight with the hasModel-driven disable below (e.g. a deny snapshot taken
+  // before the model finished loading gets restored stale after sign-in).
+  // Re-check the live permission here so this function is always the final,
+  // correct word, in both directions, whenever it re-runs (model load,
+  // camera-anchor changes, or the MeltioPermissions.onChange hook below).
+  const permissionDenied = Boolean(
+    window.MeltioPermissions
+    && typeof window.MeltioPermissions.can === "function"
+    && !window.MeltioPermissions.can("machine.motion"),
+  );
   const buttonConfigs = [
     [feederCameraAnchorLeftEl, "left"],
     [feederCameraAnchorRightEl, "right"],
@@ -3595,18 +3685,14 @@ function updateFeederCameraAnchorButtons() {
     }
 
     const isActive = hasModel && activeFeederCameraAnchorSide === side;
-    buttonEl.disabled = !hasModel;
+    buttonEl.disabled = !hasModel || permissionDenied;
     buttonEl.classList.toggle("active", isActive);
     buttonEl.setAttribute("aria-pressed", isActive ? "true" : "false");
   }
 
-  // Feeder Drive controls (wheel switch + Up/Stop/Down) only make sense while the
-  // Feeder view is active, so reveal the section then and hide it otherwise.
-  if (feederDriveSectionEl) {
-    const feederActive = hasModel && Boolean(activeFeederCameraAnchorSide);
-    feederDriveSectionEl.hidden = !feederActive;
-    feederDriveSectionEl.setAttribute("aria-hidden", feederActive ? "false" : "true");
-  }
+  // The Feeder section (Feeder View toggle + per-wheel jog) is always visible
+  // in Controls now, regardless of whether the Feeder camera view is active
+  // (permission gating via data-requires-permission still applies).
 
   updateFeederWheelFloatingControls();
 }
@@ -4529,6 +4615,9 @@ function setJointValue(state, value, options = {}) {
   if (syncSlider && state.sliderEl && document.activeElement !== state.sliderEl) {
     state.sliderEl.value = String(value);
   }
+  // Any joint move (robot, doors, feeder wheels, drum door, transitions) mutates
+  // the scene — request a draw so on-demand rendering picks it up.
+  requestRender();
 }
 
 function getCombinedHandleValue(primaryState, secondaryState) {
@@ -4749,6 +4838,11 @@ function updateFeederDriveButtons() {
   setToggleButtonState(hotspotFeederDriveUpEl, upActive);
   setToggleButtonState(feederDriveDownEl, downActive);
   setToggleButtonState(hotspotFeederDriveDownEl, downActive);
+  // Controls ▸ Feeder panel per-wheel jog buttons (one active at a time).
+  setToggleButtonState(feederJogLeftUpEl, leftActive && upActive);
+  setToggleButtonState(feederJogLeftDownEl, leftActive && downActive);
+  setToggleButtonState(feederJogRightUpEl, rightActive && upActive);
+  setToggleButtonState(feederJogRightDownEl, rightActive && downActive);
   updateFilesSelectedSpoolFeederButtons();
   updateFeederDriveDirectionIndicator();
   updateFeederWheelFloatingControls();
@@ -4860,7 +4954,7 @@ function getSpoolDisplayLabel(spoolKey) {
   if (spoolKey === "wiredrum") {
     return "Wire Drum";
   }
-  return spoolKey === "spool2" ? "Spool 2" : "Spool 1";
+  return spoolKey === "spool2" ? "Feeder 2" : "Feeder 1";
 }
 
 function isKnownMaterialId(materialId) {
@@ -5086,21 +5180,21 @@ function getSpoolStatusState(spoolKey) {
   const requiredGrams = Number(getSelectedPrintJobRequiredGrams());
   if (!assignedMaterialId) {
     return {
-      label: "Not assigned",
+      label: t("materials.spoolNotAssigned"),
       className: "status-unassigned",
     };
   }
 
   if (!Number.isFinite(grams) || grams <= 0) {
     return {
-      label: "Empty",
+      label: t("materials.spoolEmpty"),
       className: "status-empty",
     };
   }
 
   if (Number.isFinite(requiredGrams) && requiredGrams > 0 && grams < requiredGrams) {
     return {
-      label: "Not enough",
+      label: t("materials.spoolNotEnough"),
       className: "status-not-enough",
     };
   }
@@ -5112,13 +5206,13 @@ function getSpoolStatusState(spoolKey) {
 
   if (grams <= effectiveLowThreshold) {
     return {
-      label: "Low",
+      label: t("materials.spoolLow"),
       className: "status-low",
     };
   }
 
   return {
-    label: "Ready",
+    label: t("materials.spoolReady"),
     className: "status-ready",
   };
 }
@@ -5268,7 +5362,7 @@ function updateSpoolSelectionCards() {
 // Materials menu (Feeder 1/2) — reflect the per-feeder feed type on the cards
 // and keep the "Feed type" select synced to the currently-focused feeder.
 function updateMaterialsFeederTypeUI() {
-  const typeLabel = (key) => (feederFeedType[key] === "drum" ? "DRUM" : "SPOOL");
+  const typeLabel = (key) => (feederFeedType[key] === "drum" ? "Drum" : "Spool");
   const type1El = document.getElementById("materialsSpool1Type");
   const type2El = document.getElementById("materialsSpool2Type");
   if (type1El) type1El.textContent = typeLabel("spool1");
@@ -5365,7 +5459,7 @@ function setHotspotMaterialsFocusSpool(spoolKey) {
     } else if (hotspotMaterialsFocusSpoolKey === "wiredrum") {
       hotspotContextTitleEl.textContent = "Wire Drum";
     } else {
-      hotspotContextTitleEl.textContent = "Materials";
+      hotspotContextTitleEl.textContent = t("materials.title");
     }
   }
 
@@ -6544,18 +6638,18 @@ function updateMaterialsWireDrumToggle(clampedProgress) {
   const hasWireDrum = wireDrumMaterials.length > 0;
   materialsWireDrumToggleEl.disabled = !hasWireDrum;
 
-  let label = "Connect";
+  let label = t("materials.wireDrumConnect");
   let pressed = false;
   if (!hasWireDrum) {
     // keep defaults
   } else if (wireDrumRevealTarget > progress + 1e-6) {
-    label = "Connecting…";
+    label = t("materials.wireDrumConnecting");
     pressed = true;
   } else if (wireDrumRevealTarget < progress - 1e-6) {
-    label = "Disconnecting…";
+    label = t("materials.wireDrumDisconnecting");
     pressed = false;
   } else if (progress >= 0.999) {
-    label = "Connected — tap to disconnect";
+    label = t("materials.wireDrumConnected");
     pressed = true;
   }
   materialsWireDrumToggleEl.textContent = label;
@@ -7005,6 +7099,7 @@ function animateWireDrumAppearance(deltaSeconds) {
       revealSpeed * deltaSeconds,
     );
     applyWireDrumAppearance();
+    requestRender();
   }
 
   if (!wireSpoolDoorState) {
@@ -8696,8 +8791,26 @@ function collapseFilesForPrint() {
   }
 }
 
+// True while a print is genuinely underway (homing/probe, playing, or paused) —
+// as opposed to merely "docked" (filesListCollapsedForPrint), which stays true
+// right up until the stop/complete teardown. Used to lock the bottom nav to the
+// print controls so the operator can't wander off to Files/Materials mid-print.
+function isPrintActivelyRunning() {
+  const st = printSim ? printSim.getState() : "idle";
+  return st === "playing" || st === "paused" || isPrePrintSequenceActive || inertPhase === "purging";
+}
+
 function expandFilesListForPrint() {
   if (!filesListCollapsedForPrint) {
+    return;
+  }
+  // Never un-dock while the print is actually running. Closing the cloud menu
+  // (e.g. opening Controls) used to call this and silently expanded the Files
+  // list mid-print, which brought Files/Materials back, hid the Slicer button,
+  // and stranded the operator with no way back to the print controls. Stop/
+  // complete tear the sim down to "idle" BEFORE calling this, so those legitimate
+  // un-docks still pass.
+  if (isPrintActivelyRunning()) {
     return;
   }
   filesListCollapsedForPrint = false;
@@ -9073,10 +9186,27 @@ function initMachineLink() {
 function onMachineStateChange(next) {
   if (!topbarConnectionEl) return;
   const label = {
-    disconnected: "Disconnected",
-    connecting: "Connecting…",
-  }[next] || "Connected";
-  topbarConnectionEl.textContent = label;
+    disconnected: t("topbar.disconnected"),
+    connecting: t("topbar.connecting"),
+  }[next] || t("topbar.connected");
+  // Update ONLY the label span so the status dot survives (textContent on the
+  // whole element used to wipe the dot). Toggle a state class so the dot changes
+  // colour AND shape — status is never carried by colour alone; the word is too.
+  let labelEl = topbarConnectionEl.querySelector(".connection-label");
+  if (!labelEl) {
+    const spans = topbarConnectionEl.querySelectorAll("span");
+    labelEl = spans[spans.length - 1] || null;
+    if (labelEl) labelEl.classList.add("connection-label");
+  }
+  if (labelEl) {
+    labelEl.textContent = label;
+  } else {
+    topbarConnectionEl.textContent = label;
+  }
+  topbarConnectionEl.classList.remove("conn-connected", "conn-connecting", "conn-disconnected");
+  topbarConnectionEl.classList.add(
+    next === "disconnected" ? "conn-disconnected" : next === "connecting" ? "conn-connecting" : "conn-connected",
+  );
 }
 
 // Telemetry is the source of truth while connected. The on-screen reveal still
@@ -9096,7 +9226,10 @@ function onMachineTelemetry(snap) {
     if (Math.abs(current - target) > MACHINE_PROGRESS_RESYNC_THRESHOLD
         && typeof printSim.setProgress === "function") {
       printSim.setProgress(target);
-      syncProgressUi();
+      // The print-sim panel's own 120ms interval (see initializePrintSimulation)
+      // refreshes the progress slider/label. syncProgressUi is closure-scoped
+      // there and unreachable from here — calling it threw a ReferenceError
+      // (caught by ESLint no-undef); the interval covers the refresh.
     }
   }
   // Mirror machine-driven pause/resume onto the local sim so the Play/Pause
@@ -9145,6 +9278,9 @@ async function startDockedPrint() {
   if (!printSim || slicerLoadToViewerEl?.disabled) {
     return;
   }
+  // A feeder wheel jogged from Controls ▸ Feeder must not keep spinning once a
+  // print starts — it would otherwise run unattended through the whole print.
+  setFeederDriveStop();
   hidePrintMaterialWarning();
   if (slicerLoadToViewerEl) {
     slicerLoadToViewerEl.disabled = true;
@@ -9211,7 +9347,13 @@ async function startDockedPrint() {
     }
     // If this print draws from the wire drum, reveal the drum assembly (animated).
     revealWireDrumIfActiveFeedstock();
-    applyPrintModelSubstitution(); // show the sliced model, hide the STL
+    applyPrintModelSubstitution(); // hide the solid STL; only the toolpath shows
+    // Also drop the static solid PREVIEW: once print is activated the build area
+    // must be EMPTY (no model sitting on the plate) through the homing/probe phase
+    // — the part only appears as the toolpath reveals it while "printing".
+    if (typeof printSim.setSolidPreview === "function") {
+      printSim.setSolidPreview(false);
+    }
     printSim.reset();              // begin empty, at progress 0
     setSlicerFullscreen(false);    // leave full view for the 3D scene
     collapseFilesForPrint();       // hide the Files list; dock the controls
@@ -9222,17 +9364,23 @@ async function startDockedPrint() {
     // Play the homing/probe routine, THEN start the actual print. Capturing the
     // bed baseline after homing means the print begins from the print position.
     runPrePrintHomingSequence(() => {
-      initPrintBedSimulation();      // capture nozzle tip + model height, save bed
-      printSim.play();               // visual bed trace (estimate; resynced to telemetry)
-      capturePrintViewCameraState(); // remember this framing for "Reset view"
-      if (machineConnected()) {
-        // Machine is authoritative for the actual print: command it, and let
-        // telemetry resync the on-screen reveal (onMachineTelemetry). A rejected
-        // command tears the visual down so we never animate a print that the
-        // machine refused to start.
-        commandMachinePrintStart();
-      }
-      updateBottomNavState();
+      // Deposition does not start yet: beginChamberPurge floods the chamber
+      // with argon first and only calls back once it reads fully inert (or
+      // the safety timeout fires), so the print can never start while the
+      // chamber is still purging.
+      beginChamberPurge(() => {
+        initPrintBedSimulation();      // capture nozzle tip + model height, save bed
+        printSim.play();               // visual bed trace (estimate; resynced to telemetry)
+        capturePrintViewCameraState(); // remember this framing for "Reset view"
+        if (machineConnected()) {
+          // Machine is authoritative for the actual print: command it, and let
+          // telemetry resync the on-screen reveal (onMachineTelemetry). A rejected
+          // command tears the visual down so we never animate a print that the
+          // machine refused to start.
+          commandMachinePrintStart();
+        }
+        updateBottomNavState();
+      });
     });
   } finally {
     if (slicerLoadToViewerEl) {
@@ -12947,7 +13095,7 @@ function updateTopDoorShortcutButton() {
   // Label reflects state: "Top Door" when closed, "Top Door Open" when open.
   const topLabelEl = annotationNavTopCoverEl.querySelector("span");
   if (topLabelEl) {
-    topLabelEl.textContent = isOpen ? "Top Door Open" : "Top Door";
+    topLabelEl.textContent = isOpen ? t("nav.topDoorOpen") : t("nav.topDoor");
   }
 
   const topIconEl = annotationNavTopCoverEl.querySelector("svg");
@@ -12955,6 +13103,15 @@ function updateTopDoorShortcutButton() {
   if (topIconEl && topIconEl.dataset.mode !== topIconMode) {
     topIconEl.innerHTML = isOpen ? TOP_DOOR_ICON_OPEN_SVG : TOP_DOOR_ICON_CLOSED_SVG;
     topIconEl.dataset.mode = topIconMode;
+  }
+
+  // Keep the Controls-panel Top Door button in sync (it drives the same action
+  // and is the way to open the roof while a print hides the bottom-nav button).
+  if (controlsTopCoverButtonEl) {
+    controlsTopCoverButtonEl.disabled = !hasControlData;
+    controlsTopCoverButtonEl.setAttribute("aria-pressed", isOpen ? "true" : "false");
+    controlsTopCoverButtonEl.classList.toggle("is-open", isOpen);
+    controlsTopCoverButtonEl.textContent = isOpen ? "Top Door Open" : "Top Door";
   }
 }
 
@@ -13055,6 +13212,8 @@ function updateFilesMenuDoorSeeThrough() {
       }
     }
     seeThroughDoorHiddenState.set(target.linkName, shouldHide);
+    // Opacity flip is a visible change — draw it (edge-triggered, so cheap).
+    requestRender();
   }
 
   filesSeeThroughEngaged = filesOpen;
@@ -13118,6 +13277,300 @@ function getLinkWorldCenter(linkName) {
     : new THREE.Vector3();
   linkObject.localToWorld(center);
   return center;
+}
+
+// World position of the extraction-tube MOUTH — the black cylinder standing on
+// the top-back corner of the fixed frame. Found geometrically: the only hollow
+// cylinder on the top surface (Chassis_5), a ~2.8 cm-radius rim rising to
+// z≈1.86. The plume rises in +Z out of the mouth. The tube is on the fixed
+// chassis (NOT the openable lid), so we anchor to the chassis link.
+const DUST_EXHAUST_PORT_WORLD = new THREE.Vector3(0.45, -0.202, 1.858);
+const DUST_EXHAUST_ANCHOR_LINK = "chassis_link";
+
+function initDustExhaustAnchor() {
+  if (!robotRoot) {
+    return;
+  }
+  const anchor = robotRoot.getObjectByName(`link:${DUST_EXHAUST_ANCHOR_LINK}`);
+  dustExhaust.setAnchor(anchor || null, DUST_EXHAUST_PORT_WORLD);
+  syncDustExhaustFan();
+}
+
+// Mirror the current fan on/off + speed onto the plume (density + rise scale
+// with speed; nothing emits while the fan is off).
+function syncDustExhaustFan() {
+  const speed = Math.max(0, Math.min(100, Number(fanState?.speed) || 0));
+  dustExhaust.setFan(Boolean(fanState?.on), speed / 100);
+}
+
+// --- Argon inertization fill ------------------------------------------------
+// The build chamber floods with argon while a print inerts. We render a rising
+// cool-cyan gas volume inside the chamber and fade the FRONT DOOR see-through
+// while it purges, then re-solidify the door once inert. The fill fraction is
+// driven by the real chamber O2 reading when present, else synthesized during a
+// print. Chamber interior bounds (world) measured from the front door / bed /
+// top cover; nudge if the fill ever pokes outside the chamber.
+const CHAMBER_INERT_INTERIOR = {
+  minX: -0.36, maxX: 0.37, minY: -0.30, maxY: 0.47, floorZ: 0.33, ceilZ: 1.78,
+};
+const CHAMBER_AMBIENT_O2_PPM = 209000; // ~20.9% air
+const CHAMBER_INERT_O2_PPM = 50;       // inert target (matches CHAMBER_O2_SAFE_PPM)
+
+function initChamberInertBounds() {
+  chamberInert.setBounds(CHAMBER_INERT_INTERIOR);
+}
+
+// Front-door partial see-through for the inert view (0 = solid, 1 = glassy).
+// Keeps its OWN material snapshot (rebuilt when the robot reloads) rather than
+// sharing the Files see-through cache, so the two features never entangle and a
+// partial fade is independent of the Files "fully hide" behaviour.
+let frontDoorInertEntries = null;
+let frontDoorInertEntriesRoot = null;
+function getFrontDoorInertEntries() {
+  if (frontDoorInertEntriesRoot === robotRoot && frontDoorInertEntries) {
+    return frontDoorInertEntries;
+  }
+  const entries = [];
+  const link = robotRoot ? robotRoot.getObjectByName(`link:${FRONT_DOOR_LINK}`) : null;
+  if (link) {
+    link.traverse((object3d) => {
+      if (!object3d.isMesh || !object3d.material) {
+        return;
+      }
+      const materials = Array.isArray(object3d.material) ? object3d.material : [object3d.material];
+      for (const material of materials) {
+        if (!material || entries.some((e) => e.material === material)) {
+          continue;
+        }
+        entries.push({
+          object3d,
+          material,
+          baseOpacity: typeof material.opacity === "number" ? material.opacity : 1,
+          baseTransparent: Boolean(material.transparent),
+          baseDepthWrite: material.depthWrite !== false,
+          baseColor: material.color && material.color.isColor ? material.color.clone() : null,
+          baseRenderOrder: object3d.renderOrder,
+        });
+      }
+    });
+  }
+  // Only cache a NON-EMPTY result. The robot loads its (~7.5M-tri) meshes
+  // asynchronously, so the very first call — e.g. a purge triggered moments
+  // after page load — can race the front-door link not being attached to
+  // robotRoot yet. Caching that empty miss against the (soon stale) robotRoot
+  // reference would permanently poison the door fade for the rest of the
+  // session, since nothing else invalidates it once the fade amount stops
+  // changing. Keep retrying (cheap: one getObjectByName + a single-link
+  // traverse) until the link genuinely exists.
+  if (entries.length > 0) {
+    frontDoorInertEntries = entries;
+    frontDoorInertEntriesRoot = robotRoot;
+  }
+  return entries;
+}
+
+// Draw the faded door AFTER the chamberInert gas volume (renderOrder 5, see
+// sim/chamberInert.js) so the glass overlays the gas instead of the gas — now
+// depthTest-off so it isn't sliced by interior clutter — painting over the door.
+const DOOR_INERT_FADE_RENDER_ORDER = 6;
+
+// Some door sub-materials (frame trim, handle, indicator lenses) carry a
+// saturated brand/indicator colour. At ~0.34 opacity over the bright gas +
+// scene, those read as glaring yellow/green rectangles instead of glass. Any
+// base colour with chroma (max channel - min channel) above this reads as
+// "saturated" rather than a neutral glass/metal tone, and gets neutralized
+// toward a cool glass tint while the door is faded.
+const DOOR_INERT_SATURATION_CHROMA = 0.12;
+const DOOR_INERT_GLASS_TINT = new THREE.Color(0.74, 0.83, 0.87);
+
+let frontDoorInertFadeCurrent = 0;
+let frontDoorInertFadeApplied = null;
+function applyFrontDoorInertFade(amount) {
+  const a = Math.max(0, Math.min(1, amount));
+  if (frontDoorInertFadeApplied !== null && Math.abs(frontDoorInertFadeApplied - a) < 0.01) {
+    return;
+  }
+  const entries = getFrontDoorInertEntries();
+  for (const entry of entries) {
+    if (a <= 0.001) {
+      entry.material.opacity = entry.baseOpacity;
+      entry.material.transparent = entry.baseTransparent;
+      entry.material.depthWrite = entry.baseDepthWrite;
+      entry.object3d.renderOrder = entry.baseRenderOrder;
+      if (entry.baseColor && entry.material.color) {
+        entry.material.color.copy(entry.baseColor);
+      }
+    } else {
+      entry.material.transparent = true;
+      entry.material.depthWrite = false;
+      entry.object3d.renderOrder = DOOR_INERT_FADE_RENDER_ORDER;
+      const chroma = entry.baseColor
+        ? Math.max(entry.baseColor.r, entry.baseColor.g, entry.baseColor.b)
+          - Math.min(entry.baseColor.r, entry.baseColor.g, entry.baseColor.b)
+        : 0;
+      const saturated = chroma > DOOR_INERT_SATURATION_CHROMA;
+      // Saturated panels fade further than the neutral ones (a lower opacity
+      // ceiling) AND get pulled toward a cool glass tint, so no bright swatch
+      // survives at partial fade even before it's fully desaturated.
+      entry.material.opacity = entry.baseOpacity * (1 - (saturated ? 0.82 : 0.66) * a);
+      if (saturated && entry.baseColor && entry.material.color) {
+        entry.material.color.copy(entry.baseColor).lerp(DOOR_INERT_GLASS_TINT, a);
+      }
+    }
+    entry.material.needsUpdate = true;
+  }
+  frontDoorInertFadeApplied = a;
+  requestRender();
+}
+
+// --- Inert lifecycle state machine ------------------------------------------
+// idle -> purging -> inert -> holding -> evacuating -> idle
+//
+//  idle:       no gas. target 0.
+//  purging:    entered by beginChamberPurge() (from the print-start homing
+//              callback), BEFORE deposition. target 1; door glassy. Once the
+//              chamber reads fully inert (fill >= 0.98) the gated deposition
+//              callback fires and we move to "inert" — deposition is a GATE,
+//              never concurrent with the purge. A safety timeout fires the
+//              deposition anyway if the purge ever stalls, so a print can
+//              never deadlock waiting on it.
+//  inert:      deposition running. target 1; door eased back solid so the
+//              operator watches the print; a faint steady haze remains.
+//  holding:    entered from confirmPrintComplete()/confirmStopPrint() while
+//              gas is still present. target frozen at the current fill (gas
+//              neither rises nor drains on its own); door glassy again; the
+//              front door is LOCKED (see isChamberInertLocked) until purged.
+//  evacuating: entered from holding once the fan is switched on. target 0,
+//              drain rate scales with fan speed (a stronger fan clears the
+//              chamber faster). Turning the fan off pauses the drain (back to
+//              holding — gas stops leaving, it does not refill). Once the
+//              chamber reads clear (fill <= 0.02) we return to idle and the
+//              door unlocks.
+let inertPhase = "idle";
+let pendingDepositionCallback = null;
+let purgeSafetyTimeoutId = null;
+const CHAMBER_PURGE_SAFETY_TIMEOUT_MS = 20000; // a stalled purge must never deadlock a print
+const CHAMBER_INERT_DOOR_LOCK_FILL = 0.06; // below this, don't bother blocking the door
+
+function clearPurgeSafetyTimeout() {
+  if (purgeSafetyTimeoutId !== null) {
+    window.clearTimeout(purgeSafetyTimeoutId);
+    purgeSafetyTimeoutId = null;
+  }
+}
+
+// Fire the deposition the purge was gating (once) and move to "inert".
+function releasePendingDeposition() {
+  clearPurgeSafetyTimeout();
+  const onInertReady = pendingDepositionCallback;
+  pendingDepositionCallback = null;
+  inertPhase = "inert";
+  if (typeof onInertReady === "function") {
+    onInertReady();
+  }
+}
+
+// Called by startDockedPrint's homing callback INSTEAD OF starting deposition
+// directly: floods the chamber with argon first, and only calls
+// onInertReady() once the chamber reads fully inert — or the safety timeout
+// fires, so a stalled purge can never deadlock the print.
+function beginChamberPurge(onInertReady) {
+  clearPurgeSafetyTimeout();
+  inertPhase = "purging";
+  pendingDepositionCallback = onInertReady;
+  showPrintNotice("Inerting chamber with argon…");
+  purgeSafetyTimeoutId = window.setTimeout(() => {
+    purgeSafetyTimeoutId = null;
+    if (pendingDepositionCallback) {
+      releasePendingDeposition();
+    }
+  }, CHAMBER_PURGE_SAFETY_TIMEOUT_MS);
+}
+
+// Called when a print ends — finished (confirmPrintComplete) or cancelled
+// (confirmStopPrint), including a cancel mid-purge. Cancels any purge still
+// gating a deposition (so it can never fire after the print is already gone)
+// and, if gas is still in the chamber, holds it there (door locked) until the
+// operator runs the fan to clear it out. No gas present -> straight to idle.
+function endChamberInertForPrint() {
+  clearPurgeSafetyTimeout();
+  pendingDepositionCallback = null;
+  inertPhase = chamberInert.getFill() > 0.02 ? "holding" : "idle";
+}
+
+// True while gas is present enough that the operator shouldn't open the front
+// door (purging/inert/holding/evacuating with meaningful fill). Used by
+// runBottomNavDoorToggleAction to block the open action.
+function isChamberInertLocked() {
+  return inertPhase !== "idle" && chamberInert.getFill() > CHAMBER_INERT_DOOR_LOCK_FILL;
+}
+
+// Real-feed aware target for the phases that WANT gas present (purging/inert):
+// mirrors real chamber O2 telemetry toward the inert target when available,
+// else just requests full (synthesized purge for the local sim).
+function desiredPurgeTargetFill() {
+  const o2 = chamberAtmosphere && Number.isFinite(chamberAtmosphere.o2Ppm)
+    ? chamberAtmosphere.o2Ppm : null;
+  if (o2 === null) return 1;
+  const span = CHAMBER_AMBIENT_O2_PPM - CHAMBER_INERT_O2_PPM;
+  return Math.max(0, Math.min(1, (CHAMBER_AMBIENT_O2_PPM - o2) / span));
+}
+
+function updateChamberInertSimulation(dt) {
+  // Fan-driven transitions between holding <-> evacuating.
+  const fanRunning = Boolean(fanState && fanState.on && fanState.speed > 0.5);
+  if (inertPhase === "holding" && fanRunning) {
+    inertPhase = "evacuating";
+  } else if (inertPhase === "evacuating" && !fanRunning) {
+    inertPhase = "holding"; // pause the drain — gas stops leaving, doesn't refill
+  }
+
+  let targetFill;
+  switch (inertPhase) {
+    case "purging":
+    case "inert":
+      targetFill = desiredPurgeTargetFill();
+      break;
+    case "evacuating": {
+      const speed = Math.max(0, Math.min(100, Number(fanState.speed) || 0));
+      chamberInert.setFallRate(0.06 + 0.35 * (speed / 100));
+      targetFill = 0;
+      break;
+    }
+    case "holding":
+      targetFill = chamberInert.getFill(); // frozen — neither rises nor drains
+      break;
+    case "idle":
+    default:
+      targetFill = 0;
+      break;
+  }
+  chamberInert.setTarget(targetFill);
+  chamberInert.update(dt);
+  const fill = chamberInert.getFill();
+
+  if (inertPhase === "purging" && fill >= 0.98) {
+    releasePendingDeposition(); // -> "inert", fires the gated deposition once
+  } else if (inertPhase === "evacuating" && fill <= 0.02) {
+    inertPhase = "idle";
+  }
+
+  // Door see-through by phase: glassy while purging/holding/evacuating (the
+  // operator needs to see the gas), solid while actually depositing or idle.
+  const glassy = inertPhase === "purging" || inertPhase === "holding" || inertPhase === "evacuating";
+  // Gas ignores interior clutter (reads as a full haze) exactly while the door
+  // is glassy and meant to be seen through; once the door is solid again
+  // (inert/idle) drop back to normal depth-tested occlusion so the gas doesn't
+  // keep painting over the now-opaque door and hide the print underneath.
+  chamberInert.setUnoccluded(glassy);
+  const fadeTarget = glassy ? 1 : 0;
+  frontDoorInertFadeCurrent += (fadeTarget - frontDoorInertFadeCurrent) * Math.min(1, dt / 0.5);
+  if (frontDoorInertFadeCurrent < 0.002) frontDoorInertFadeCurrent = 0;
+  applyFrontDoorInertFade(frontDoorInertFadeCurrent);
+}
+
+function chamberInertActive() {
+  return chamberInert.isActive() || frontDoorInertFadeCurrent > 0.002 || inertPhase !== "idle";
 }
 
 function getWorldLowestPointFromLocalBounds(object3d, localBounds) {
@@ -13906,6 +14359,16 @@ function buildTopCoverButtonCameraState(topCoverWorldPoint) {
 }
 
 function runTopCoverButtonAction() {
+  // The chamber is still inert (or being purged/evacuated) — the operator
+  // must run the fan to clear the argon before the top door can open. Mirrors
+  // the front-door guard in runBottomNavDoorToggleAction; covers both the
+  // bottom-nav top-door button and the Controls-panel Top Door button, since
+  // both call this same action.
+  if (!isTopCoverOpen() && isChamberInertLocked()) {
+    showPrintNotice("Chamber still inert with argon — run the fan to purge before opening the top door.");
+    return false;
+  }
+
   if (activeFeederCameraAnchorSide) {
     clearFeederFocusState();
   }
@@ -15521,6 +15984,8 @@ async function loadUrdf(urdfUrl) {
     enhanceFeederWheelMaterials();
     rebuildJointControls();
     synchronizeTopCoverControlState();
+    initDustExhaustAnchor();
+    initChamberInertBounds();
     assemblyAnnotationManager.rebuildFromRobot();
     clearFeederHeadRestoreTimeout();
     activeFeederCameraAnchorSide = null;
@@ -15531,6 +15996,8 @@ async function loadUrdf(urdfUrl) {
 
     modelStatusEl.textContent = `Model: ${parsed.robotName}`;
     meshStatusEl.textContent = "Mesh: loaded";
+    // Async load finished (may be well after the triggering click) — draw it.
+    requestRender();
 
     if (isCloudModelMenuOpen) {
       setHotspotTriggerRailVisible(true);
@@ -15644,6 +16111,7 @@ function onResize() {
   if (isControlsPanelOpen) {
     syncControlsPanelVerticalGap();
   }
+  requestRender();
 }
 
 function setControlsPanelOpen(isOpen) {
@@ -15919,9 +16387,9 @@ function renderChamberAtmosphere() {
   printCompleteAtmosphereEl.dataset.status = status;
   if (printCompleteAtmosphereNoteEl) {
     let msg = "";
-    if (status === "danger") msg = "⚠ Chamber O₂ high — atmosphere not inert. Do NOT open; keep purging argon.";
+    if (status === "danger") msg = "⚠ Chamber O₂ is high — the atmosphere isn't inert yet. Keep the door closed and keep purging argon.";
     else if (status === "warn") msg = "Chamber still purging — wait for O₂ to drop before opening.";
-    else if (status === "safe") msg = "✓ Atmosphere inert — safe to open once cooled.";
+    else if (status === "safe") msg = "✓ Atmosphere is inert — safe to open once the part has cooled.";
     printCompleteAtmosphereNoteEl.textContent = msg;
     printCompleteAtmosphereNoteEl.hidden = !msg;
     printCompleteAtmosphereNoteEl.dataset.status = status;
@@ -15939,6 +16407,34 @@ function formatPrintDuration(seconds) {
     return `${Math.floor(totalMin / 60)}h ${totalMin % 60}m`;
   }
   return totalMin > 0 ? `${totalMin}m ${sec}s` : `${sec}s`;
+}
+
+// Absolute wall-clock finish estimate for a running print — complements the
+// relative ETA with "when will it be done" ("Finishes 14:32", "Finishes tomorrow
+// 08:15", "Finishes Wed 19:40", "Finishes Aug 03 06:00"). 24h clock to match the
+// topbar clock. Empty string when the remaining time is unknown / non-positive.
+function formatPrintFinishClock(remainingSeconds) {
+  const s = Number(remainingSeconds);
+  if (!Number.isFinite(s) || s <= 0) {
+    return "";
+  }
+  const now = new Date();
+  const finish = new Date(now.getTime() + s * 1000);
+  const time = finish.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+  // Whole-calendar-day difference (not a 24h-bucket difference) so an 11pm→1am
+  // print reads "tomorrow", not "today".
+  const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const dayDelta = Math.round((startOfDay(finish) - startOfDay(now)) / 86400000);
+  if (dayDelta <= 0) {
+    return `Finishes ${time}`;
+  }
+  if (dayDelta === 1) {
+    return `Finishes tomorrow ${time}`;
+  }
+  if (dayDelta < 7) {
+    return `Finishes ${finish.toLocaleDateString([], { weekday: "short" })} ${time}`;
+  }
+  return `Finishes ${finish.toLocaleDateString([], { day: "2-digit", month: "short" })} ${time}`;
 }
 
 // ── Print-complete summary + accept/reset ──────────────────────────────────
@@ -16018,9 +16514,15 @@ function confirmPrintComplete() {
   closePrintCompleteModal();
   printCompletionHandled = false;
   cancelPrePrintSequence();
+  setFeederDriveStop(); // don't leave a manually-jogged feeder wheel spinning
+  // Print finished: if the chamber still has argon in it, hold it there
+  // (door locked) until the operator runs the fan to purge it out.
+  endChamberInertForPrint();
   setSlicerMenuOpen(false);
+  // Fully drop the sim source (see confirmStopPrint) so the next print re-prepares
+  // and re-places from a clean baseline rather than reusing this job's placement.
   if (printSim && printSim.getState() !== "idle") {
-    printSim.reset();
+    printSim.stop();
   }
   clearCloudStlObject();       // the part disappears from eje_x / eje_y
   expandFilesListForPrint();
@@ -16028,16 +16530,30 @@ function confirmPrintComplete() {
   if (slicerLoadToViewerEl) {
     slicerLoadToViewerEl.disabled = false;
   }
-  const ejeX = getJointStateByName(EJE_X_JOINT);
-  const ejeY = getJointStateByName(EJE_Y_JOINT);
-  if (ejeX && ejeX.kind === "linear") {
-    moveJointToValue(ejeX, millimetersToMeters(PRINT_POSITION_X_MM));
-  }
-  if (ejeY && ejeY.kind === "linear") {
-    moveJointToValue(ejeY, millimetersToMeters(PRINT_POSITION_Y_MM));
-  }
+  resetGantryToPrintPosition();
   updateBottomNavState();
   applyFilesMenuOpenDoorAndCameraBehavior();
+}
+
+// Return all three part-carrying prismatic joints (X, Y AND the vertical Z) to the
+// canonical print position, so every print starts the pre-print homing + bead-pin
+// convergence from the SAME baseline. Resetting only X/Y (leaving Z at the last
+// print's descended height) is what left the first bead of a post-stop reprint
+// hanging in mid-air below the nozzle.
+function resetGantryToPrintPosition() {
+  const mm = millimetersToMeters;
+  const ejeX = getJointStateByName(EJE_X_JOINT);
+  const ejeY = getJointStateByName(EJE_Y_JOINT);
+  const zAxis = getJointStateByName(Z_AXIS_JOINT);
+  if (ejeX && ejeX.kind === "linear") {
+    moveJointToValue(ejeX, mm(PRINT_POSITION_X_MM));
+  }
+  if (ejeY && ejeY.kind === "linear") {
+    moveJointToValue(ejeY, mm(PRINT_POSITION_Y_MM));
+  }
+  if (zAxis && zAxis.kind === "linear") {
+    moveJointToValue(zAxis, mm(PRINT_POSITION_Z_MM));
+  }
 }
 
 function buildPrintStopSummary(progress) {
@@ -16114,6 +16630,11 @@ function confirmStopPrint() {
   closePrintPauseNotice();
   setSlicerMenuOpen(false);  // close the Slicer flyout so it can't linger
   cancelPrePrintSequence(); // stop the homing routine if it's still running
+  setFeederDriveStop(); // don't leave a manually-jogged feeder wheel spinning
+  // Print cancelled — possibly mid-purge. Cancel any purge still gating a
+  // deposition (it must never fire after the print is gone) and, if the
+  // chamber still has argon in it, hold it there (door locked) until purged.
+  endChamberInertForPrint();
 
   // Machine is authoritative: command the real stop. Fire-and-forget with a
   // logged failure — the visual teardown below proceeds either way, but a failed
@@ -16136,8 +16657,13 @@ function confirmStopPrint() {
     simStateAtStop === "completed";
   const stopSummary = hadPrintProgress ? buildPrintStopSummary(progressAtStop) : null;
 
+  // Fully tear down the sim (drop the toolpath source + buffers), NOT just
+  // reset() — otherwise the stopped print's stale toolpath source survives and
+  // the NEXT model's "Start print" can reuse its placement (warmToolpathReady),
+  // leaving the fresh part hanging in mid-air below the nozzle. stop() forces the
+  // next selection to re-prepare + re-place from a clean slate.
   if (printSim && printSim.getState() !== "idle") {
-    printSim.reset();
+    printSim.stop();
   }
   // Reset the scene: stop the bed tracing AND remove the STL/sliced model from the
   // scene entirely (clearCloudStlObject tears down the bed sim, disposes the
@@ -16145,19 +16671,15 @@ function confirmStopPrint() {
   // Files list — no model in the viewport.
   clearCloudStlObject();
   expandFilesListForPrint();
-  // eje_x / eje_y return to the print position, ready for the next print.
-  const ejeX = getJointStateByName(EJE_X_JOINT);
-  const ejeY = getJointStateByName(EJE_Y_JOINT);
-  if (ejeX && ejeX.kind === "linear") {
-    moveJointToValue(ejeX, millimetersToMeters(PRINT_POSITION_X_MM));
-  }
-  if (ejeY && ejeY.kind === "linear") {
-    moveJointToValue(ejeY, millimetersToMeters(PRINT_POSITION_Y_MM));
-  }
+  // eje_x / eje_y / z_axis all return to the print position, ready for the next
+  // print. The vertical z_axis MUST be reset too (not just X/Y): leaving it at the
+  // previous print's descended height made the next print's start-pose solve land
+  // differently and clamp, hanging the first bead below the nozzle.
+  resetGantryToPrintPosition();
   updateBottomNavState();
   // Swing the camera back to the Files-menu top-angle view so the user lands in
   // the file browser looking into the (now empty) build area. Safe here: the sim
-  // is idle after reset(), so this won't fight an active print's framing.
+  // is idle after stop(), so this won't fight an active print's framing.
   applyFilesMenuOpenDoorAndCameraBehavior();
   // Report what was printed / deposited before the stop, and log the partial
   // material used to the usage history.
@@ -16195,15 +16717,26 @@ function updateTopbarPrintProgress() {
   const pctText = `${pct}%`;
   if (pctEl && pctEl.textContent !== pctText) pctEl.textContent = pctText;
   if (barEl) barEl.style.width = pctText;
+  const remainSec = Math.max(0, Math.round(total * (1 - progress)));
   let etaText;
   if (state === "paused") {
     etaText = "Paused";
   } else if (Number.isFinite(total) && total > 0) {
-    etaText = `ETA ${formatPrintDuration(Math.max(0, Math.round(total * (1 - progress))))}`;
+    etaText = `ETA ${formatPrintDuration(remainSec)}`;
   } else {
     etaText = "ETA —";
   }
   if (etaEl && etaEl.textContent !== etaText) etaEl.textContent = etaText;
+  // Absolute "finishes at <clock time>" estimate alongside the relative ETA.
+  // Hidden while paused (no meaningful finish moment) or when the total is unknown.
+  const finishEl = document.getElementById("topbarPrintFinish");
+  if (finishEl) {
+    const finishText =
+      state !== "paused" && Number.isFinite(total) && total > 0
+        ? formatPrintFinishClock(remainSec)
+        : "";
+    if (finishEl.textContent !== finishText) finishEl.textContent = finishText;
+  }
   el.classList.toggle("is-paused", state === "paused");
 }
 
@@ -16231,7 +16764,7 @@ function updateBottomNavState() {
     navFilesToggleEl.setAttribute("aria-label", "Files");
 
     if (navFilesLabelEl) {
-      navFilesLabelEl.textContent = "Files";
+      navFilesLabelEl.textContent = t("nav.files");
     }
 
     if (navFilesIconEl) {
@@ -16263,10 +16796,10 @@ function updateBottomNavState() {
     navPlayToggleEl.disabled = !showPlay;
     navPlayToggleEl.setAttribute("aria-pressed", isSimPlaying ? "true" : "false");
     navPlayToggleEl.classList.toggle("is-active", isSimPlaying);
-    navPlayToggleEl.setAttribute("aria-label", isSimPlaying ? "Pause" : "Play");
+    navPlayToggleEl.setAttribute("aria-label", t(isSimPlaying ? "nav.pause" : "nav.play"));
     const playLabelEl = navPlayToggleEl.querySelector("span");
     if (playLabelEl) {
-      playLabelEl.textContent = isSimPlaying ? "Pause" : "Play";
+      playLabelEl.textContent = t(isSimPlaying ? "nav.pause" : "nav.play");
     }
     // While paused, the Play button gently pulses green to invite resuming.
     navPlayToggleEl.classList.toggle("is-paused-pulse", showPlay && simState === "paused");
@@ -16279,11 +16812,15 @@ function updateBottomNavState() {
     navMaterialsToggleEl.classList.toggle("is-active", isMaterialsMenuOpen);
     navMaterialsToggleEl.disabled = false;
     const matIconEl = navMaterialsToggleEl.querySelector("svg");
-    if (matIconEl && matIconEl.dataset.mode !== "spool") {
-      // Constant spool glyph; the active state lights it accent + spins it a
-      // quarter-turn via CSS (see #navMaterialsToggle svg), no glyph swap.
-      matIconEl.innerHTML = SPOOL_ICON_OUTLINE_SVG;
-      matIconEl.dataset.mode = "spool";
+    if (matIconEl) {
+      // Isometric cube-family glyph (2026-08): idle cube vs. active (menu
+      // open) right face lifted in accent — same swap pattern as Open Door /
+      // Top Door / Files above.
+      const matIconMode = isMaterialsMenuOpen ? "materials-active" : "materials-idle";
+      if (matIconEl.dataset.mode !== matIconMode) {
+        matIconEl.innerHTML = isMaterialsMenuOpen ? MATERIALS_ICON_ACTIVE_SVG : MATERIALS_ICON_IDLE_SVG;
+        matIconEl.dataset.mode = matIconMode;
+      }
     }
   }
 
@@ -16318,7 +16855,7 @@ function updateBottomNavState() {
       navDoorToggleEl.setAttribute("aria-pressed", "false");
       navDoorToggleEl.setAttribute("aria-label", "Stop print");
       if (labelEl) {
-        labelEl.textContent = "Stop";
+        labelEl.textContent = t("nav.stop");
       }
       if (iconEl && iconEl.dataset.mode !== "stop") {
         iconEl.innerHTML = NAV_DOOR_ICON_STOP_SVG;
@@ -16334,7 +16871,7 @@ function updateBottomNavState() {
       navDoorToggleEl.classList.toggle("is-door-closed", !isOpen);
       // Label reflects state: closed shows the "Open Door" action, open shows
       // the "Door Open" status (per request), not a "Close Door" action.
-      const doorLabel = isOpen ? "Door Open" : "Open Door";
+      const doorLabel = isOpen ? t("nav.doorOpen") : t("nav.openDoor");
       navDoorToggleEl.setAttribute("aria-label", doorLabel);
       if (labelEl) {
         labelEl.textContent = doorLabel;
@@ -16356,12 +16893,25 @@ function runBottomNavDoorToggleAction() {
     return didClose;
   }
 
+  // The chamber is still inert (or being purged/evacuated) — the operator
+  // must run the fan to clear the argon before the door can open.
+  if (isChamberInertLocked()) {
+    showPrintNotice("Chamber still inert with argon — run the fan to purge before opening the door.");
+    return false;
+  }
+
   const didOpen = runFrontDoorButtonAction(controls.target);
   updateBottomNavState();
   return didOpen;
 }
 
 function runBottomNavMaterialsAction() {
+  // Locked during an active print: switching to Materials would leave the print
+  // controls with no way back.
+  if (isPrintActivelyRunning()) {
+    showPrintNotice("Stop the print to open Materials.");
+    return false;
+  }
   const nextIsOpen = !isMaterialsMenuOpen;
   if (!nextIsOpen) {
     setMaterialsMenuOpen(false, {
@@ -16467,6 +17017,12 @@ function closeFilesMenuAndResetView(options = {}) {
 }
 
 function runBottomNavFilesToggleAction() {
+  // Locked during an active print: switching to Files would leave the print
+  // controls with no way back.
+  if (isPrintActivelyRunning()) {
+    showPrintNotice("Stop the print to open Files.");
+    return false;
+  }
   // If the list was collapsed after a slice (part revealed), tapping Files just
   // brings the list back — it does not close the menu.
   if (isCloudModelMenuOpen && filesListCollapsedForPrint) {
@@ -16545,14 +17101,18 @@ function animate(nowMs = performance.now()) {
   updateInteractionQuality(nowMs);
   updateCloudPrintSimulation(deltaSeconds);
   printSim?.update(deltaSeconds);
+  dustExhaust.update(deltaSeconds);
+  updateChamberInertSimulation(deltaSeconds);
   const controlsChanged = controls.update();
   const sceneViewShiftActive = updateSceneViewShift(deltaSeconds);
   updateSpoolAssemblyHighlight(nowMs);
   updateFeederWheelFloatingControls();
 
-  // Render every frame while anything is moving; otherwise fall back to the idle
-  // heartbeat so a heavy static scene stops pegging the GPU. Cheap per-frame
-  // state updates above still run every frame — only the draw is throttled.
+  // On-demand draw: render while anything is moving (sceneActive) OR when a
+  // one-off/async change requested it (renderDirty, e.g. a joint move, drum fade,
+  // door see-through flip, model/texture load, resize). When idle and nothing is
+  // dirty, NO WebGL draw is issued. Cheap per-frame state updates above still run
+  // every frame — only the draw is gated.
   const sceneActive =
     controlsChanged ||
     sceneViewShiftActive ||
@@ -16561,10 +17121,12 @@ function animate(nowMs = performance.now()) {
     cameraTransitionState !== null ||
     jointControlTransitions.size > 0 ||
     Math.abs(materialsModelLiftCurrentM - materialsModelLiftTargetM) > 1e-5 ||
-    (printSim ? printSim.getState() === "playing" : false);
-  if (sceneActive || (nowMs - lastMainRenderMs) >= IDLE_RENDER_INTERVAL_MS) {
+    (printSim ? printSim.getState() === "playing" : false) ||
+    dustExhaust.isActive() ||
+    chamberInertActive();
+  if (sceneActive || renderDirty) {
     renderer.render(scene, camera);
-    lastMainRenderMs = nowMs;
+    renderDirty = false;
     assemblyAnnotationManager.update(nowMs);
     viewCubeController?.update();
     feederPreviewController?.update(nowMs);
@@ -16694,6 +17256,14 @@ for (const settingsButtonEl of [
     }
 
     if (settingsButtonEl === settingsSensorsButtonEl) {
+      // Same print-lock guard as the bottom-nav Files toggle — this opens the
+      // same Cloud/Files menu, so it must not bypass the lock that keeps the
+      // print controls reachable.
+      if (isPrintActivelyRunning()) {
+        showPrintNotice("Stop the print to open Files.");
+        setTopbarSettingsMenuOpen(false);
+        return;
+      }
       setCloudModelMenuOpen(true);
       setTopbarSettingsMenuOpen(false);
       setMotionStatus("Sensors panel opened");
@@ -16942,6 +17512,14 @@ if (topbarNotificationsToggleEl) {
       setTopbarSettingsMenuOpen(false);
     }
     setNotificationCenterOpen(!isNotificationCenterOpen);
+  });
+}
+
+if (notificationCenterCloseEl) {
+  notificationCenterCloseEl.addEventListener("click", (event) => {
+    markUserActivity();
+    event.stopPropagation();
+    setNotificationCenterOpen(false);
   });
 }
 
@@ -17203,6 +17781,34 @@ if (feederDriveDownEl) {
     markUserActivity();
     setFeederDriveVertical("down");
   });
+}
+
+// Controls ▸ Feeder panel per-wheel jog: each button is a TOGGLE. Clicking the
+// wheel+direction that is already driving stops it; otherwise it starts (or
+// switches) that wheel in that direction via runFeederFloatingCommand().
+function runFeederJogToggle(side, direction) {
+  markUserActivity();
+  if (feederDriveSide === side && feederDriveVertical === direction) {
+    setFeederDriveStop();
+    return;
+  }
+  runFeederFloatingCommand(side, direction);
+}
+
+if (feederJogLeftUpEl) {
+  feederJogLeftUpEl.addEventListener("click", () => runFeederJogToggle("left", "up"));
+}
+
+if (feederJogLeftDownEl) {
+  feederJogLeftDownEl.addEventListener("click", () => runFeederJogToggle("left", "down"));
+}
+
+if (feederJogRightUpEl) {
+  feederJogRightUpEl.addEventListener("click", () => runFeederJogToggle("right", "up"));
+}
+
+if (feederJogRightDownEl) {
+  feederJogRightDownEl.addEventListener("click", () => runFeederJogToggle("right", "down"));
 }
 
 if (hotspotFeederDriveLeftEl) {
@@ -17587,6 +18193,17 @@ if (feederCameraAnchorLeftEl) {
   });
 }
 
+// The Feeder View button's `.disabled` is driven by hasModel (see
+// updateFeederCameraAnchorButtons), independently of the permission gate that
+// now also wraps it (#feederDriveSection has data-requires-permission). The
+// permission module snapshots/restores `.disabled` around deny/grant, so a
+// deny captured before the model finished loading would otherwise leave the
+// button stuck disabled after signing in. Re-run our own update on every
+// permission change so the hasModel-driven state always wins last.
+if (window.MeltioPermissions && typeof window.MeltioPermissions.onChange === "function") {
+  window.MeltioPermissions.onChange(() => updateFeederCameraAnchorButtons());
+}
+
 if (feederCameraAnchorRightEl) {
   feederCameraAnchorRightEl.addEventListener("click", () => {
     markUserActivity();
@@ -17942,6 +18559,13 @@ if (controlsSidebarToggleEl) {
   });
 }
 
+if (controlsPanelCloseEl) {
+  controlsPanelCloseEl.addEventListener("click", () => {
+    markUserActivity();
+    setControlsPanelOpen(false);
+  });
+}
+
 if (topbarPanToggleEl) {
   topbarPanToggleEl.addEventListener("click", () => {
     markUserActivity();
@@ -18018,12 +18642,24 @@ function refreshChillerSettingsUI() {
   if (flowVal) flowVal.textContent = chillerState.on ? `${chillerFlowLpm(chillerState.flow).toFixed(1)} L/min` : "0.0 L/min";
 }
 
+// If the chamber is holding gas (door locked, waiting to be purged) and the
+// operator switches the fan on at too low a speed, updateChamberInertSimulation's
+// holding -> evacuating transition (which requires fanState.speed > 0.5) never
+// fires — the fan reads "on" but nothing happens and the door stays locked
+// forever with no visible path out. Floor the speed to a usable purge rate in
+// that case and say so.
+const FAN_MIN_PURGE_SPEED_PCT = 30;
 function setFanOn(on) {
   isTopbarFanEnabled = on;
   fanState.on = on;
+  if (on && inertPhase === "holding" && fanState.speed <= 0.5) {
+    fanState.speed = FAN_MIN_PURGE_SPEED_PCT;
+    showPrintNotice("Fan speed raised to purge the chamber — clearing the argon.");
+  }
   setTopbarUtilityToggleState(topbarFanToggleEl, on);
   syncTopbarUtilityErrorNotifications();
   applyFanSpin();
+  syncDustExhaustFan();
   refreshFanSettingsUI();
   persistUtilitySettings();
 }
@@ -18101,6 +18737,7 @@ document.getElementById("fanSettingsSpeed")?.addEventListener("input", (e) => {
   fanState.speed = Number(e.target.value) || 0;
   if (fanState.mode === "auto") { fanState.mode = "manual"; }
   applyFanSpin();
+  syncDustExhaustFan();
   refreshFanSettingsUI();
   persistUtilitySettings();
 });
@@ -18208,6 +18845,7 @@ attachNumpadToValue(document.getElementById("fanSettingsSpeedValue"), () => ({
     fanState.speed = n;
     if (fanState.mode === "auto") fanState.mode = "manual";
     applyFanSpin();
+    syncDustExhaustFan();
     refreshFanSettingsUI();
     persistUtilitySettings();
   },
@@ -18284,6 +18922,14 @@ function canOperateMotion() {
 }
 function jogMoveAxis(axis, dir) {
   if (!canOperateMotion()) return;
+  // The jog D-pad drives the same joints (EJE_X/EJE_Y/Z_AXIS) the print-sim
+  // pins while a print is underway — jogging mid-print would corrupt the
+  // running toolpath. The Top Door sub-control in the same panel stays
+  // usable; only axis motion is blocked.
+  if (isPrintActivelyRunning()) {
+    showPrintNotice("Stop the print to jog the axes.");
+    return;
+  }
   const name = MOVE_AXIS_JOINT[axis];
   const state = name ? getJointStateByName(name) : null;
   if (!state) return;
@@ -18303,6 +18949,12 @@ function jogMoveAxis(axis, dir) {
 }
 function homeMoveAxes(which) {
   if (!canOperateMotion()) return;
+  // Same print-safety gate as jogMoveAxis — homing mid-print would corrupt
+  // the running toolpath.
+  if (isPrintActivelyRunning()) {
+    showPrintNotice("Stop the print to jog the axes.");
+    return;
+  }
   const axes = which === "z" ? ["z"] : ["x", "y"];
   let moved = false;
   for (const axis of axes) {
@@ -18345,7 +18997,10 @@ if (navControlsToggleEl) {
   navControlsToggleEl.addEventListener("click", () => {
     markUserActivity();
     const nextIsOpen = !isControlsPanelOpen;
-    if (nextIsOpen) {
+    // While a print is docked, the "cloud menu" hosts the print controls — closing
+    // it would un-dock the print and strand the operator (no Slicer/Stop bar). So
+    // only clear the Files/Materials menus when opening Controls outside a print.
+    if (nextIsOpen && !filesListCollapsedForPrint) {
       setCloudModelMenuOpen(false, { skipResetOnClose: true });
       setMaterialsMenuOpen(false, { skipBottomNavUpdate: true });
     }
@@ -18543,6 +19198,16 @@ if (quickFrontDoorToggleEl) {
 
 if (annotationNavTopCoverEl) {
   annotationNavTopCoverEl.addEventListener("click", () => {
+    markUserActivity();
+    runTopCoverButtonAction();
+    updateTopDoorShortcutButton();
+  });
+}
+
+// Controls-panel Top Door button: same open/close action as the bottom-nav one,
+// but usable during a docked print (when the nav button is hidden).
+if (controlsTopCoverButtonEl) {
+  controlsTopCoverButtonEl.addEventListener("click", () => {
     markUserActivity();
     runTopCoverButtonAction();
     updateTopDoorShortcutButton();
@@ -18857,6 +19522,23 @@ function initializePrintSimulation() {
     }
   }
 
+  // Fallback status copy keyed by sim state (see sim/simState.js SimState), used
+  // by updateButtons so the status line always reflects panelEl.dataset.simState
+  // instead of going stale — e.g. printSim.stop() (Stop print / print complete
+  // teardown) drops straight back to "idle" with no dedicated status message of
+  // its own, which used to leave a stale "print complete"/"printing..." line
+  // showing after the print was already gone.
+  const PRINT_SIM_STATUS_TEXT_BY_STATE = {
+    idle: "Select a model, then Slice",
+    loadingModel: "Loading model…",
+    slicing: "Slicing…",
+    ready: "Sliced — ready to print",
+    playing: "Printing…",
+    paused: "Paused",
+    completed: "Print complete",
+    error: "Something went wrong — try again",
+  };
+
   // Populate the Slicer-flyout profile picker from the slicer's own profile list
   // (via the same-origin /api/slicer/profiles proxy). The picker chooses which
   // machine/material profile the slice uses; it hides itself when no slicer is
@@ -18924,7 +19606,7 @@ function initializePrintSimulation() {
         printSim.stop();
       }
       teardownPrintBedSimulation();
-      setPanelStatus(`Profile: ${value} — Prepare to slice`);
+      setPanelStatus(`Profile: ${value} — press Slice to apply`);
     });
   }
 
@@ -18960,6 +19642,11 @@ function initializePrintSimulation() {
     if (panelEl) {
       panelEl.dataset.simState = resolved;
     }
+    // Sync the status line to the real state on every transition. Any more
+    // specific message the sim engine pushes via onStatus (e.g. "sliced: 12
+    // layers") is set right after state.set() in the same call, so it still
+    // wins the same turn — this only fills the gaps (e.g. after stop()).
+    setPanelStatus(PRINT_SIM_STATUS_TEXT_BY_STATE[resolved] || "");
     syncProgressUi();
     // Keep the bottom Play button (owned by updateBottomNavState) in sync with
     // the sim state, so it appears exactly when a slice becomes ready and

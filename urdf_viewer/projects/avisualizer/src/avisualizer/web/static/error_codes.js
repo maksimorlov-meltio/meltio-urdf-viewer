@@ -87,6 +87,17 @@
     return `errcode-${cls}-${code}`;
   }
 
+  // Where "Resolve" should take the operator to make the fix. Maps a fault's
+  // module to a Settings destination the viewer's goToNotificationIssue knows.
+  const FIX_TARGET_BY_MODULE = {
+    "200": "diagnostics",        // Engine/chiller/flow/fans/comms → Settings
+    "103": "settings-calibrate", // Laser Control Unit → Calibrate / service
+    "106": "settings-calibrate", // Process/head/laser → Calibrate
+    "108": "settings-calibrate", // Load cell / protection glass → Calibrate
+    "10F": "gas-control",        // Argon flow/pressure → Settings (gas)
+    "11F": "gas-control",        // Oxygen / inert bubble → Settings (gas)
+  };
+
   // Raise a live code: enrich via the catalog and push to the Notification
   // Center; a safety error also halts the print UI. Returns the resolved entry.
   function raise(cls, code) {
@@ -112,6 +123,7 @@
         source: moduleName,
         possibleCauses: entry.cause || "",
         recommendedAction: remediation.length ? remediation.join(" • ") : "Follow standard procedure.",
+        relatedScreen: FIX_TARGET_BY_MODULE[entry.module] || "diagnostics",
         canAcknowledge: true,
         canResolveManually: true,
         icon: cls === "error" ? "emergency" : "warning",

@@ -1,0 +1,134 @@
+/* Machine program library panel — a read-only browse list shown in the Files menu
+ * when the viewer is connected to a real machine (see machine_library.js). Loaded
+ * only when a machine is configured, so it never affects the standalone demo.
+ * Kept out of the bundled app CSS on purpose: it is an optional, self-contained
+ * add-on that layers on top of the existing Files-menu styling. */
+.machine-library-panel {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.machine-library-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.machine-library-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ui-text, #f2f2f2);
+}
+.machine-library-refresh {
+  appearance: none;
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid var(--ui-border, #3a3a3a);
+  color: var(--ui-text-muted, #9e9e9e);
+  border-radius: 6px;
+  padding: 3px 9px;
+  font: inherit;
+  font-size: 12px;
+}
+.machine-library-refresh:hover {
+  color: var(--ui-text, #f2f2f2);
+  border-color: var(--ui-accent, #ff6a00);
+}
+.machine-library-status {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ui-text-muted, #9e9e9e);
+}
+.machine-library-group-label {
+  margin: 6px 0 2px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ui-text-muted, #9e9e9e);
+}
+.machine-library-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.machine-library-row {
+  display: grid;
+  grid-template-columns: 44px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  padding: 6px 8px;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  border: 1px solid var(--ui-border, #333);
+  border-radius: 8px;
+  background: var(--ui-panel-2, rgba(255, 255, 255, 0.03));
+}
+.machine-library-row:hover,
+.machine-library-row:focus-visible {
+  border-color: var(--ui-accent, #ff6a00);
+  outline: none;
+}
+.machine-library-thumb,
+.machine-library-thumb-fallback {
+  width: 44px;
+  height: 44px;
+  border-radius: 6px;
+  flex: 0 0 auto;
+  background: var(--ui-panel-3, rgba(255, 255, 255, 0.06));
+}
+.machine-library-thumb {
+  object-fit: cover;
+}
+.machine-library-thumb-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ui-text-muted, #9e9e9e);
+  font-size: 18px;
+}
+.machine-library-body {
+  min-width: 0;
+}
+.machine-library-name {
+  font-size: 13px;
+  color: var(--ui-text, #f2f2f2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.machine-library-meta {
+  font-size: 11px;
+  color: var(--ui-text-muted, #9e9e9e);
+}
+.machine-library-tag {
+  align-self: center;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--ui-border, #333);
+  color: var(--ui-text-muted, #9e9e9e);
+  white-space: nowrap;
+}
+.machine-library-tag.is-cloud {
+  color: var(--ui-accent, #ff6a00);
+  border-color: var(--ui-accent, #ff6a00);
+}
+.machine-library-preview {
+  grid-column: 1 / -1;
+  margin-top: 6px;
+}
+.machine-library-preview img {
+  max-width: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--ui-border, #333);
+}

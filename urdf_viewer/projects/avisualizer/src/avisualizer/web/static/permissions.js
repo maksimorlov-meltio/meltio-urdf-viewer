@@ -3,8 +3,8 @@
 // Users sign in with a username + password. The backend (/api/auth/login)
 // validates the credentials against the users table (salted PBKDF2 hashes that
 // never reach the browser) and returns the user's MODE LEVEL — one of the roles
-// in the permission matrix (Operator, Operator+, Meltio Support, God). The level
-// grants a set of capability keys; controls opt into gating via
+// in the permission matrix (Operator, Operator+, Meltio Support, Administrator).
+// The level grants a set of capability keys; controls opt into gating via
 // `data-requires-permission="<key>"` (+ `data-perm-hide` to hide when denied).
 //
 // Signed out = a locked/guest state (no elevated permissions). The console opens
@@ -13,7 +13,9 @@
 // avatar next to "M600-PRO-1" and in Settings. Sessions auto-expire after idle.
 //
 // Config (roles + public user list, NO password hashes) is served by
-// /api/permissions/config; God-level users can edit the matrix/modes there.
+// /api/permissions/config; Administrator-level users can edit the matrix/modes
+// there. (isGod()/admin.users below are the internal full-access check — kept
+// as-is; only the human-visible "God Mode" label was renamed to "Administrator".)
 (function () {
   "use strict";
 
@@ -42,7 +44,7 @@
     { group: "Monitoring", key: "data.read", label: "Read machine data & settings" },
     { group: "Monitoring", key: "notifications.manage", label: "Manage notifications" },
     { group: "Monitoring", key: "calendar.edit", label: "Edit calendar" },
-    { group: "Admin", key: "admin.users", label: "Manage modes & permissions (God)" },
+    { group: "Admin", key: "admin.users", label: "Manage modes & permissions (full access)" },
   ];
 
   let config = { roles: [], users: [] };
@@ -319,7 +321,7 @@
           setUser(data.user);
           return;
         }
-        error = res.status === 401 ? "Username or password not recognised."
+        error = res.status === 401 ? "Username or password not recognized."
           : (res.status === 404 || res.status === 405) ? "Sign-in service unavailable — the viewer server may need a restart."
           : "Sign-in failed. Try again.";
       } catch (_e) {
