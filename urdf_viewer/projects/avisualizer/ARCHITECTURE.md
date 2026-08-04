@@ -130,6 +130,16 @@ the repo root when the FastAPI backend moves to `apps/dev-host/`.
 - **`ports/slicerClient.js`** — HTTP client to the slicer backend
   (`sliceByName()`); degrades gracefully if the slicer is unreachable.
 - **`state/machineState.js`** — the HARDWARE state model + legal transitions.
+- **`state/materialsState.js`** — the pure materials/feedstock data core
+  (catalog, per-spool assignments and gram accounting, usage log, persistence).
+- **`materials.js`** — every materials UI surface (hotspot panel, Files pane,
+  bottom-nav popup): rendering, validation, the blocked-print/reassign flow and
+  listeners. Named exports under the old god-file identifiers (live bindings);
+  scene edges (spool highlight, wire drum, model lift) injected via
+  `initMaterialsUi(deps)`.
+- **`calendar.js`**, **`notifications.js`**, **`settings.js`** — the
+  maintenance calendar, the notification center/toasts/bell, and the settings
+  menu + Advanced mode (factories `createXxxUi(deps)` instantiated at boot).
 - **`prePrintCheck.js`** — the pre-print material/signal gate dialog.
 - **`permissions.js`**, **`error_codes.js`**, **`i18n/`** — sign-in/roles UI,
   fault-code catalog, translations (classic scripts / DOM hydration).
