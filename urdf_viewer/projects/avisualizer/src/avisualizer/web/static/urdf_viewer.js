@@ -34,6 +34,40 @@ import { t, applyDomTranslations } from "./hmi/i18n/index.js";
 import { createCalendarUi, formatCalendarDateTime } from "./hmi/calendar.js";
 import { createNotificationsUi } from "./hmi/notifications.js";
 import { createSettingsUi } from "./hmi/settings.js";
+import {
+  initMaterialsState,
+  setSelectedPrintJobUsage,
+  MELTIO_MATERIAL_LIBRARY,
+  MATERIAL_FEEDSTOCK_KEYS,
+  SPOOL_LOW_THRESHOLD_GRAMS,
+  DEFAULT_PRINT_JOB_USAGE_GRAMS,
+  DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY,
+  hotspotMaterialAssignments,
+  spoolManualAmountGramsByKey,
+  spoolUsedAmountGramsByKey,
+  spoolRemainingAmountGramsByKey,
+  lastPrintUsedGramsBySpool,
+  materialUsageLog,
+  getMaterialSpecById,
+  getMaterialLabelById,
+  normalizeSpoolKey,
+  getSpoolDisplayLabel,
+  isKnownMaterialId,
+  parseMaterialAmountInput,
+  setSpoolAmountState,
+  persistMaterialsState,
+  restorePersistedMaterialsState,
+  getSelectedPrintJobRequiredGrams,
+  getSpoolRemainingAmountText,
+  getSpoolInitialAmountText,
+  getSpoolUsedAmountText,
+  getSpoolStatusState,
+  formatGramsText,
+  selectedPrintJobEstimatedGrams,
+  selectedPrintJobActualGrams,
+  getMaterialChipColor,
+  recordMaterialUsage,
+} from "./hmi/state/materialsState.js";
 
 // Assigned at the boot section below (their inits read scene/DOM state);
 // every earlier reference lives inside listeners/arrows that run post-boot.
@@ -734,31 +768,6 @@ const SPOOL_HIGHLIGHT_RING_PULSE_OPACITY = 0.3;
 const SPOOL_HIGHLIGHT_RING_TUBE_RADIUS = 0.075;
 const SPOOL_HIGHLIGHT_RING_RADIUS_SCALE = 1.03;
 const SPOOL_HIGHLIGHT_RING_FACE_OFFSET_SCALE = 0.92;
-const MELTIO_MATERIAL_LIBRARY = Object.freeze([
-  // Representative physical specs per material, shown in the materials-menu info
-  // panel (category, wire diameter, density, thermal conductivity).
-  Object.freeze({ id: "316l-stainless", label: "316L Stainless Steel", category: "Stainless steel", wireDiameterMm: 1.0, densityGCm3: 8.0, thermalWmK: 16.3 }),
-  Object.freeze({ id: "17-4ph-stainless", label: "17-4PH Stainless Steel", category: "Stainless steel", wireDiameterMm: 1.0, densityGCm3: 7.8, thermalWmK: 18.3 }),
-  Object.freeze({ id: "inconel-718", label: "Inconel 718", category: "Nickel superalloy", wireDiameterMm: 1.0, densityGCm3: 8.19, thermalWmK: 11.4 }),
-  Object.freeze({ id: "ti64", label: "Ti6Al4V", category: "Titanium alloy", wireDiameterMm: 1.0, densityGCm3: 4.43, thermalWmK: 6.7 }),
-  Object.freeze({ id: "bronze-cu-sn", label: "Bronze CuSn", category: "Bronze", wireDiameterMm: 1.0, densityGCm3: 8.8, thermalWmK: 50.0 }),
-]);
-function getMaterialSpecById(materialId) {
-  return MELTIO_MATERIAL_LIBRARY.find((entry) => entry.id === materialId) || null;
-}
-const DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY = Object.freeze({
-  spool1: 800,
-  spool2: 450,
-  // Wire drum is a bulk feedstock — holds far more than the small spools.
-  wiredrum: 15000,
-});
-// Feedstock keys that participate in material assignment / accounting / the print
-// gate. The wire drum is a first-class feedstock alongside the two spools.
-const MATERIAL_FEEDSTOCK_KEYS = Object.freeze(["spool1", "spool2", "wiredrum"]);
-const SPOOL_LOW_THRESHOLD_GRAMS = 500;
-const SPOOL_LOW_REQUIRED_MARGIN_RATIO = 1.2;
-const DEFAULT_PRINT_JOB_USAGE_GRAMS = 120;
-const MATERIALS_STORAGE_KEY = "avisualizer.materials.state.v1";
 // Calendar screen (hmi/calendar.js) — owns its DOM, state and listeners.
 // onOpen enforces screen exclusivity from the host side; the functions it
 // calls are hoisted declarations, invoked only on user interaction.
@@ -995,13 +1004,6 @@ const spoolHighlightWorldAxis = new THREE.Vector3();
 const spoolHighlightWorldCenter = new THREE.Vector3();
 const spoolHighlightToCamera = new THREE.Vector3();
 const spoolHighlightRingQuaternion = new THREE.Quaternion();
-const hotspotMaterialAssignments = {
-  spool1: null,
-  spool2: null,
-  wiredrum: null,
-};
-// Per-feeder feed type shown in the Materials menu (Feeder 1/2 can each be a
-// spool or a drum). Session-persisted under its own localStorage key.
 const feederFeedType = {
   spool1: "spool",
   spool2: "spool",
@@ -1026,33 +1028,6 @@ function persistFeederFeedType() {
     /* storage may be unavailable */
   }
 }
-const spoolManualAmountGramsByKey = {
-  spool1: DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY.spool1,
-  spool2: DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY.spool2,
-  wiredrum: DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY.wiredrum,
-};
-const spoolUsedAmountGramsByKey = {
-  spool1: 0,
-  spool2: 0,
-  wiredrum: 0,
-};
-const spoolRemainingAmountGramsByKey = {
-  spool1: DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY.spool1,
-  spool2: DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY.spool2,
-  wiredrum: DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY.wiredrum,
-};
-let selectedPrintJobEstimatedGrams = DEFAULT_PRINT_JOB_USAGE_GRAMS;
-let selectedPrintJobActualGrams = null;
-let lastPrintUsedGramsBySpool = {
-  spool1: 0,
-  spool2: 0,
-  wiredrum: 0,
-};
-// Per-print material-usage history (newest first): { ts, spoolKey, materialId,
-// grams, kind: "print" | "stopped" }. Persisted with the materials state; shown
-// in the materials-menu history view.
-let materialUsageLog = [];
-const MATERIAL_USAGE_LOG_MAX = 200;
 let printSimulationConsumptionPending = false;
 const hotspotMaterialActionLoadingBySpool = {
   spool1: false,
@@ -2611,221 +2586,17 @@ function setFeederDriveStop() {
   updateFeederDriveButtons();
 }
 
-function getMaterialLabelById(materialId) {
-  if (!materialId) {
-    return "Not assigned";
-  }
 
-  const material = MELTIO_MATERIAL_LIBRARY.find((entry) => entry.id === materialId);
-  return material ? material.label : materialId;
-}
 
-function normalizeSpoolKey(spoolKey) {
-  return MATERIAL_FEEDSTOCK_KEYS.includes(spoolKey) ? spoolKey : null;
-}
 
-function getSpoolDisplayLabel(spoolKey) {
-  if (spoolKey === "wiredrum") {
-    return "Wire Drum";
-  }
-  return spoolKey === "spool2" ? "Feeder 2" : "Feeder 1";
-}
 
-function isKnownMaterialId(materialId) {
-  if (!materialId) {
-    return false;
-  }
 
-  return MELTIO_MATERIAL_LIBRARY.some((entry) => entry.id === materialId);
-}
 
-function normalizeStoredGrams(value, fallbackValue = 0) {
-  const grams = Number(value);
-  if (!Number.isFinite(grams) || grams < 0) {
-    const fallback = Number(fallbackValue);
-    return Number.isFinite(fallback) && fallback >= 0 ? Math.round(fallback) : 0;
-  }
 
-  return Math.round(grams);
-}
 
-function parseMaterialAmountInput(rawValue) {
-  const normalizedValue = String(rawValue || "").trim();
 
-  if (!normalizedValue) {
-    return {
-      grams: null,
-      error: "Enter material amount in grams.",
-    };
-  }
 
-  if (!/^\d+$/.test(normalizedValue)) {
-    return {
-      grams: null,
-      error: "Use digits only, for example 800.",
-    };
-  }
 
-  const grams = Number(normalizedValue);
-  if (!Number.isFinite(grams) || grams < 0) {
-    return {
-      grams: null,
-      error: "Material amount must be 0 or greater.",
-    };
-  }
-
-  return {
-    grams,
-    error: "",
-  };
-}
-
-function setSpoolAmountState(spoolKey, grams, options = {}) {
-  const normalizedSpoolKey = normalizeSpoolKey(spoolKey);
-  if (!normalizedSpoolKey) {
-    return;
-  }
-
-  const { resetUsage = true } = options;
-  const normalizedGrams = normalizeStoredGrams(grams, 0);
-
-  spoolManualAmountGramsByKey[normalizedSpoolKey] = normalizedGrams;
-  if (resetUsage) {
-    spoolUsedAmountGramsByKey[normalizedSpoolKey] = 0;
-    spoolRemainingAmountGramsByKey[normalizedSpoolKey] = normalizedGrams;
-    lastPrintUsedGramsBySpool[normalizedSpoolKey] = 0;
-  }
-}
-
-function buildPersistedMaterialsState() {
-  return {
-    version: 1,
-    focusedSpoolKey: normalizeSpoolKey(hotspotMaterialsFocusSpoolKey) || "spool1",
-    selectedMaterialId: selectedHotspotMaterialId || null,
-    materialAssignments: {
-      spool1: hotspotMaterialAssignments.spool1 || null,
-      spool2: hotspotMaterialAssignments.spool2 || null,
-      wiredrum: hotspotMaterialAssignments.wiredrum || null,
-    },
-    manualAmounts: {
-      spool1: normalizeStoredGrams(spoolManualAmountGramsByKey.spool1, DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY.spool1),
-      spool2: normalizeStoredGrams(spoolManualAmountGramsByKey.spool2, DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY.spool2),
-      wiredrum: normalizeStoredGrams(spoolManualAmountGramsByKey.wiredrum, DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY.wiredrum),
-    },
-    usedAmounts: {
-      spool1: normalizeStoredGrams(spoolUsedAmountGramsByKey.spool1, 0),
-      spool2: normalizeStoredGrams(spoolUsedAmountGramsByKey.spool2, 0),
-      wiredrum: normalizeStoredGrams(spoolUsedAmountGramsByKey.wiredrum, 0),
-    },
-    remainingAmounts: {
-      spool1: normalizeStoredGrams(spoolRemainingAmountGramsByKey.spool1, 0),
-      spool2: normalizeStoredGrams(spoolRemainingAmountGramsByKey.spool2, 0),
-      wiredrum: normalizeStoredGrams(spoolRemainingAmountGramsByKey.wiredrum, 0),
-    },
-    lastPrintUsedBySpool: {
-      spool1: normalizeStoredGrams(lastPrintUsedGramsBySpool.spool1, 0),
-      spool2: normalizeStoredGrams(lastPrintUsedGramsBySpool.spool2, 0),
-      wiredrum: normalizeStoredGrams(lastPrintUsedGramsBySpool.wiredrum, 0),
-    },
-    usageLog: materialUsageLog.slice(0, MATERIAL_USAGE_LOG_MAX),
-  };
-}
-
-function persistMaterialsState() {
-  if (typeof window === "undefined" || !window.localStorage) {
-    return;
-  }
-
-  try {
-    window.localStorage.setItem(MATERIALS_STORAGE_KEY, JSON.stringify(buildPersistedMaterialsState()));
-  } catch {
-    // Ignore storage write failures (private mode/quota) to keep UI responsive.
-  }
-}
-
-function restorePersistedMaterialsState() {
-  if (typeof window === "undefined" || !window.localStorage) {
-    return false;
-  }
-
-  let raw = "";
-  try {
-    raw = String(window.localStorage.getItem(MATERIALS_STORAGE_KEY) || "");
-  } catch {
-    return false;
-  }
-
-  if (!raw) {
-    return false;
-  }
-
-  let parsed = null;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return false;
-  }
-
-  if (!parsed || typeof parsed !== "object") {
-    return false;
-  }
-
-  for (const spoolKey of MATERIAL_FEEDSTOCK_KEYS) {
-    const assignmentCandidate = parsed.materialAssignments?.[spoolKey];
-    hotspotMaterialAssignments[spoolKey] = isKnownMaterialId(assignmentCandidate) ? assignmentCandidate : null;
-
-    const fallbackManual = DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY[spoolKey];
-    const manualGrams = normalizeStoredGrams(parsed.manualAmounts?.[spoolKey], fallbackManual);
-    const usedGrams = normalizeStoredGrams(parsed.usedAmounts?.[spoolKey], 0);
-    const remainingFallback = Math.max(0, manualGrams - usedGrams);
-    const remainingGrams = normalizeStoredGrams(parsed.remainingAmounts?.[spoolKey], remainingFallback);
-    const lastUsedGrams = normalizeStoredGrams(parsed.lastPrintUsedBySpool?.[spoolKey], 0);
-
-    spoolManualAmountGramsByKey[spoolKey] = manualGrams;
-    spoolUsedAmountGramsByKey[spoolKey] = usedGrams;
-    spoolRemainingAmountGramsByKey[spoolKey] = remainingGrams;
-    lastPrintUsedGramsBySpool[spoolKey] = lastUsedGrams;
-  }
-
-  const persistedFocusKey = normalizeSpoolKey(parsed.focusedSpoolKey);
-  if (persistedFocusKey) {
-    hotspotMaterialsFocusSpoolKey = persistedFocusKey;
-  }
-
-  if (isKnownMaterialId(parsed.selectedMaterialId)) {
-    selectedHotspotMaterialId = parsed.selectedMaterialId;
-  }
-
-  if (Array.isArray(parsed.usageLog)) {
-    materialUsageLog = parsed.usageLog
-      .filter((e) => e && typeof e === "object" && Number.isFinite(Number(e.grams)))
-      .slice(0, MATERIAL_USAGE_LOG_MAX);
-  }
-
-  return true;
-}
-
-function formatGramsText(value) {
-  const grams = Number(value);
-  if (!Number.isFinite(grams) || grams <= 0) {
-    return "0g";
-  }
-  return `${Math.round(grams)}g`;
-}
-
-function getSelectedPrintJobRequiredGrams() {
-  const estimatedGrams = Number(selectedPrintJobEstimatedGrams);
-  if (Number.isFinite(estimatedGrams) && estimatedGrams > 0) {
-    return estimatedGrams;
-  }
-
-  const actualGrams = Number(selectedPrintJobActualGrams);
-  if (Number.isFinite(actualGrams) && actualGrams > 0) {
-    return actualGrams;
-  }
-
-  return DEFAULT_PRINT_JOB_USAGE_GRAMS;
-}
 
 function getSelectedPrintJobUsedGrams() {
   const actualGrams = Number(selectedPrintJobActualGrams);
@@ -2836,60 +2607,9 @@ function getSelectedPrintJobUsedGrams() {
   return getSelectedPrintJobRequiredGrams();
 }
 
-function getSpoolRemainingAmountText(spoolKey) {
-  return formatGramsText(spoolRemainingAmountGramsByKey[spoolKey]);
-}
 
-function getSpoolInitialAmountText(spoolKey) {
-  return formatGramsText(spoolManualAmountGramsByKey[spoolKey]);
-}
 
-function getSpoolUsedAmountText(spoolKey) {
-  return formatGramsText(spoolUsedAmountGramsByKey[spoolKey]);
-}
 
-function getSpoolStatusState(spoolKey) {
-  const assignedMaterialId = hotspotMaterialAssignments[spoolKey];
-  const grams = Number(spoolRemainingAmountGramsByKey[spoolKey]);
-  const requiredGrams = Number(getSelectedPrintJobRequiredGrams());
-  if (!assignedMaterialId) {
-    return {
-      label: t("materials.spoolNotAssigned"),
-      className: "status-unassigned",
-    };
-  }
-
-  if (!Number.isFinite(grams) || grams <= 0) {
-    return {
-      label: t("materials.spoolEmpty"),
-      className: "status-empty",
-    };
-  }
-
-  if (Number.isFinite(requiredGrams) && requiredGrams > 0 && grams < requiredGrams) {
-    return {
-      label: t("materials.spoolNotEnough"),
-      className: "status-not-enough",
-    };
-  }
-
-  const lowThresholdByRequired = Number.isFinite(requiredGrams) && requiredGrams > 0
-    ? requiredGrams * SPOOL_LOW_REQUIRED_MARGIN_RATIO
-    : SPOOL_LOW_THRESHOLD_GRAMS;
-  const effectiveLowThreshold = Math.max(SPOOL_LOW_THRESHOLD_GRAMS, lowThresholdByRequired);
-
-  if (grams <= effectiveLowThreshold) {
-    return {
-      label: t("materials.spoolLow"),
-      className: "status-low",
-    };
-  }
-
-  return {
-    label: t("materials.spoolReady"),
-    className: "status-ready",
-  };
-}
 
 function setSpoolStatusElement(statusEl, spoolKey) {
   if (!statusEl) {
@@ -2904,16 +2624,6 @@ function setSpoolStatusElement(statusEl, spoolKey) {
 
 // Representative material colour chips for spool cards (design-doc legend
 // pattern). Keyed by material id; falls back to neutral for unassigned.
-const MELTIO_MATERIAL_CHIP_COLORS = Object.freeze({
-  "316l-stainless": "#8fa3b8",
-  "17-4ph-stainless": "#9aa7b4",
-  "inconel-718": "#c9a24a",
-  "ti64": "#c8cdd4",
-  "bronze-cu-sn": "#b1723c",
-});
-function getMaterialChipColor(materialId) {
-  return MELTIO_MATERIAL_CHIP_COLORS[materialId] || "rgba(150, 150, 150, 0.45)";
-}
 
 function setSpoolCardState(cardEl, spoolKey, isActive) {
   if (!cardEl) {
@@ -3266,8 +2976,7 @@ function refreshSelectedPrintJobUsage() {
   const selectedFileName = selectedCloudLibraryFileName || String(cloudStlFileSelectEl?.value || "").trim();
   const selectedEntry = getCloudLibraryEntryByFileName(selectedFileName);
   const usage = getCloudLibraryEntryPrintUsageGrams(selectedEntry);
-  selectedPrintJobEstimatedGrams = usage.estimated;
-  selectedPrintJobActualGrams = usage.actual;
+  setSelectedPrintJobUsage(usage.estimated, usage.actual);
   updateSpoolSelectionCards();
   updateHotspotMaterialAssignmentStatus();
   updateCloudPrintSimulationControls();
@@ -3544,25 +3253,6 @@ function setMaterialsHistoryOpen(open) {
 
 // Append a per-print entry to the material-usage history (newest first),
 // persist it, and refresh the history view.
-function recordMaterialUsage(spoolKey, grams, kind) {
-  const g = Number(grams);
-  if (!Number.isFinite(g) || g <= 0) {
-    return;
-  }
-  const key = normalizeSpoolKey(spoolKey) || "spool1";
-  materialUsageLog.unshift({
-    ts: Date.now(),
-    spoolKey: key,
-    materialId: hotspotMaterialAssignments[key] || null,
-    grams: Math.round(g),
-    kind: kind === "stopped" ? "stopped" : "print",
-  });
-  if (materialUsageLog.length > MATERIAL_USAGE_LOG_MAX) {
-    materialUsageLog.length = MATERIAL_USAGE_LOG_MAX;
-  }
-  persistMaterialsState();
-  renderMaterialUsageHistory();
-}
 
 function consumeMaterialForCompletedPrint() {
   const focusedSpoolKey = normalizeSpoolKey(hotspotMaterialsFocusSpoolKey) || "spool1";
@@ -16341,6 +16031,21 @@ updateFeederWheelToggles();
 updateFeederDriveButtons();
 updateFeederCameraAnchorButtons();
 updateFeederWheelFloatingControls();
+initMaterialsState({
+  onUsageChanged: () => renderMaterialUsageHistory(),
+  getUiSelection: () => ({
+    focusedSpoolKey: hotspotMaterialsFocusSpoolKey,
+    selectedMaterialId: selectedHotspotMaterialId,
+  }),
+  applyUiSelection: ({ focusedSpoolKey, selectedMaterialId }) => {
+    if (focusedSpoolKey) {
+      hotspotMaterialsFocusSpoolKey = focusedSpoolKey;
+    }
+    if (selectedMaterialId) {
+      selectedHotspotMaterialId = selectedMaterialId;
+    }
+  },
+});
 restorePersistedMaterialsState();
 populateHotspotMaterialSelect();
 updateSpoolSelectionCards();
