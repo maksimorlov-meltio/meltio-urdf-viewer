@@ -67,6 +67,14 @@ points at a missing file, which is a load-time-fatal 404 that kills the whole mo
 node urdf_viewer/projects/avisualizer/tools/check_imports.mjs
 ```
 
+**`contract.json` (repo root) is the UI↔host message contract** (v2, host-owned). Any new
+machine command the frontend emits must be declared there first (camelCase name, or listed
+as a legacy alias). CI enforces it:
+
+```powershell
+node urdf_viewer/projects/avisualizer/tools/check_contract.mjs
+```
+
 Sign-in credentials (per-user PBKDF2 `salt`/`passwordHash` fields inside the
 roles/users document `database/permissions.json`, stripped before serving it to
 the browser) are managed out-of-band:

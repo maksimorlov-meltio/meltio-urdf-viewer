@@ -57,6 +57,8 @@ jobs:
             | xargs -0 -r -n1 node --check
       - name: Import-resolution gate (see CONTRIBUTING.md)
         run: node urdf_viewer/projects/avisualizer/tools/check_imports.mjs
+      - name: Contract gate (every emitted command declared in contract.json)
+        run: node urdf_viewer/projects/avisualizer/tools/check_contract.mjs
       - name: Viewer JS unit tests (pure sim/ modules)
         run: node --test "urdf_viewer/projects/avisualizer/tests/js/**/*.test.mjs"
       - name: Install, lint & build (avisualizer viewer)
