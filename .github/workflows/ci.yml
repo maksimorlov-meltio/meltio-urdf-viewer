@@ -48,13 +48,17 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
       - name: node --check (own JS only, excluding vendored three.js)
         run: |
           find urdf_viewer/projects/avisualizer/src/avisualizer/web/static \
                _slicer_branch/projects/platform/src/meltio_platform/slicer/web/static \
                -name '*.js' -not -path '*/vendor/*' -print0 \
             | xargs -0 -r -n1 node --check
+      - name: Import-resolution gate (see CONTRIBUTING.md)
+        run: node urdf_viewer/projects/avisualizer/tools/check_imports.mjs
+      - name: Viewer JS unit tests (pure sim/ modules)
+        run: node --test "urdf_viewer/projects/avisualizer/tests/js/**/*.test.mjs"
       - name: Install, lint & build (avisualizer viewer)
         working-directory: urdf_viewer/projects/avisualizer
         run: |
