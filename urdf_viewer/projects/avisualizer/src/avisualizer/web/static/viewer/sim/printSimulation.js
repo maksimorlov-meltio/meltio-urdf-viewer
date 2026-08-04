@@ -15,8 +15,8 @@
 // duplicating it.
 
 import { createSimStateMachine, SimState } from "./simState.js";
-import { buildLineSegmentBuffers, segmentsVisibleForProgress } from "./toolpathModel.js?v=2";
-import { buildTubeBuffers, INDICES_PER_SEGMENT } from "./toolpathTubes.js?v=1";
+import { buildLineSegmentBuffers, segmentsVisibleForProgress } from "../toolpath/toolpathModel.js";
+import { buildTubeBuffers, INDICES_PER_SEGMENT } from "../toolpath/toolpathTubes.js";
 
 const DEFAULT_CLIENT_LAYER_COUNT = 120; // synthetic layers for the clip-plane reveal
 const DEFAULT_SPEED_LAYERS_PER_SEC = 8;

@@ -116,22 +116,37 @@ here is the responsibility map by area (approximate line ranges):
 | **Stop-print summary** | 13,941+ | Stop confirmation + the summary modal: `confirmStopPrint()`, `buildPrintStopSummary()`, `openPrintStopSummary()`. |
 | **postMessage bridge** | 7,161+, 7,304+, 16,171+ | Receives `slice-data` (stored in `bridgedSliceData`, sets `bridgedToolpathFresh`), `start-print`, and `dock-ready` from the slicer iframe. |
 
-### 3.3 Print-simulation modules — `static/sim/`
-These do the actual print animation. They are small and single-purpose (the good
-place to start reading):
+### 3.3 The `hmi/` vs `viewer/` partition — `static/hmi/`, `static/viewer/`
+The modular (non-god-file) frontend code is split into two packages with
+CI-enforced boundaries (`tools/check_boundaries.mjs`): **`hmi/` never imports
+`three`**, **`viewer/` never touches the DOM** (except a future
+`viewer/overlays/` island for 3D→screen projections). As `urdf_viewer.js` is
+carved up, code lands on one side or the other. These directories will hoist to
+the repo root when the FastAPI backend moves to `apps/dev-host/`.
 
-- **`printSimulation.js`** — the controller. `createPrintSimulation(context)`
-  returns `{prepare, play, pause, reset, setProgress, …}`. Handles the two reveal
-  modes (real toolpath vs. clip-plane fallback) and calls back to move the bed.
-- **`simState.js`** — a tiny state machine
-  (`idle→loadingModel→slicing→ready→playing⇄paused→completed/error`) that blocks
-  illegal transitions.
-- **`slicerClient.js`** — HTTP client to the slicer backend
+`static/hmi/` — UI-side (DOM, host state, transports):
+- **`ports/machineLink.js`** — the live-machine HTTP transport (`?machine=1`);
+  polls `/api/machine/state`, sends commands, falls back to the local mock.
+- **`ports/slicerClient.js`** — HTTP client to the slicer backend
   (`sliceByName()`); degrades gracefully if the slicer is unreachable.
-- **`toolpathModel.js`** — pure data: converts the slicer's `moves` payload into
-  flat typed arrays for Three.js. Also `segmentsVisibleForProgress()`.
-- **`toolpathTubes.js`** — builds the volumetric **bead** (tube) geometry so the
-  deposition looks like a real weld bead, not a thin line.
+- **`state/machineState.js`** — the HARDWARE state model + legal transitions.
+- **`prePrintCheck.js`** — the pre-print material/signal gate dialog.
+- **`permissions.js`**, **`error_codes.js`**, **`i18n/`** — sign-in/roles UI,
+  fault-code catalog, translations (classic scripts / DOM hydration).
+
+`static/viewer/` — scene-side (Three.js, no DOM):
+- **`sim/printSimulation.js`** — the print-animation controller.
+  `createPrintSimulation(context)` returns `{prepare, play, pause, reset,
+  setProgress, …}`. Handles the two reveal modes (real toolpath vs. clip-plane
+  fallback) and calls back to move the bed.
+- **`sim/simState.js`** — a tiny state machine for what the SCENE is showing
+  (`idle→loadingModel→slicing→ready→playing⇄paused→completed/error`).
+- **`toolpath/toolpathModel.js`** — pure data: converts the slicer's `moves`
+  payload into flat typed arrays for Three.js. Also
+  `segmentsVisibleForProgress()`.
+- **`toolpath/toolpathTubes.js`** — builds the volumetric **bead** (tube)
+  geometry so the deposition looks like a real weld bead, not a thin line.
+- **`effects/dustExhaust.js`**, **`effects/chamberInert.js`** — scene effects.
 
 ### 3.4 Sensor/utility modules — `static/modules/`
 Support the point-cloud viewer (unrelated to printing):
