@@ -72,7 +72,7 @@ passing when it was never run.
   (`--accent`, `--panel`, `.tool-btn`, `.primary`, `.card`, …). No ad-hoc hex; a
   genuinely new token goes into the STYLEGUIDE table + `:root` first.
 - **UI strings in English**, operator-facing language.
-- Prefer small, pure, testable modules (see `static/sim/`) over adding to the
+- Prefer small, pure, testable modules (see `static/hmi/` and `static/viewer/`) over adding to the
   ~19k-line `urdf_viewer.js`; new pure modules should get a `tests/js/` test.
 
 ## Backend conventions
@@ -102,7 +102,7 @@ passing when it was never run.
 - Role gating (`static/permissions.js`) is a **UI convenience, not a security
   boundary**. Any control for a physically dangerous action (motion, laser,
   feeder, e-stop) must be authorized server-side/in firmware before the live
-  machine transport (`?machine=1` → `sim/machineLink.js`) is pointed at real
+  machine transport (`?machine=1` → `hmi/ports/machineLink.js`) is pointed at real
   hardware.
 
 ## Change hygiene

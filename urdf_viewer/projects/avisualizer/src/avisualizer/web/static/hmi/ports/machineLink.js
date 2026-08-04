@@ -35,7 +35,7 @@
 // ESTOP here is a request; the machine's hardware E-stop and interlocks are the
 // real safety layer and must remain independent of this code.
 
-import { createMachineStateMachine, MachineState } from "./machineState.js";
+import { createMachineStateMachine, MachineState } from "../state/machineState.js";
 
 const DEFAULT_POLL_MS = 500;      // telemetry cadence (2 Hz)
 const COMMAND_TIMEOUT_MS = 8000;  // give up on an un-ACKed command

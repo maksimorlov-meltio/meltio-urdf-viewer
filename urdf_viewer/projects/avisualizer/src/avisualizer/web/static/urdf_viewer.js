@@ -5,13 +5,13 @@ import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
 import { fetchSensorData } from "./modules/api.js";
 import { buildSpriteObject, buildVoxelCubeObject } from "./modules/render.js";
-import { createPrintSimulation } from "./sim/printSimulation.js?v=11";
-import { createSlicerClient } from "./sim/slicerClient.js";
-import { createMachineLink } from "./sim/machineLink.js";
-import { createPrePrintCheck } from "./sim/prePrintCheck.js";
-import { createDustExhaust } from "./sim/dustExhaust.js";
-import { createChamberInert } from "./sim/chamberInert.js";
-import { t, applyDomTranslations } from "./i18n/index.js";
+import { createPrintSimulation } from "./viewer/sim/printSimulation.js";
+import { createSlicerClient } from "./hmi/ports/slicerClient.js";
+import { createMachineLink } from "./hmi/ports/machineLink.js";
+import { createPrePrintCheck } from "./hmi/prePrintCheck.js";
+import { createDustExhaust } from "./viewer/effects/dustExhaust.js";
+import { createChamberInert } from "./viewer/effects/chamberInert.js";
+import { t, applyDomTranslations } from "./hmi/i18n/index.js";
 // Hydrate static HTML copy (data-i18n / data-i18n-attr) from the active locale.
 // Runs at module load; JS-driven copy uses t(...) directly.
 applyDomTranslations();

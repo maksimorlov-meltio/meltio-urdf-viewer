@@ -94,12 +94,12 @@ the browser) are managed out-of-band:
 - **Removing a DOM button:** delete the element **and** its `addEventListener` calls together.
   A leftover listener on a now-missing element throws and kills the whole JS module.
 - **The machine link is off by default** — the scene runs against a mock machine state. Append
-  `?machine=1` to the viewer URL to enable the live transport (`static/sim/machineLink.js`).
+  `?machine=1` to the viewer URL to enable the live transport (`static/hmi/ports/machineLink.js`).
   The transport stays disconnected (and every command rejects) until a `base` URL actually
   answers, so the local simulation remains the authority. **Before pointing it at real
   hardware, add server-side/firmware role authorization for motion-bearing commands** — the
   permissions gating below is UI-only.
-- **Pre-print safety gate** (`static/sim/prePrintCheck.js`): the Start-print flow runs a
+- **Pre-print safety gate** (`static/hmi/prePrintCheck.js`): the Start-print flow runs a
   material + machine-signal check before `startDockedPrint()`. Material blocks route to the
   guided Materials fix; signal blocks only proceed on an authorised (Support/God) override.
 - **The slicer is optional in the viewer**, gated by env vars `AVIS_SLICER_URL` (API base) and
