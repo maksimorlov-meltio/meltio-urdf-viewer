@@ -28,7 +28,10 @@ from .services.sensor_pointcloud import load_attribute_series, load_sensor_point
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DATABASE_ROOT = PROJECT_ROOT / "database"
+# Data directory (datasets, permissions.json, error_codes.json, audit log).
+# Overridable so tests/deployments can point at their own data without
+# touching the working tree.
+DATABASE_ROOT = Path(os.environ.get("AVIS_DATABASE_ROOT") or PROJECT_ROOT / "database")
 ASSETS_ROOT = PROJECT_ROOT / "assets"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 DEFAULT_DATASET_NAME = "small-torture-test_1-0-0"
@@ -206,6 +209,12 @@ def _tokenize_name(value: str) -> list[str]:
 
 
 def _find_global_stl_root() -> Path | None:
+    # Explicit override first; otherwise the legacy convention of an "STL"
+    # folder somewhere at/above the project (machine-specific, undocumented).
+    override = os.environ.get("AVIS_STL_ROOT", "").strip()
+    if override:
+        candidate = Path(override)
+        return candidate if candidate.is_dir() else None
     for base in [PROJECT_ROOT, *PROJECT_ROOT.parents]:
         candidate = base / "STL"
         if candidate.is_dir():
