@@ -67,8 +67,9 @@ points at a missing file, which is a load-time-fatal 404 that kills the whole mo
 node urdf_viewer/projects/avisualizer/tools/check_imports.mjs
 ```
 
-Sign-in credentials (PBKDF2, stored in `database/credentials.json`, separate from the
-public roles/users document) are managed out-of-band:
+Sign-in credentials (per-user PBKDF2 `salt`/`passwordHash` fields inside the
+roles/users document `database/permissions.json`, stripped before serving it to
+the browser) are managed out-of-band:
 
 ```powershell
 .\.venv\Scripts\python.exe urdf_viewer/projects/avisualizer/tools/set_password.py --username <user>
@@ -98,8 +99,8 @@ public roles/users document) are managed out-of-band:
   Z-sweep preview instead of real toolpath animation. The launcher wires both to `:8765`.
 - **Auth & permissions** resolve a level (Operator / Operator+ / Support / God) that gates
   motion-bearing controls (the Move jog panel, machine commands) — **UI gating only, not a
-  security boundary**. Sign-in is `POST /api/auth/login` (PBKDF2 against
-  `database/credentials.json`, managed with `tools/set_password.py`); the roles/users matrix
+  security boundary**. Sign-in is `POST /api/auth/login` (PBKDF2 against per-user fields in
+  `database/permissions.json`, managed with `tools/set_password.py`); the roles/users matrix
   is served by `GET/PUT /api/permissions/config` + `static/permissions.js`. The slicer package
   has its own `auth.py` / `permissions.py` / `role_config.py` (part of the dormant cloud shell).
 - **Windows-only, PowerShell 5.1.** The launcher expects the exact venv folder names `.venv`

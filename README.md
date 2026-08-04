@@ -61,9 +61,9 @@ constant-velocity glide (no snapping), **Home XY** and **Home Z**, and a smooth
 **palpador** deploy/retract toggle.
 
 **Accounts & permissions** — credential sign-in (username + password) via
-`POST /api/auth/login`, validated against a PBKDF2 credential store
-(`database/credentials.json`, managed with
-`urdf_viewer/projects/avisualizer/tools/set_password.py`). Sign-in resolves a
+`POST /api/auth/login`, validated against per-user PBKDF2 credentials stored
+inside the roles/users document (`database/permissions.json`, passwords managed
+with `urdf_viewer/projects/avisualizer/tools/set_password.py`). Sign-in resolves a
 permission level (Operator, Operator+, Support, God); motion-bearing controls
 (the Move panel, machine commands) are gated to the appropriate level, and the
 session auto-signs-out when idle. The gating is a UI convenience, not a security
@@ -79,6 +79,12 @@ one palette.
 ## Prerequisites
 
 - **Windows 10/11**
+- **Git LFS** (`git lfs install`) — the GLB meshes are LFS objects; without it a
+  clone gets text pointers and the 3D scene loads nothing.
+- **Long paths enabled** — the slicer tree exceeds Windows' 260-char `MAX_PATH`
+  in deep folders; a plain `git clone` fails with "Filename too long". Run
+  `git config --global core.longpaths true` once (or clone with
+  `git clone -c core.longpaths=true …`).
 - **Python 3.11** on the `PATH` (the `py -3.11` launcher is used below).
   3.11 satisfies both services and has prebuilt wheels for the heavy deps
   (`open3d`, `trimesh`, `scipy`, …).
