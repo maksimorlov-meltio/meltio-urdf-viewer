@@ -22,8 +22,8 @@ export default [
     files: [
       "src/avisualizer/web/static/urdf_viewer.js",
       "src/avisualizer/web/static/modules/**/*.js",
-      "src/avisualizer/web/static/sim/**/*.js",
-      "src/avisualizer/web/static/i18n/**/*.js",
+      "src/avisualizer/web/static/hmi/**/*.js",
+      "src/avisualizer/web/static/viewer/**/*.js",
     ],
     languageOptions: {
       ecmaVersion: 2022,
@@ -39,8 +39,8 @@ export default [
   // Classic (non-module) global scripts loaded directly in the page.
   {
     files: [
-      "src/avisualizer/web/static/permissions.js",
-      "src/avisualizer/web/static/error_codes.js",
+      "src/avisualizer/web/static/hmi/permissions.js",
+      "src/avisualizer/web/static/hmi/error_codes.js",
     ],
     languageOptions: {
       ecmaVersion: 2022,
