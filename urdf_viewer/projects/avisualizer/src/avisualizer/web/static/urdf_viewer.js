@@ -33,10 +33,15 @@ import { createChamberInert } from "./viewer/effects/chamberInert.js";
 import { t, applyDomTranslations } from "./hmi/i18n/index.js";
 import { createCalendarUi, formatCalendarDateTime } from "./hmi/calendar.js";
 import { createNotificationsUi } from "./hmi/notifications.js";
+import { createSettingsUi } from "./hmi/settings.js";
 
-// Assigned at the boot section below (its init reads scene state); every
-// earlier reference lives inside listeners/arrows that run post-boot.
+// Assigned at the boot section below (their inits read scene/DOM state);
+// every earlier reference lives inside listeners/arrows that run post-boot.
 let notificationsUi = null;
+let settingsUi = null;
+// Mirror of the module-owned advanced flag, updated via onAdvancedModeChanged;
+// read by cloud-control code that runs during the module's own init.
+let isAdvancedModeActive = false;
 // Hydrate static HTML copy (data-i18n / data-i18n-attr) from the active locale.
 // Runs at module load; JS-driven copy uses t(...) directly.
 applyDomTranslations();
@@ -107,44 +112,6 @@ const topbarDateEl = document.getElementById("topbarDate");
 const topbarChillerToggleEl = document.getElementById("topbarChillerToggle");
 const topbarFanToggleEl = document.getElementById("topbarFanToggle");
 const topbarConnectionEl = document.querySelector(".topbar-connection");
-const topbarSettingsToggleEl = document.getElementById("topbarSettingsToggle");
-const topbarSettingsMenuEl = document.getElementById("topbarSettingsMenu");
-const settingsWizardsButtonEl = document.getElementById("settingsWizardsButton");
-const settingsCalibrateToggleEl = document.getElementById("settingsCalibrateToggle");
-const settingsFixturesButtonEl = document.getElementById("settingsFixturesButton");
-const settingsSensorsButtonEl = document.getElementById("settingsSensorsButton");
-const settingsSetupFirmwareButtonEl = document.getElementById("settingsSetupFirmwareButton");
-const settingsSetupChangelogButtonEl = document.getElementById("settingsSetupChangelogButton");
-const settingsSetupApiKeyButtonEl = document.getElementById("settingsSetupApiKeyButton");
-const settingsSetupNetworkButtonEl = document.getElementById("settingsSetupNetworkButton");
-const settingsSetupWifiButtonEl = document.getElementById("settingsSetupWifiButton");
-const settingsSetupTimelapseButtonEl = document.getElementById("settingsSetupTimelapseButton");
-const settingsSetupBedMaintenanceButtonEl = document.getElementById("settingsSetupBedMaintenanceButton");
-const settingsSetupSslButtonEl = document.getElementById("settingsSetupSslButton");
-const settingsLightToggleEl = document.getElementById("settingsLightToggle");
-const settingsAdvancedModeToggleEl = document.getElementById("settingsAdvancedModeToggle");
-const settingsExitAdvancedModeEl = document.getElementById("settingsExitAdvancedMode");
-const settingsAdvancedMenuEl = document.getElementById("settingsAdvancedMenu");
-const settingsAdvancedCloseEl = document.getElementById("settingsAdvancedClose");
-const settingsCalibrateMenuEl = document.getElementById("settingsCalibrateMenu");
-const settingsCalibrateCloseEl = document.getElementById("settingsCalibrateClose");
-const settingsCalibrateFeederButtonEl = document.getElementById("settingsCalibrateFeederButton");
-const settingsCalibrateWorkingDistanceButtonEl = document.getElementById("settingsCalibrateWorkingDistanceButton");
-const settingsCalibrateLoadCellButtonEl = document.getElementById("settingsCalibrateLoadCellButton");
-const settingsCalibrateArmServiceButtonEl = document.getElementById("settingsCalibrateArmServiceButton");
-const settingsCalibrateLaserFocusButtonEl = document.getElementById("settingsCalibrateLaserFocusButton");
-const settingsCalibrateNozzleProbeButtonEl = document.getElementById("settingsCalibrateNozzleProbeButton");
-const advancedModeIndicatorEl = document.getElementById("advancedModeIndicator");
-const advancedModePinModalEl = document.getElementById("advancedModePinModal");
-const advancedModePinInputEl = document.getElementById("advancedModePinInput");
-const advancedModePinHintEl = document.getElementById("advancedModePinHint");
-const advancedModePinErrorEl = document.getElementById("advancedModePinError");
-const advancedModePinCancelEl = document.getElementById("advancedModePinCancel");
-const advancedModePinUnlockEl = document.getElementById("advancedModePinUnlock");
-const advancedModeTimeoutWarningModalEl = document.getElementById("advancedModeTimeoutWarningModal");
-const advancedModeTimeoutWarningMessageEl = document.getElementById("advancedModeTimeoutWarningMessage");
-const advancedModeStayActiveButtonEl = document.getElementById("advancedModeStayActiveButton");
-const advancedModeLockNowButtonEl = document.getElementById("advancedModeLockNowButton");
 const jointControlsEl = document.getElementById("jointControls");
 const userStepTransparencyEnabledEl = document.getElementById("userStepTransparencyEnabled");
 const displayTransparencyEnabledEl = document.getElementById("displayTransparencyEnabled");
@@ -813,16 +780,11 @@ const calendarUi = createCalendarUi({
       setMaterialsMenuOpen(false, { skipBottomNavUpdate: true });
     }
     closeHotspotContextPanel();
-    setTopbarSettingsMenuOpen(false);
+    settingsUi.setMenuOpen(false);
     notificationsUi.setHistoryOpen(false);
   },
 });
 
-const ADVANCED_MODE_PIN_FALLBACK = "7391";
-const ADVANCED_MODE_MAX_ATTEMPTS = 5;
-const ADVANCED_MODE_LOCKOUT_MS = 5 * 60 * 1000;
-const ADVANCED_MODE_IDLE_TIMEOUT_MS = 20 * 60 * 1000;
-const ADVANCED_MODE_WARNING_LEAD_MS = 60 * 1000;
 const ANNOTATION_DEFINITIONS = [
   {
     id: "front-door",
@@ -946,9 +908,6 @@ let loadedCloudLibraryFileName = "";
 let cloudFileMissingHighlightTimeoutId = null;
 let cloudFavoritesOnlyFilter = false;
 const cloudFavoriteEntryKeys = new Set();
-let isTopbarSettingsMenuOpen = false;
-let isSettingsAdvancedMenuOpen = false;
-let isSettingsCalibrateMenuOpen = false;
 let isTopbarChillerEnabled = topbarChillerToggleEl
   ? topbarChillerToggleEl.getAttribute("aria-pressed") === "true"
   : true;
@@ -956,16 +915,7 @@ let isTopbarFanEnabled = topbarFanToggleEl
   ? topbarFanToggleEl.getAttribute("aria-pressed") === "true"
   : true;
 
-let isAdvancedModeEnabled = false;
-// Advanced Mode is no longer a user-facing toggle: the role/mode system owns it
-// (Meltio Support & God Mode enable advanced controls). When role-driven, the
-// inactivity auto-lock is suppressed — the mode, not idle time, governs access.
-let advancedRoleDriven = false;
-let advancedModePinAttempts = 0;
-let advancedModeLockUntilMs = 0;
 let advancedModeLastActivityMs = performance.now();
-let isAdvancedModeTimeoutWarningOpen = false;
-let lastAdvancedWarningRemainingSeconds = null;
 let numericKeypadRootEl = null;
 let numericKeypadInputEl = null;
 // Last position the operator dragged the numeric keypad to ({left,top} px), so it
@@ -1248,236 +1198,6 @@ function toLocalDateTimeInputValue(dateLike) {
   const hours = String(date.getHours()).padStart(2, "0");
   const minutes = String(date.getMinutes()).padStart(2, "0");
   return `${year}-${month}-${day}T${hours}:${minutes}`;
-}
-
-function getAdvancedRequiredControls() {
-  return [
-    settingsFixturesButtonEl,
-    settingsSensorsButtonEl,
-    settingsSetupApiKeyButtonEl,
-    settingsSetupNetworkButtonEl,
-    settingsSetupWifiButtonEl,
-    settingsSetupSslButtonEl,
-    settingsCalibrateArmServiceButtonEl,
-  ].filter(Boolean);
-}
-
-function updateAdvancedRequiredControls() {
-  const allowAdvanced = isAdvancedModeEnabled;
-  for (const controlEl of getAdvancedRequiredControls()) {
-    controlEl.disabled = !allowAdvanced;
-    controlEl.setAttribute("aria-disabled", allowAdvanced ? "false" : "true");
-  }
-}
-
-function setSettingsCalibrateMenuOpen(isOpen) {
-  isSettingsCalibrateMenuOpen = Boolean(isOpen) && Boolean(topbarSettingsMenuEl) && !topbarSettingsMenuEl.hidden;
-
-  if (settingsCalibrateMenuEl) {
-    settingsCalibrateMenuEl.hidden = !isSettingsCalibrateMenuOpen;
-    settingsCalibrateMenuEl.setAttribute("aria-hidden", isSettingsCalibrateMenuOpen ? "false" : "true");
-  }
-
-  if (settingsCalibrateToggleEl) {
-    settingsCalibrateToggleEl.setAttribute("aria-expanded", isSettingsCalibrateMenuOpen ? "true" : "false");
-    settingsCalibrateToggleEl.classList.toggle("is-active", isSettingsCalibrateMenuOpen);
-  }
-}
-
-function setSettingsAdvancedMenuOpen(isOpen) {
-  isSettingsAdvancedMenuOpen = Boolean(isOpen)
-    && Boolean(topbarSettingsMenuEl)
-    && !topbarSettingsMenuEl.hidden
-    && isAdvancedModeEnabled;
-
-  if (settingsAdvancedMenuEl) {
-    settingsAdvancedMenuEl.hidden = !isSettingsAdvancedMenuOpen;
-    settingsAdvancedMenuEl.setAttribute("aria-hidden", isSettingsAdvancedMenuOpen ? "false" : "true");
-  }
-
-  if (settingsAdvancedModeToggleEl) {
-    settingsAdvancedModeToggleEl.setAttribute("aria-expanded", isSettingsAdvancedMenuOpen ? "true" : "false");
-    settingsAdvancedModeToggleEl.classList.toggle("is-active", isSettingsAdvancedMenuOpen);
-  }
-}
-
-function setAdvancedTimeoutWarningOpen(isOpen, remainingSeconds = ADVANCED_MODE_WARNING_LEAD_MS / 1000) {
-  isAdvancedModeTimeoutWarningOpen = Boolean(isOpen);
-
-  if (advancedModeTimeoutWarningModalEl) {
-    advancedModeTimeoutWarningModalEl.hidden = !isAdvancedModeTimeoutWarningOpen;
-    advancedModeTimeoutWarningModalEl.setAttribute("aria-hidden", isAdvancedModeTimeoutWarningOpen ? "false" : "true");
-  }
-
-  if (!isAdvancedModeTimeoutWarningOpen) {
-    lastAdvancedWarningRemainingSeconds = null;
-    return;
-  }
-
-  const normalizedSeconds = Math.max(0, Math.ceil(Number(remainingSeconds) || 0));
-  if (advancedModeTimeoutWarningMessageEl) {
-    advancedModeTimeoutWarningMessageEl.textContent = `Advanced Mode will lock due to inactivity in ${normalizedSeconds}s.`;
-  }
-  lastAdvancedWarningRemainingSeconds = normalizedSeconds;
-}
-
-function returnToViewerMainScreen() {
-  if (calendarUi.isOpen()) {
-    calendarUi.setOpen(false);
-  }
-}
-
-function exitAdvancedMode(reason = "manual") {
-  setAdvancedModeEnabled(false);
-  advancedModePinAttempts = 0;
-  advancedModeLockUntilMs = 0;
-  setAdvancedTimeoutWarningOpen(false);
-  closeAdvancedModePinModal();
-  setSettingsAdvancedMenuOpen(false);
-  setSettingsCalibrateMenuOpen(false);
-  setTopbarSettingsMenuOpen(false);
-  returnToViewerMainScreen();
-
-  if (reason === "timeout" && advancedModePinErrorEl) {
-    advancedModePinErrorEl.hidden = true;
-  }
-}
-
-function getAdvancedModePin() {
-  const configuredPin = typeof window.ADVANCED_MODE_PIN === "string"
-    ? window.ADVANCED_MODE_PIN.trim()
-    : "";
-  return configuredPin || ADVANCED_MODE_PIN_FALLBACK;
-}
-
-function setAdvancedModeEnabled(isEnabled) {
-  isAdvancedModeEnabled = Boolean(isEnabled);
-
-  if (!isAdvancedModeEnabled && cloudViewMode !== "stl") {
-    cloudViewMode = "stl";
-    clearCloudPointObject();
-  }
-
-  if (advancedModeIndicatorEl) {
-    advancedModeIndicatorEl.hidden = !isAdvancedModeEnabled;
-    advancedModeIndicatorEl.textContent = "Advanced Mode ON";
-  }
-  if (settingsAdvancedModeToggleEl) {
-    settingsAdvancedModeToggleEl.setAttribute("aria-pressed", isAdvancedModeEnabled ? "true" : "false");
-    settingsAdvancedModeToggleEl.classList.toggle("advanced-mode-active", isAdvancedModeEnabled);
-    settingsAdvancedModeToggleEl.textContent = "Advanced settings";
-  }
-  if (settingsExitAdvancedModeEl) {
-    settingsExitAdvancedModeEl.hidden = !isAdvancedModeEnabled;
-  }
-  if (cloudAdvancedDetailsEl) {
-    cloudAdvancedDetailsEl.hidden = !isAdvancedModeEnabled;
-    if (!isAdvancedModeEnabled) {
-      cloudAdvancedDetailsEl.open = false;
-    }
-  }
-
-  if (!isAdvancedModeEnabled) {
-    setAdvancedTimeoutWarningOpen(false);
-    setSettingsAdvancedMenuOpen(false);
-    setSettingsCalibrateMenuOpen(false);
-  } else {
-    advancedModeLastActivityMs = performance.now();
-  }
-
-  updateAdvancedRequiredControls();
-
-  updateCloudControlVisibility();
-}
-
-function openAdvancedModePinModal() {
-  if (!advancedModePinModalEl) {
-    return;
-  }
-
-  advancedModePinModalEl.hidden = false;
-  advancedModePinModalEl.setAttribute("aria-hidden", "false");
-  if (advancedModePinHintEl) {
-    advancedModePinHintEl.textContent = "Enter authorized service PIN.";
-    advancedModePinHintEl.hidden = false;
-  }
-  if (advancedModePinInputEl) {
-    advancedModePinInputEl.value = "";
-    advancedModePinInputEl.focus();
-  }
-  if (advancedModePinErrorEl) {
-    advancedModePinErrorEl.hidden = true;
-    advancedModePinErrorEl.textContent = "Incorrect PIN";
-  }
-}
-
-function closeAdvancedModePinModal() {
-  if (!advancedModePinModalEl) {
-    return;
-  }
-
-  advancedModePinModalEl.hidden = true;
-  advancedModePinModalEl.setAttribute("aria-hidden", "true");
-}
-
-function tryUnlockAdvancedMode() {
-  const nowMs = performance.now();
-  if (nowMs < advancedModeLockUntilMs) {
-    if (advancedModePinErrorEl) {
-      const secondsRemaining = Math.ceil((advancedModeLockUntilMs - nowMs) / 1000);
-      advancedModePinErrorEl.hidden = false;
-      advancedModePinErrorEl.textContent = `Too many attempts. Try again in ${secondsRemaining}s.`;
-    }
-    return false;
-  }
-
-  const enteredPin = String(advancedModePinInputEl?.value || "").trim();
-  if (enteredPin === getAdvancedModePin()) {
-    advancedModePinAttempts = 0;
-    advancedModeLockUntilMs = 0;
-    setAdvancedModeEnabled(true);
-    closeAdvancedModePinModal();
-    setSettingsAdvancedMenuOpen(true);
-    return true;
-  }
-
-  advancedModePinAttempts += 1;
-  if (advancedModePinAttempts >= ADVANCED_MODE_MAX_ATTEMPTS) {
-    advancedModeLockUntilMs = nowMs + ADVANCED_MODE_LOCKOUT_MS;
-  }
-  if (advancedModePinErrorEl) {
-    advancedModePinErrorEl.hidden = false;
-    advancedModePinErrorEl.textContent = "Incorrect PIN";
-  }
-  return false;
-}
-
-function updateAdvancedModeIdleTimeout(nowMs = performance.now()) {
-  // Role-driven advanced access never times out — the active mode governs it.
-  if (!isAdvancedModeEnabled || advancedRoleDriven) {
-    if (isAdvancedModeTimeoutWarningOpen) {
-      setAdvancedTimeoutWarningOpen(false);
-    }
-    return;
-  }
-
-  const idleMs = nowMs - advancedModeLastActivityMs;
-  const warningThresholdMs = ADVANCED_MODE_IDLE_TIMEOUT_MS - ADVANCED_MODE_WARNING_LEAD_MS;
-
-  if (idleMs >= warningThresholdMs && idleMs < ADVANCED_MODE_IDLE_TIMEOUT_MS) {
-    const remainingSeconds = Math.ceil((ADVANCED_MODE_IDLE_TIMEOUT_MS - idleMs) / 1000);
-    if (!isAdvancedModeTimeoutWarningOpen) {
-      setAdvancedTimeoutWarningOpen(true, remainingSeconds);
-    } else if (remainingSeconds !== lastAdvancedWarningRemainingSeconds) {
-      setAdvancedTimeoutWarningOpen(true, remainingSeconds);
-    }
-  } else if (isAdvancedModeTimeoutWarningOpen) {
-    setAdvancedTimeoutWarningOpen(false);
-  }
-
-  if (idleMs >= ADVANCED_MODE_IDLE_TIMEOUT_MS) {
-    exitAdvancedMode("timeout");
-  }
 }
 
 function getClampedRenderPixelRatio(maxRatio) {
@@ -5482,7 +5202,7 @@ function getCloudPrintSimLayerStepMm(axis = cloudPrintSimAxis) {
 
 function updateCloudControlVisibility() {
   const mode = resolveCloudViewMode(cloudViewMode);
-  const advancedEnabled = isAdvancedModeEnabled;
+  const advancedEnabled = isAdvancedModeActive;
   const stlOnly = mode === "stl" || mode === "both";
   const pointOnly = advancedEnabled && (mode === "point" || mode === "voxel" || mode === "both");
   const voxelOnly = advancedEnabled && mode === "voxel";
@@ -7361,7 +7081,7 @@ function getPrePrintCheck() {
       getMaterialStatus: () => validatePrintMaterial(),
       // Authorised = God / Support (advanced role). Only they may override a
       // failed safety check.
-      isAuthorized: () => advancedRoleDriven,
+      isAuthorized: () => settingsUi.isRoleDriven(),
       onProceed: ({ overridden } = {}) => {
         if (overridden) {
           console.warn("[print] pre-print safety check OVERRIDDEN by authorised operator");
@@ -10688,9 +10408,8 @@ function applySceneTheme() {
   if (lightModeToggleEl) {
     lightModeToggleEl.textContent = isLightMode ? "Light Mode: On" : "Light Mode: Off";
   }
-  if (settingsLightToggleEl) {
-    settingsLightToggleEl.textContent = isLightMode ? "Light Mode: On" : "Light Mode: Off";
-    settingsLightToggleEl.setAttribute("aria-pressed", isLightMode ? "true" : "false");
+  if (settingsUi) {
+    settingsUi.syncLightLabel(isLightMode);
   }
   updateBottomNavState();
   applyWireDrumAppearance();
@@ -14052,31 +13771,6 @@ function updateTopbarClock() {
   }
 }
 
-function setTopbarSettingsMenuOpen(isOpen) {
-  isTopbarSettingsMenuOpen = Boolean(isOpen);
-
-  if (document.body) {
-    document.body.classList.toggle("settings-menu-open", isTopbarSettingsMenuOpen);
-    document.body.classList.toggle("settings-menu-closed-shift", !isTopbarSettingsMenuOpen);
-  }
-
-  notificationsUi.setCenterOpen(false);
-
-  if (!isTopbarSettingsMenuOpen) {
-    setSettingsAdvancedMenuOpen(false);
-    setSettingsCalibrateMenuOpen(false);
-  }
-
-  if (topbarSettingsMenuEl) {
-    topbarSettingsMenuEl.hidden = !isTopbarSettingsMenuOpen;
-    topbarSettingsMenuEl.setAttribute("aria-hidden", isTopbarSettingsMenuOpen ? "false" : "true");
-  }
-
-  if (topbarSettingsToggleEl) {
-    topbarSettingsToggleEl.setAttribute("aria-expanded", isTopbarSettingsMenuOpen ? "true" : "false");
-    topbarSettingsToggleEl.classList.toggle("is-active", isTopbarSettingsMenuOpen);
-  }
-}
 
 function toggleLightMode() {
   isLightMode = !isLightMode;
@@ -14886,7 +14580,7 @@ function animate(nowMs = performance.now()) {
   updateMaterialsModelLift(deltaSeconds);
   updateCameraTransition(nowMs);
   updateIdleReset(nowMs);
-  updateAdvancedModeIdleTimeout(nowMs);
+  settingsUi.tick(nowMs);
   updateAdaptiveRenderQuality(rawDeltaSeconds, nowMs);
   updateInteractionQuality(nowMs);
   updateCloudPrintSimulation(deltaSeconds);
@@ -14969,241 +14663,6 @@ if (lightModeToggleEl) {
   });
 }
 
-if (settingsLightToggleEl) {
-  settingsLightToggleEl.addEventListener("click", () => {
-    markUserActivity();
-    toggleLightMode();
-  });
-}
-
-if (settingsAdvancedModeToggleEl) {
-  settingsAdvancedModeToggleEl.addEventListener("click", () => {
-    markUserActivity();
-    // Advanced access is granted by the active mode (Support/God); this control
-    // is only a disclosure for the advanced submenu now — no PIN prompt. It is
-    // permission-hidden for lower modes, so a click here means advanced is on.
-    if (isAdvancedModeEnabled) {
-      setSettingsCalibrateMenuOpen(false);
-      setSettingsAdvancedMenuOpen(!isSettingsAdvancedMenuOpen);
-    }
-  });
-}
-
-function goToIssueOrSetStatus(notificationId, fallbackStatus) {
-  if (notificationsUi.goToIssue(notificationId)) {
-    return true;
-  }
-
-  if (fallbackStatus) {
-    setMotionStatus(fallbackStatus);
-  }
-
-  return false;
-}
-
-for (const settingsButtonEl of [
-  settingsWizardsButtonEl,
-  settingsFixturesButtonEl,
-  settingsSensorsButtonEl,
-  settingsSetupFirmwareButtonEl,
-  settingsSetupChangelogButtonEl,
-  settingsSetupApiKeyButtonEl,
-  settingsSetupNetworkButtonEl,
-  settingsSetupWifiButtonEl,
-  settingsSetupTimelapseButtonEl,
-  settingsSetupBedMaintenanceButtonEl,
-  settingsSetupSslButtonEl,
-  settingsCalibrateFeederButtonEl,
-  settingsCalibrateWorkingDistanceButtonEl,
-  settingsCalibrateLoadCellButtonEl,
-  settingsCalibrateArmServiceButtonEl,
-  settingsCalibrateLaserFocusButtonEl,
-  settingsCalibrateNozzleProbeButtonEl,
-]) {
-  if (!settingsButtonEl) {
-    continue;
-  }
-
-  settingsButtonEl.addEventListener("click", () => {
-    markUserActivity();
-
-    if (settingsButtonEl.disabled) {
-      return;
-    }
-
-    if (settingsButtonEl === settingsWizardsButtonEl) {
-      calendarUi.setOpen(true);
-      setTopbarSettingsMenuOpen(false);
-      setMotionStatus("Wizards opened");
-      return;
-    }
-
-    if (settingsButtonEl === settingsSetupTimelapseButtonEl) {
-      calendarUi.setOpen(true);
-      setTopbarSettingsMenuOpen(false);
-      setMotionStatus("Timelapse scheduler opened");
-      return;
-    }
-
-    if (settingsButtonEl === settingsSensorsButtonEl) {
-      // Same print-lock guard as the bottom-nav Files toggle — this opens the
-      // same Cloud/Files menu, so it must not bypass the lock that keeps the
-      // print controls reachable.
-      if (isPrintActivelyRunning()) {
-        showPrintNotice("Stop the print to open Files.");
-        setTopbarSettingsMenuOpen(false);
-        return;
-      }
-      setCloudModelMenuOpen(true);
-      setTopbarSettingsMenuOpen(false);
-      setMotionStatus("Sensors panel opened");
-      return;
-    }
-
-    if (settingsButtonEl === settingsFixturesButtonEl) {
-      setMotionStatus("Fixtures panel opened");
-      return;
-    }
-
-    if (settingsButtonEl === settingsSetupApiKeyButtonEl) {
-      setMotionStatus("API key settings opened");
-      return;
-    }
-
-    if (settingsButtonEl === settingsSetupSslButtonEl) {
-      setMotionStatus("SSL settings opened");
-      return;
-    }
-
-    if (settingsButtonEl === settingsCalibrateFeederButtonEl) {
-      setMotionStatus("Feeder calibration started");
-      return;
-    }
-
-    if (settingsButtonEl === settingsCalibrateWorkingDistanceButtonEl) {
-      setMotionStatus("Working distance calibration started");
-      return;
-    }
-
-    if (settingsButtonEl === settingsCalibrateLoadCellButtonEl) {
-      setMotionStatus("Load cell calibration started");
-      return;
-    }
-
-    if (settingsButtonEl === settingsCalibrateArmServiceButtonEl) {
-      setMotionStatus("Arm service opened");
-      return;
-    }
-
-    if (settingsButtonEl === settingsCalibrateLaserFocusButtonEl) {
-      setMotionStatus("Laser focus test started");
-      return;
-    }
-
-    if (settingsButtonEl === settingsCalibrateNozzleProbeButtonEl) {
-      setMotionStatus("Nozzle probe alignment started");
-      return;
-    }
-
-    if (settingsButtonEl === settingsSetupNetworkButtonEl || settingsButtonEl === settingsSetupWifiButtonEl) {
-      goToIssueOrSetStatus("internet_connection_unavailable", "Network settings opened");
-      return;
-    }
-
-    if (settingsButtonEl === settingsSetupFirmwareButtonEl) {
-      goToIssueOrSetStatus("firmware_update_available", "Firmware update opened");
-      return;
-    }
-
-    if (settingsButtonEl === settingsSetupChangelogButtonEl) {
-      goToIssueOrSetStatus("software_update_available", "Changelog opened");
-      return;
-    }
-
-    if (settingsButtonEl === settingsSetupBedMaintenanceButtonEl) {
-      runMaintenancePositionAction();
-      return;
-    }
-  });
-}
-
-if (settingsCalibrateToggleEl) {
-  settingsCalibrateToggleEl.addEventListener("click", () => {
-    markUserActivity();
-    setSettingsAdvancedMenuOpen(false);
-    setSettingsCalibrateMenuOpen(!isSettingsCalibrateMenuOpen);
-  });
-}
-
-if (settingsAdvancedCloseEl) {
-  settingsAdvancedCloseEl.addEventListener("click", () => {
-    markUserActivity();
-    setSettingsAdvancedMenuOpen(false);
-  });
-}
-
-if (settingsCalibrateCloseEl) {
-  settingsCalibrateCloseEl.addEventListener("click", () => {
-    markUserActivity();
-    setSettingsCalibrateMenuOpen(false);
-  });
-}
-
-if (settingsExitAdvancedModeEl) {
-  settingsExitAdvancedModeEl.addEventListener("click", () => {
-    markUserActivity();
-    exitAdvancedMode("manual");
-  });
-}
-
-if (advancedModePinCancelEl) {
-  advancedModePinCancelEl.addEventListener("click", () => {
-    markUserActivity();
-    closeAdvancedModePinModal();
-  });
-}
-
-if (advancedModePinUnlockEl) {
-  advancedModePinUnlockEl.addEventListener("click", () => {
-    markUserActivity();
-    tryUnlockAdvancedMode();
-  });
-}
-
-if (advancedModeStayActiveButtonEl) {
-  advancedModeStayActiveButtonEl.addEventListener("click", () => {
-    markUserActivity();
-    setAdvancedTimeoutWarningOpen(false);
-  });
-}
-
-if (advancedModeLockNowButtonEl) {
-  advancedModeLockNowButtonEl.addEventListener("click", () => {
-    markUserActivity();
-    exitAdvancedMode("manual");
-  });
-}
-
-if (advancedModePinInputEl) {
-  advancedModePinInputEl.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter") {
-      return;
-    }
-
-    event.preventDefault();
-    markUserActivity();
-    tryUnlockAdvancedMode();
-  });
-}
-
-if (topbarSettingsToggleEl) {
-  topbarSettingsToggleEl.addEventListener("click", (event) => {
-    markUserActivity();
-    event.stopPropagation();
-    setTopbarSettingsMenuOpen(!isTopbarSettingsMenuOpen);
-  });
-}
-
 window.addEventListener("pointerdown", (event) => {
   const target = event.target;
   if (!(target instanceof Node)) {
@@ -15222,32 +14681,7 @@ window.addEventListener("pointerdown", (event) => {
 
   calendarUi.handleOutsideClick(target);
 
-  if (advancedModePinModalEl && !advancedModePinModalEl.hidden) {
-    const pinCard = advancedModePinModalEl.querySelector(".advanced-pin-modal-card");
-    const isInsidePinModal = Boolean(pinCard && pinCard.contains(target));
-    if (!isInsidePinModal) {
-      closeAdvancedModePinModal();
-    }
-  }
-
-  if (advancedModeTimeoutWarningModalEl && !advancedModeTimeoutWarningModalEl.hidden) {
-    const warningCard = advancedModeTimeoutWarningModalEl.querySelector(".advanced-timeout-warning-card");
-    const isInsideWarningModal = Boolean(warningCard && warningCard.contains(target));
-    if (!isInsideWarningModal) {
-      setAdvancedTimeoutWarningOpen(false);
-    }
-  }
-
-  if (isTopbarSettingsMenuOpen) {
-    const isInsideMenu = Boolean(topbarSettingsMenuEl && topbarSettingsMenuEl.contains(target));
-    const isInsideAdvancedMenu = Boolean(settingsAdvancedMenuEl && settingsAdvancedMenuEl.contains(target));
-    const isInsideCalibrateMenu = Boolean(settingsCalibrateMenuEl && settingsCalibrateMenuEl.contains(target));
-    const isToggleButton = Boolean(topbarSettingsToggleEl && topbarSettingsToggleEl.contains(target));
-
-    if (!isInsideMenu && !isInsideAdvancedMenu && !isInsideCalibrateMenu && !isToggleButton) {
-      setTopbarSettingsMenuOpen(false);
-    }
-  }
+  settingsUi.handleOutsideClick(target);
 
   notificationsUi.handleOutsideClick(target);
 
@@ -15912,7 +15346,7 @@ if (cloudViewModeEl) {
   cloudViewModeEl.addEventListener("change", () => {
     markUserActivity();
     const requestedMode = resolveCloudViewMode(cloudViewModeEl.value);
-    if (!isAdvancedModeEnabled && requestedMode !== "stl") {
+    if (!isAdvancedModeActive && requestedMode !== "stl") {
       cloudViewMode = "stl";
       cloudViewModeEl.value = "stl";
       updateCloudControlVisibility();
@@ -16841,24 +16275,10 @@ window.addEventListener("keydown", (event) => {
     hideNumericKeypad();
     stopCloudStlDrag(null, { silent: false });
     notificationsUi.closeDetailsModalIfOpen();
-    if (advancedModeTimeoutWarningModalEl && !advancedModeTimeoutWarningModalEl.hidden) {
-      setAdvancedTimeoutWarningOpen(false);
-    }
-    if (advancedModePinModalEl && !advancedModePinModalEl.hidden) {
-      closeAdvancedModePinModal();
-    }
+    settingsUi.closeOnEscape();
     calendarUi.closeEventModalIfOpen();
     if (calendarUi.isOpen()) {
       calendarUi.setOpen(false);
-    }
-    if (isTopbarSettingsMenuOpen) {
-      setTopbarSettingsMenuOpen(false);
-    }
-    if (isSettingsAdvancedMenuOpen) {
-      setSettingsAdvancedMenuOpen(false);
-    }
-    if (isSettingsCalibrateMenuOpen) {
-      setSettingsCalibrateMenuOpen(false);
     }
     notificationsUi.setCenterOpen(false);
     if (isCloudModelMenuOpen) {
@@ -16885,28 +16305,28 @@ window.addEventListener("resize", () => {
 
 // Track broad operator activity while Advanced Mode is active so inactivity lock is reliable.
 window.addEventListener("pointermove", () => {
-  if (!isAdvancedModeEnabled) {
+  if (!isAdvancedModeActive) {
     return;
   }
   markUserActivity(performance.now(), { boostInteractionQuality: false });
 }, { passive: true });
 
 window.addEventListener("pointerdown", () => {
-  if (!isAdvancedModeEnabled) {
+  if (!isAdvancedModeActive) {
     return;
   }
   markUserActivity(performance.now(), { boostInteractionQuality: false });
 }, { passive: true, capture: true });
 
 window.addEventListener("wheel", () => {
-  if (!isAdvancedModeEnabled) {
+  if (!isAdvancedModeActive) {
     return;
   }
   markUserActivity(performance.now(), { boostInteractionQuality: false });
 }, { passive: true, capture: true });
 
 window.addEventListener("touchstart", () => {
-  if (!isAdvancedModeEnabled) {
+  if (!isAdvancedModeActive) {
     return;
   }
   markUserActivity(performance.now(), { boostInteractionQuality: false });
@@ -16936,25 +16356,55 @@ updateFilesSelectedSpoolFeederButtons();
 keepHotspotContextPanelVisible = false;
 setActiveHotspotPanel(null);
 setHotspotTriggerRailVisible(false);
-setTopbarSettingsMenuOpen(false);
-setSettingsAdvancedMenuOpen(false);
-setSettingsCalibrateMenuOpen(false);
-setAdvancedModeEnabled(false);
-updateAdvancedRequiredControls();
+// Settings + Advanced mode domain (hmi/settings.js) — owns its DOM, state,
+// listeners and the window.MeltioAdvanced bridge permissions.js drives.
+settingsUi = createSettingsUi({
+  markUserActivity: () => markUserActivity(),
+  getLastActivityMs: () => advancedModeLastActivityMs,
+  touchActivity: () => { advancedModeLastActivityMs = performance.now(); },
+  closeNotificationCenter: () => notificationsUi.setCenterOpen(false),
+  closeCalendarIfOpen: () => {
+    if (calendarUi.isOpen()) {
+      calendarUi.setOpen(false);
+    }
+  },
+  openMaintenanceCalendar: () => calendarUi.setOpen(true),
+  setMotionStatus: (text) => setMotionStatus(text),
+  toggleLight: () => toggleLightMode(),
+  isPrintActivelyRunning: () => isPrintActivelyRunning(),
+  showPrintNotice: (text) => showPrintNotice(text),
+  openCloudMenu: () => setCloudModelMenuOpen(true),
+  goToNotificationIssue: (id) => notificationsUi.goToIssue(id),
+  runMaintenancePositionAction: () => runMaintenancePositionAction(),
+  onAdvancedModeChanged: (enabled) => {
+    isAdvancedModeActive = enabled;
+    if (!enabled && cloudViewMode !== "stl") {
+      cloudViewMode = "stl";
+      clearCloudPointObject();
+    }
+    if (cloudAdvancedDetailsEl) {
+      cloudAdvancedDetailsEl.hidden = !enabled;
+      if (!enabled) {
+        cloudAdvancedDetailsEl.open = false;
+      }
+    }
+    updateCloudControlVisibility();
+  },
+});
 // Notification domain (hmi/notifications.js) — owns its DOM, state, listeners
 // and the window.MeltioNotifications bridge. Instantiated HERE (the old boot
 // spot) because its init reads scene state through the injected getters.
 notificationsUi = createNotificationsUi({
   escapeHtml: (value) => escapeHtml(value),
   markUserActivity: () => markUserActivity(),
-  openSettingsMenu: () => setTopbarSettingsMenuOpen(true),
+  openSettingsMenu: () => settingsUi.setMenuOpen(true),
   closeSettingsMenuIfOpen: () => {
-    if (isTopbarSettingsMenuOpen) {
-      setTopbarSettingsMenuOpen(false);
+    if (settingsUi.isMenuOpen()) {
+      settingsUi.setMenuOpen(false);
     }
   },
-  openSettingsCalibrate: () => setSettingsCalibrateMenuOpen(true),
-  openSettingsAdvanced: () => setSettingsAdvancedMenuOpen(true),
+  openSettingsCalibrate: () => settingsUi.openCalibrate(),
+  openSettingsAdvanced: () => settingsUi.openAdvanced(),
   openMaintenanceCalendar: () => calendarUi.setOpen(true),
   closeCalendar: () => calendarUi.setOpen(false),
   isFrontDoorOpen: () => isFrontDoorOpen(),
@@ -17374,20 +16824,6 @@ function initializePrintSimulation() {
   populateSlicerProfiles().catch(() => {});
 }
 
-// The role/mode system (permissions.js) drives advanced access: Support & God
-// call set(true) to enable the advanced controls; lower modes call set(false).
-// Replaces the old user-facing Advanced Mode toggle + PIN.
-window.MeltioAdvanced = {
-  set(on) {
-    const enable = Boolean(on);
-    advancedRoleDriven = enable;
-    setAdvancedModeEnabled(enable);
-    updateAdvancedRequiredControls();
-    if (!enable) {
-      setSettingsAdvancedMenuOpen(false);
-    }
-  },
-};
 
 
 window.MeltioMachine = {
