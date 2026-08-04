@@ -1,0 +1,114 @@
+{
+  "$comment": "UI <-> host message contract, v2. Single source of truth, owned by the host (C#) side. Deliberately WIDE: it names every command the HMI will ever emit in this phase; hosts that do not implement a command MUST still ack it with response{success:false, code:'notSupported'}. The gate (tools/check_contract.mjs) fails CI if the frontend emits a command not declared here. The internal viewer<->slicer postMessage bridge (source:'meltio-slicer') is NOT part of this contract: it never crosses the UI<->host boundary.",
+  "contractVersion": 2,
+  "envelope": {
+    "shape": { "type": "string", "payload": "object|null", "requestId": "string, only on command and its response" },
+    "serialization": "JSON camelCase, null fields omitted"
+  },
+  "ackCodes": {
+    "$comment": "response.code values a UI must handle for any command.",
+    "values": ["ok", "notSupported", "notAuthorized", "invalidState", "invalidArgs", "machineFault", "timeout"]
+  },
+  "permissionLevels": {
+    "$comment": "Minimum sign-in level a host must enforce server-side for motion-bearing commands. UI gating is a convenience, never the boundary.",
+    "values": ["none", "operator", "operatorPlus", "support", "god"]
+  },
+  "channels": {
+    "shell": {
+      "$comment": "HMI UI <-> host. Today: FastAPI dev-host (POST /api/machine/command et al). Tomorrow: WebView2 CoreWebView2MainChannel.",
+      "uiToHost": {
+        "messages": {
+          "uiReady": { "payload": null, "note": "completes host WaitForReadyAsync; host answers with init" },
+          "navigate": { "payload": { "screen": "home|print|systemLogs|admin|settings" } },
+          "command": { "payload": { "name": "one of commands below", "params": "object, per command" }, "requestId": true },
+          "log": { "payload": { "level": "debug|info|warn|error", "message": "string" } }
+        },
+        "commands": {
+          "toggleFrontDoor": { "params": {}, "permission": "operator", "motion": true },
+          "toggleTopDoor": { "params": {}, "permission": "operator", "motion": true, "since": 2 },
+          "homePosition": { "params": {}, "permission": "none", "motion": false, "note": "camera/scene preset, not machine motion" },
+          "openMaterials": { "params": {}, "permission": "none", "motion": false },
+          "closeMaterials": { "params": {}, "permission": "none", "motion": false },
+          "openFiles": { "params": {}, "permission": "none", "motion": false },
+          "closeFiles": { "params": {}, "permission": "none", "motion": false },
+          "openNotifications": { "params": {}, "permission": "none", "motion": false },
+          "openCalendar": { "params": {}, "permission": "none", "motion": false },
+          "setShellOverlay": { "params": { "open": "boolean" }, "permission": "none", "motion": false },
+          "acknowledgeNotification": { "params": { "id": "string" }, "permission": "operator", "motion": false },
+          "resolveNotification": { "params": { "id": "string" }, "permission": "support", "motion": false },
+          "assignMaterial": { "params": { "spool": "string", "materialId": "string|null" }, "permission": "operator", "motion": false },
+          "setSpoolAmount": { "params": { "spool": "string", "grams": "number" }, "permission": "operator", "motion": false },
+          "loadModel": { "params": { "name": "string" }, "permission": "operator", "motion": false },
+          "loadMachineModel": { "params": { "name": "string" }, "permission": "operator", "motion": false },
+          "importPackage": { "params": { "path": "string" }, "permission": "operator", "motion": false },
+          "startPrint": { "params": { "jobId": "string?", "program": "string?", "estimatedSeconds": "number?" }, "permission": "operatorPlus", "motion": true, "aliases": ["START_PRINT"] },
+          "pausePrint": { "params": {}, "permission": "operator", "motion": false, "note": "de-escalating: always allowed for a signed-in operator", "aliases": ["PAUSE"] },
+          "resumePrint": { "params": {}, "permission": "operatorPlus", "motion": true, "aliases": ["RESUME"] },
+          "stopPrint": { "params": {}, "permission": "operator", "motion": false, "note": "de-escalating", "aliases": ["STOP"] },
+
+          "login": { "params": { "username": "string", "password": "string" }, "permission": "none", "motion": false, "since": 2, "ackData": { "user": "{id, username, name, roleId, roleName, rank, permissions[]}" } },
+          "logout": { "params": {}, "permission": "none", "motion": false, "since": 2 },
+
+          "setFan": { "params": { "on": "boolean", "speedPct": "number 0-100?", "mode": "string?" }, "permission": "operator", "motion": false, "since": 2 },
+          "setChiller": { "params": { "on": "boolean", "targetC": "number?" }, "permission": "operator", "motion": false, "since": 2 },
+          "setLight": { "params": { "on": "boolean" }, "permission": "none", "motion": false, "since": 2 },
+
+          "jog": { "params": { "axis": "x|y|z", "direction": "-1|1", "distanceMm": "number>0" }, "permission": "support", "motion": true, "since": 2, "aliases": ["JOG"] },
+          "homeXY": { "params": {}, "permission": "operatorPlus", "motion": true, "since": 2 },
+          "homeZ": { "params": {}, "permission": "operatorPlus", "motion": true, "since": 2 },
+          "home": { "params": {}, "permission": "operatorPlus", "motion": true, "since": 2, "note": "full homing routine", "aliases": ["HOME"] },
+          "setProbe": { "params": { "deployed": "boolean" }, "permission": "support", "motion": true, "since": 2, "note": "palpador deploy/retract" },
+
+          "loadFeeder": { "params": { "feeder": "1|2", "materialId": "string?", "amountGrams": "number?" }, "permission": "operator", "motion": true, "since": 2, "aliases": ["FEEDER"] },
+          "unloadFeeder": { "params": { "feeder": "1|2" }, "permission": "operator", "motion": true, "since": 2 },
+
+          "arm": { "params": {}, "permission": "operatorPlus", "motion": true, "since": 2, "aliases": ["ARM"] },
+          "disarm": { "params": {}, "permission": "operator", "motion": false, "since": 2, "note": "de-escalating", "aliases": ["DISARM"] },
+          "clearFault": { "params": {}, "permission": "operatorPlus", "motion": false, "since": 2, "aliases": ["CLEAR_FAULT"] },
+          "emergencyStop": { "params": {}, "permission": "none", "motion": false, "since": 2, "note": "always allowed, from any state, signed-in or not", "aliases": ["ESTOP"] },
+
+          "slice": { "params": { "name": "string (STL name)", "profile": "string?" }, "permission": "operator", "motion": false, "since": 2, "ackData": { "moves": "toolpath moves[]", "stats": "object" } }
+        }
+      },
+      "hostToUi": {
+        "messages": {
+          "init": { "payload": { "locale": "string", "appVersion": "string", "serial": "string", "machineType": "string (informative; behavior keys off capabilities[])", "capabilities": "string[]", "dashboardConnected": "boolean", "notifications": "{hasUnread, highestSeverity}", "doors": "object", "printButtonVisible": "boolean", "screen": "string", "session": "{user}|null, since v2" } },
+          "setLocale": { "payload": { "locale": "string" } },
+          "stateChanged": { "payload": "partial init-like object" },
+          "notificationsChanged": { "payload": { "hasUnread": "boolean", "highestSeverity": "string|null" } },
+          "notificationList": { "payload": { "items": "raw[]" } },
+          "fileList": { "payload": { "items": "raw[]" } },
+          "navigated": { "payload": { "screen": "string" } },
+          "response": { "payload": { "success": "boolean", "code": "ackCodes", "message": "string?", "severity": "string?", "data": "object?" }, "requestId": true },
+          "printState": { "payload": { "state": "string", "modelName": "string|null?", "detail": "string|null?" } },
+          "printProgress": { "payload": { "progress": "number 0-1" } },
+          "materialsState": { "payload": { "requiredGrams": "number", "spools": "record<spool, {materialId, initialGrams, usedGrams}>" } },
+          "machineState": { "payload": { "connected": "boolean", "state": "disconnected|connecting|idle|homing|armed|printing|paused|completed|fault|estop", "progress": "number 0-1", "layer": "number", "layerCount": "number", "elapsedSeconds": "number", "remainingSeconds": "number", "position": "{x,y,z} mm", "signals": "object", "activeCodes": "string[]", "ts": "epoch ms" }, "since": 2, "note": "telemetry snapshot; replaces the HMI's 60fps DOM readout loops - UI updates on this event" },
+          "sessionChanged": { "payload": { "user": "{id, username, name, roleId, roleName, rank, permissions[]}|null" }, "since": 2 }
+        }
+      }
+    },
+    "viewer": {
+      "$comment": "Host <-> Three.js viewer iframe. No requestId on this channel.",
+      "hostToViewer": {
+        "homePosition": { "payload": null },
+        "printPosition": { "payload": null },
+        "loadFile": { "payload": { "path": "string", "fileType": "string" } },
+        "unloadFile": { "payload": null },
+        "openDoor": { "payload": { "door": "frontDoor|spoolsDoor|topCover|wireSpoolDoor" } },
+        "closeDoor": { "payload": { "door": "frontDoor|spoolsDoor|topCover|wireSpoolDoor" } },
+        "gcodePathBegin": { "payload": { "totalPoints": "number", "gcodeBounds": "object" } },
+        "gcodePathPoints": { "payload": { "points": "number[] (batches of 500)" } },
+        "gcodePathEnd": { "payload": null },
+        "setSafeArea": { "payload": { "top": "px", "bottom": "px", "left": "px", "right": "px" }, "since": 2, "note": "occluded screen edges (top bar, bottom nav, docked panels). Replaces the viewer reading host DOM rects for camera framing/scene shift - the host owns layout" },
+        "machineState": { "payload": "same as shell machineState", "since": 2, "note": "drives in-scene motion (gantry, doors, feeders) instead of viewer-local mock state" }
+      },
+      "viewerToHost": {
+        "viewerReady": { "payload": null },
+        "elementClicked": { "payload": { "elementId": "string", "name": "string?" } },
+        "actionInvoked": { "payload": { "machineId": "string", "componentId": "string", "componentName": "string", "actionId": "string", "actionName": "string", "controlType": "string", "value": "any" } },
+        "error": { "payload": { "message": "string" } }
+      }
+    }
+  }
+}
