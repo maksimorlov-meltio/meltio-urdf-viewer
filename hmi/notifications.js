@@ -226,7 +226,11 @@ const mockNotificationSignals = {
   emergencyStopActive: false,
   machineArmedRequired: false,
   machineArmedState: null,
-  inertedSystemActive: false,
+  // "The inerting system is active" — the SAFETY-POSITIVE reading, matching the
+  // backend mock (machine_mock.py) and the pre-print interlock. It used to
+  // default to false here only so the filtration notification below stayed
+  // quiet, which left "Inert atmosphere ready" permanently red in the demo.
+  inertedSystemActive: true,
   filtrationRequired: false,
   controllerBoardConnected: true,
   gasFlowLow: false,
@@ -918,6 +922,26 @@ function getNotificationSignalsSnapshot() {
   return snapshot;
 }
 
+// Signal source for the PRE-PRINT INTERLOCK — deliberately not the same as the
+// notification-centre snapshot above.
+//
+// That one merges the demo mock underneath live telemetry so the notification
+// list stays populated. For a safety gate that merge is exactly wrong: any key
+// the machine does not report would fall through to the mock's nominal value
+// (doorsClosed: true, laserHeadReady: true, emergencyStopActive: false) and the
+// checklist would go green on signals nobody ever sent. With a machine linked
+// the telemetry is returned verbatim, and the checklist fails closed on
+// whatever is missing.
+function getSafetySignalsSnapshot() {
+  const live = (typeof window !== "undefined" && typeof window.PRINTER_NOTIFICATION_SIGNALS === "object")
+    ? window.PRINTER_NOTIFICATION_SIGNALS
+    : null;
+  if (live) return live;
+  // Standalone demo: no machine, so the mock IS the truth — plus the real door
+  // state from the scene, which the operator can actually change.
+  return getNotificationSignalsSnapshot();
+}
+
 function buildSignalDrivenNotificationRecords(signals) {
   const isProcessRunning = Boolean(signals.processRunning);
   const armSeverity = isProcessRunning ? "warning" : "info";
@@ -939,7 +963,9 @@ function buildSignalDrivenNotificationRecords(signals) {
     },
     {
       type: "inert_gas_filtration_required",
-      active: Boolean(signals.inertedSystemActive || signals.filtrationRequired),
+      // Keyed on the ACTIONABLE signal. Being inerted is the normal operating
+      // state, not an event; `filtrationRequired` is what needs the operator.
+      active: Boolean(signals.filtrationRequired),
       severity: inertSeverity,
       description: inertSeverity === "warning"
         ? "The system is inerted. Filtration condition is required before continuing. Action required."
@@ -1429,6 +1455,7 @@ return {
   renderCenter: renderNotificationCenter,
   updateFromSignals: updateNotificationCenterFromSignals,
   getSignalsSnapshot: getNotificationSignalsSnapshot,
+  getSafetySignalsSnapshot,
   clearToasts: clearNotificationToasts,
 };
 }

@@ -10,6 +10,6 @@ consumption (e.g. as a git submodule of the C# WPF host).
   the embedder provides them via an import map or bundler alias.
 - `contract.json` — the UI↔host message contract (v2, host-owned).
 
-Source: `3995e087883d86e39ce5f072147b30ebf6c88773` on `main` — do not edit this branch; changes land
+Source: `c4e5676de6d1b635af66ed26d3c563127752718e` on `main` — do not edit this branch; changes land
 on `main` and are re-published by the `release` workflow after
 the six-gate check (`gate.sh`).

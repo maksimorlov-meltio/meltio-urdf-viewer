@@ -21,6 +21,7 @@
 
   const CONFIG_API = "/api/permissions/config";
   const LOGIN_API = "/api/auth/login";
+  const LOGOUT_API = "/api/auth/logout";
   const SS_SESSION_KEY = "meltio.account.session.v1";
   const IDLE_MS = 10 * 60 * 1000; // auto sign-out after 10 min of inactivity
   const ADVANCED_KEY = "setup.network";
@@ -148,7 +149,14 @@
     emit();
     if (currentUser) startIdleWatch(); else stopIdleWatch();
   }
-  function signOut() { setUser(null); closeOverlay(); }
+  // Signing out must revoke the SERVER session too, not just forget the user
+  // here: the HttpOnly cookie is what authorises machine commands, and it used
+  // to survive both an explicit sign-out and the idle auto-sign-out.
+  function signOut() {
+    setUser(null);
+    closeOverlay();
+    fetch(LOGOUT_API, { method: "POST" }).catch(() => {});
+  }
 
   // ---- Idle auto sign-out ---------------------------------------------------
   function resetIdle() {
@@ -389,7 +397,14 @@
           h("span", { class: "perm-dash-current" }, `Signed in: ${currentUser?.name || ""}`),
           h("div", { class: "perm-modal-actions" },
             h("button", { class: "perm-btn-quiet", type: "button", onclick: closeOverlay }, "Close"),
-            h("button", { class: "perm-btn-primary", type: "button", onclick: async () => { await saveConfig(); apply(); closeOverlay(); } }, "Save changes"))));
+            h("button", { class: "perm-btn-primary", type: "button", onclick: async () => {
+              // Keep the panel open when the server refuses: the matrix is
+              // mutated in place, so closing on a failed save would leave the
+              // UI showing permissions that were never stored.
+              const saved = await saveConfig();
+              if (!saved) return;
+              apply(); closeOverlay();
+            } }, "Save changes"))));
       rootEl.append(h("div", { class: "perm-modal-backdrop", onclick: backdropClose }), h("div", { class: "perm-modal-shell perm-modal-shell-wide" }, card));
     };
     render();
@@ -397,10 +412,20 @@
   function tabBtn(label, id, active, onClick) {
     return h("button", { class: "perm-tab" + (active === id ? " is-active" : ""), type: "button", onclick: onClick }, label);
   }
+  // Returns true only when the server actually stored the document. The PUT is
+  // authorised server-side (401/403 for anyone without admin.users), so a
+  // swallowed error here would show a silent "saved" that never happened.
   async function saveConfig() {
     try {
-      await fetch(CONFIG_API, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(config) });
-    } catch (_e) {}
+      const res = await fetch(CONFIG_API, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(config) });
+      if (res.ok) return true;
+      window.alert(res.status === 401 ? "Your session expired — sign in again to save."
+        : res.status === 403 ? "You are not authorised to change modes and permissions."
+        : `Could not save permissions (HTTP ${res.status}).`);
+    } catch (_e) {
+      window.alert("Could not reach the server to save permissions.");
+    }
+    return false;
   }
   function renderMatrix() {
     const wrap = h("div", { class: "perm-matrix-wrap" });
