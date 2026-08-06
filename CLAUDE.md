@@ -93,6 +93,19 @@ points at a missing file, which is a load-time-fatal 404 that kills the whole mo
 node tools/check_imports.mjs
 ```
 
+**The `release` artefact is a runnable folder, not a pile of parts.** Besides `hmi/`,
+`viewer/` and the three contracts it carries a **shell** — `index.html` with every element id
+the modules look up, `urdf_viewer.css`, the pinned `vendor/three`, and the icons — built by
+`tools/gen_shell.mjs` from `urdf.html` at publish time. It is never committed: a second copy
+of the page in the repo is a copy that drifts. Its `data-app-entry` script is deliberately
+**empty**; the wiring lives in `urdf_viewer.js`, which owns the scene and is not published.
+`tests/js/shell.test.mjs` proves the generated shell keeps every id and leaves no
+dev-host-absolute URL behind.
+
+```powershell
+node tools/gen_shell.mjs --out .\shell    # then serve that folder; no Python needed
+```
+
 **`contract-http.json` (repo root, generated) is the third contract**: the HTTP surface an
 embedder must provide. It exists because the `release` branch ships `hmi/` + `viewer/` but not
 `app.py`, so a consumer that hosts those modules itself — notably the **.NET-only WPF host,

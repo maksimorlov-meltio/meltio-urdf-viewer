@@ -42,6 +42,12 @@ jobs:
           SHORT=$(git rev-parse --short HEAD)
 
           STAGE=$(mktemp -d)
+          # The shell FIRST: gen_shell.mjs clears its output directory, so
+          # running it after the copy below would delete what we just staged.
+          # It lays down index.html + urdf_viewer.css + vendor/ + icons/ at the
+          # artefact root, which is where index.html's ./hmi/ and ./viewer/
+          # references expect to find the partitions.
+          node tools/gen_shell.mjs --out "$STAGE"
           cp -r hmi viewer contract.json contract-dom.json contract-http.json "$STAGE"/
           cat > "$STAGE/README.md" <<EOF
           # Meltio HMI — release channel
@@ -49,6 +55,13 @@ jobs:
           Auto-published snapshot of the frontend partitions, for read-only
           consumption (e.g. as a git submodule of the C# WPF host).
 
+          - \`index.html\` + \`urdf_viewer.css\` + \`vendor/\` + \`icons/\` — the
+            shell: the page these modules expect to find themselves in, with
+            every element id they look up and the stylesheet whose classes they
+            toggle. Its \`data-app-entry\` script is deliberately EMPTY — the
+            wiring lives in the dev host's \`urdf_viewer.js\`, which owns the
+            Three.js scene and is not published. Put your own module there.
+            \`vendor/\` is the pinned \`three\` the import map resolves to.
           - \`hmi/\` — UI-side ES modules (DOM, host state, transports). No
             \`three\` imports (CI-enforced boundary).
           - \`viewer/\` — scene-side ES modules (Three.js; DOM only under
