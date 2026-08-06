@@ -3,6 +3,13 @@
 Auto-published snapshot of the frontend partitions, for read-only
 consumption (e.g. as a git submodule of the C# WPF host).
 
+- `index.html` + `urdf_viewer.css` + `vendor/` + `icons/` — the
+  shell: the page these modules expect to find themselves in, with
+  every element id they look up and the stylesheet whose classes they
+  toggle. Its `data-app-entry` script is deliberately EMPTY — the
+  wiring lives in the dev host's `urdf_viewer.js`, which owns the
+  Three.js scene and is not published. Put your own module there.
+  `vendor/` is the pinned `three` the import map resolves to.
 - `hmi/` — UI-side ES modules (DOM, host state, transports). No
   `three` imports (CI-enforced boundary).
 - `viewer/` — scene-side ES modules (Three.js; DOM only under
@@ -21,6 +28,6 @@ consumption (e.g. as a git submodule of the C# WPF host).
   guarded, so an embedder that supplies none of it gets a tree that
   loads cleanly and does nothing, in silence. Read this one first.
 
-Source: `e773a576d08debc357599ef9fc461556080d2632` on `main` — do not edit this branch; changes land
+Source: `d58c0eda3f44fcc2b88a341f8b32ddb20a001caf` on `main` — do not edit this branch; changes land
 on `main` and are re-published by the `release` workflow after
 the eight-gate check (`gate.sh`).
