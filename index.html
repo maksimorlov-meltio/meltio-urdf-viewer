@@ -1466,22 +1466,22 @@
   <script src="./hmi/permissions.js"></script>
   <script src="./hmi/error_codes.js"></script>
   <!-- ===================================================================
-       APP ENTRY — intentionally empty.
+       APP ENTRY.
 
-       This shell is the DOM and the styling. The wiring that instantiates the
-       published modules is NOT published: it lives in the dev host's
-       urdf_viewer.js, which owns the Three.js scene.
+       ./app.js is the assembly: it creates the Three.js scene and instantiates
+       every published hmi/ + viewer/ domain with its deps. It is this repo's
+       own wiring, shipped as-is rather than hidden — an artefact you cannot
+       run is not an artefact.
 
-       Replace the script below with your own module. It should import from
-       ../hmi/ and ../viewer/ and call each domain's createXxx/initXxx entry
-       point with the deps listed in contract-dom.json.
+       It is also the largest thing here by far and the least settled: domains
+       are being lifted out of it into hmi/ one at a time. Treat it as the
+       reference implementation, not as API. To replace it, swap this script
+       for your own module and drive the domains directly — contract-dom.json
+       lists each one's entry point and the deps it reads.
 
-       Nothing here throws if you do not: every getElementById is guarded, so
-       an unwired shell renders and sits there. That silence is the reason
-       contract-dom.json exists — read it before assuming a feature is broken.
+       Whatever you put here, the page needs a backend: see contract-http.json
+       for the routes, and note which of them enforce authorisation.
        =================================================================== -->
-  <script type="module" data-app-entry>
-    // Your assembly goes here.
-  </script>
+  <script type="module" data-app-entry src="./app.js"></script>
 </body>
 </html>
