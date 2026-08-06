@@ -64,6 +64,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      # First, not last: the unit-test step below needs node_modules (jsdom for
+      # the DOM-level tests), and eslint needs it too. gate.sh already assumes
+      # it is present.
+      - name: Install frontend tooling
+        run: npm ci
       - name: node --check (own JS only, excluding vendored three.js)
         run: |
           find hmi viewer apps/dev-host/src/avisualizer/web/static \
@@ -88,9 +93,8 @@ jobs:
           git diff --exit-code -- contract-dom.json
       - name: Viewer JS unit tests (pure hmi/ + viewer/ modules)
         run: node --test "tests/js/**/*.test.mjs"
-      - name: Install, lint & build (frontend, repo root)
+      - name: Lint & build (frontend, repo root)
         run: |
-          npm ci
           npm run lint
           npm run build
       # Dependency CVEs (finding SEG-9): nothing was audited on either side.

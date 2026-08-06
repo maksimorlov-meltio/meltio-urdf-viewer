@@ -14,6 +14,7 @@ import {
   hotspotMaterialAssignments,
   setSelectedPrintJobUsage,
   formatGramsText,
+  SPOOL_LOW_THRESHOLD_GRAMS,
 } from "../../hmi/state/materialsState.js";
 
 test("setSpoolAmountState sets manual amount and resets usage", () => {
@@ -48,15 +49,57 @@ test("normalizeSpoolKey is exact-match; material ids from the catalog", () => {
   assert.equal(isKnownMaterialId("plastic"), false);
 });
 
-test("getSpoolStatusState reflects assignment and remaining vs required", () => {
-  hotspotMaterialAssignments.spool1 = "ti64";
-  setSpoolAmountState("spool1", 10000);
-  setSelectedPrintJobUsage(120, null);
-  const ok = getSpoolStatusState("spool1");
-  assert.equal(typeof ok, "object");
+// getSpoolStatusState is the logic that decides whether there is enough metal
+// to print. It used to be covered by `assert.equal(typeof ok, "object")` — a
+// test that passes whatever the thresholds do (finding COD-10). These assert
+// the actual state at each boundary.
+test("getSpoolStatusState: unassigned and empty come before any threshold", () => {
   hotspotMaterialAssignments.spool1 = null;
-  const unassigned = getSpoolStatusState("spool1");
-  assert.notDeepEqual(ok, unassigned);
+  setSpoolAmountState("spool1", 10000);
+  assert.equal(getSpoolStatusState("spool1").className, "status-unassigned");
+
+  hotspotMaterialAssignments.spool1 = "ti64";
+  setSpoolAmountState("spool1", 0);
+  assert.equal(getSpoolStatusState("spool1").className, "status-empty",
+    "an empty spool reads empty, not not-enough");
+});
+
+test("getSpoolStatusState: below the job requirement is not-enough", () => {
+  hotspotMaterialAssignments.spool1 = "ti64";
+  setSelectedPrintJobUsage(800, null);
+
+  setSpoolAmountState("spool1", 799);
+  assert.equal(getSpoolStatusState("spool1").className, "status-not-enough");
+  setSpoolAmountState("spool1", 800);
+  assert.notEqual(getSpoolStatusState("spool1").className, "status-not-enough",
+    "exactly the required amount is enough");
+});
+
+test("the low-warning floor is 500 g", () => {
+  // Pinned to the literal, NOT to the imported constant: asserting against the
+  // same value the code uses would pass whatever the threshold became. Changing
+  // this number is a deliberate change to when an operator is warned, so it
+  // should require editing this line.
+  assert.equal(SPOOL_LOW_THRESHOLD_GRAMS, 500);
+});
+
+test("getSpoolStatusState: the low band is the greater of 500 g and 1.2x required", () => {
+  hotspotMaterialAssignments.spool1 = "ti64";
+
+  // Small job: the flat 500 g floor governs.
+  setSelectedPrintJobUsage(120, null);
+  setSpoolAmountState("spool1", 500);
+  assert.equal(getSpoolStatusState("spool1").className, "status-low", "at the floor: low");
+  setSpoolAmountState("spool1", 501);
+  assert.equal(getSpoolStatusState("spool1").className, "status-ready", "just above it: ready");
+
+  // Big job: 1.2x the requirement governs, well above the floor.
+  setSelectedPrintJobUsage(1000, null);
+  setSpoolAmountState("spool1", 1200);
+  assert.equal(getSpoolStatusState("spool1").className, "status-low",
+    "1200 g covers the job but leaves no margin");
+  setSpoolAmountState("spool1", 1201);
+  assert.equal(getSpoolStatusState("spool1").className, "status-ready");
 });
 
 test("formatGramsText rounds and floors at zero", () => {
