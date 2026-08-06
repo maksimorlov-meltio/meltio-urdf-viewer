@@ -42,13 +42,12 @@ jobs:
           SHORT=$(git rev-parse --short HEAD)
 
           STAGE=$(mktemp -d)
-          # The shell FIRST: gen_shell.mjs clears its output directory, so
-          # running it after the copy below would delete what we just staged.
-          # It lays down index.html + urdf_viewer.css + vendor/ + icons/ at the
-          # artefact root, which is where index.html's ./hmi/ and ./viewer/
-          # references expect to find the partitions.
-          node tools/gen_shell.mjs --out "$STAGE"
-          cp -r hmi viewer contract.json contract-dom.json contract-http.json "$STAGE"/
+          # One command builds the whole artefact — page, styling, pinned three,
+          # the published partitions, the assembly and the three contracts.
+          # It used to be split with the workflow, and while it was, no test
+          # could walk the artefact's import graph; the first one that did found
+          # a module that would have 404'd on load.
+          node tools/gen_artifact.mjs --out "$STAGE"
           cat > "$STAGE/README.md" <<EOF
           # Meltio HMI — release channel
 

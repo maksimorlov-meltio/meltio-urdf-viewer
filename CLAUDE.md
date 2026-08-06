@@ -93,18 +93,26 @@ points at a missing file, which is a load-time-fatal 404 that kills the whole mo
 node tools/check_imports.mjs
 ```
 
-**The `release` artefact is a runnable folder, not a pile of parts.** Besides `hmi/`,
-`viewer/` and the three contracts it carries a **shell** — `index.html` with every element id
-the modules look up, `urdf_viewer.css`, the pinned `vendor/three`, and the icons — built by
-`tools/gen_shell.mjs` from `urdf.html` at publish time. It is never committed: a second copy
-of the page in the repo is a copy that drifts. Its `data-app-entry` script is deliberately
-**empty**; the wiring lives in `urdf_viewer.js`, which owns the scene and is not published.
-`tests/js/shell.test.mjs` proves the generated shell keeps every id and leaves no
-dev-host-absolute URL behind.
+**The `release` artefact is a runnable HMI, not a pile of parts.** `tools/gen_artifact.mjs`
+builds the whole thing — `index.html` (every element id the modules look up), the stylesheets
+and their fonts, the pinned `vendor/three`, `hmi/` + `viewer/`, the three contracts, and
+`app.js`: this repo's own assembly, shipped as-is rather than hidden, because an artefact you
+cannot run is not an artefact. Never committed — a second copy of the page in the repo is a copy
+that drifts.
+
+Serving it needs a backend for `/api/*` and `/assets/*` (that is what `contract-http.json` is
+for), and nothing else. To verify a change end to end the way a consumer sees it:
 
 ```powershell
-node tools/gen_shell.mjs --out .\shell    # then serve that folder; no Python needed
+node tools/gen_artifact.mjs --out .\artifact
+.\.venv\Scripts\python.exe tools/serve_artifact.py .\artifact http://127.0.0.1:8090 8098
+node tools/check_boot.mjs --url http://127.0.0.1:8098/index.html
 ```
+
+Do this after touching anything the page loads. `tests/js/artifact.test.mjs` walks the artefact's
+import graph and rejects dev-host-absolute URLs, but **static checks are not enough here**: an
+`@import` in `urdf_viewer.css`, and the `@font-face` URLs hiding behind it, both escaped every
+check and only surfaced on a real load from a folder.
 
 **`contract-http.json` (repo root, generated) is the third contract**: the HTTP surface an
 embedder must provide. It exists because the `release` branch ships `hmi/` + `viewer/` but not
