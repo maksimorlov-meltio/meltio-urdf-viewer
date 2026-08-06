@@ -153,6 +153,12 @@ its root-absolute esbuild plugin.
   maintenance calendar, the notification center/toasts/bell, and the settings
   menu + Advanced mode (factories `createXxxUi(deps)` instantiated at boot).
 - **`prePrintCheck.js`** — the pre-print material/signal gate dialog.
+- **`printDialogs.js`** — the stop confirmation, the pause notice and the two
+  end-of-job summaries (`createPrintDialogsUi(deps)`), plus the pure material
+  arithmetic behind them: `buildPrintStopSummary()` (what actually came off the
+  spool for a part abandoned part-way, nominal + over-deposition) and
+  `formatPrintDuration()`. What *does* the stopping — tearing the sim down,
+  moving the gantry, charging the spool — stays host-side.
 - **`slicerPane.js`** — the embedded-slicer pane (`createSlicerPaneUi(deps)`):
   the lazily-iframed slicer UI off `/api/slicer/status`, the flyout anchored to
   the Files menu, the fullscreen slice view, and the compact docked-print

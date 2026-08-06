@@ -37,6 +37,11 @@ import { createNotificationsUi } from "/hmi/notifications.js";
 import { createSettingsUi } from "/hmi/settings.js";
 import { createMovePanelUi, canOperateMotion } from "/hmi/movePanel.js";
 import { createSlicerPaneUi } from "/hmi/slicerPane.js";
+import {
+  createPrintDialogsUi,
+  formatPrintDuration,
+  buildPrintStopSummary,
+} from "/hmi/printDialogs.js";
 // Print-flow state. The READS below are ES live bindings — `printSim`,
 // `bridgedSliceData` etc. are used exactly as when they were locals here; only
 // assignment goes through the setters.
@@ -139,6 +144,17 @@ initPrintFlowState({ isInertPurging: () => inertPhase === "purging" });
 // positionMenu() is reachable from the Files-menu layout code far above.
 // Every dep is a thunk, so the host functions it reaches (declared later) are
 // resolved at call time, not now.
+// Print-dialog domain (hmi/printDialogs.js) — the stop confirmation, the pause
+// notice and the two end-of-job summaries, plus the material arithmetic that
+// fills them. What actually stops the print (tearing the sim down, moving the
+// gantry, charging the spool) stays here in confirmStopPrint /
+// confirmPrintComplete; this only decides what the operator is told.
+const printDialogsUi = createPrintDialogsUi({
+  getClockTimeFormat: () => CLOCK_TIME_FORMAT,
+  getFocusedSpoolKey: () => hotspotMaterialsFocusSpoolKey,
+  renderChamberAtmosphere: () => renderChamberAtmosphere(),
+});
+
 const slicerPaneUi = createSlicerPaneUi({
   markUserActivity: () => markUserActivity(),
   updateBottomNavState: () => updateBottomNavState(),
@@ -178,24 +194,12 @@ const navSlicerToggleEl = document.getElementById("navSlicerToggle");
 // Stop during a print is surfaced by repurposing the door button (see
 // updateBottomNavState), gated behind a confirmation dialog. Pausing shows a
 // non-blocking notice and makes the Play button pulse green.
-const printStopConfirmModalEl = document.getElementById("printStopConfirmModal");
 const printStopCancelEl = document.getElementById("printStopCancel");
 const printStopConfirmEl = document.getElementById("printStopConfirm");
-const printStopSummaryModalEl = document.getElementById("printStopSummaryModal");
 const printStopSummaryCloseEl = document.getElementById("printStopSummaryClose");
-const printStopSummaryPrintedEl = document.getElementById("printStopSummaryPrinted");
-const printStopSummaryMaterialEl = document.getElementById("printStopSummaryMaterial");
-const printStopSummaryOverprintEl = document.getElementById("printStopSummaryOverprint");
-const printCompleteModalEl = document.getElementById("printCompleteModal");
 const printCompleteAcceptEl = document.getElementById("printCompleteAccept");
-const printCompleteMaterialEl = document.getElementById("printCompleteMaterial");
-const printCompleteSpoolEl = document.getElementById("printCompleteSpool");
-const printCompleteTimeEl = document.getElementById("printCompleteTime");
-const printCompleteLayersEl = document.getElementById("printCompleteLayers");
-const printCompleteThermalEl = document.getElementById("printCompleteThermal");
 const printCompleteAtmosphereEl = document.getElementById("printCompleteAtmosphere");
 const printCompleteAtmosphereNoteEl = document.getElementById("printCompleteAtmosphereNote");
-const printPauseNoticeEl = document.getElementById("printPauseNotice");
 const printPauseResumeEl = document.getElementById("printPauseResume");
 const printPauseDismissEl = document.getElementById("printPauseDismiss");
 // Pre-print material gate: a top warning banner (redirects to Materials) and a
@@ -4951,11 +4955,11 @@ function onMachineTelemetry(snap) {
   const simState = printSim.getState();
   if (state === "paused" && simState === "playing") {
     printSim.pause();
-    openPrintPauseNotice();
+    printDialogsUi.openPauseNotice();
     updateBottomNavState();
   } else if (state === "printing" && simState === "paused") {
     printSim.play();
-    closePrintPauseNotice();
+    printDialogsUi.closePauseNotice();
     updateBottomNavState();
   }
 }
@@ -10235,27 +10239,7 @@ function toggleLightMode() {
   applySceneTheme();
 }
 
-// --- Print stop-confirmation dialog & pause notice ------------------------
-function openPrintStopConfirm() {
-  if (!printStopConfirmModalEl) {
-    return;
-  }
-  printStopConfirmModalEl.hidden = false;
-  printStopConfirmModalEl.setAttribute("aria-hidden", "false");
-}
 
-function closePrintStopConfirm() {
-  if (!printStopConfirmModalEl) {
-    return;
-  }
-  printStopConfirmModalEl.hidden = true;
-  printStopConfirmModalEl.setAttribute("aria-hidden", "true");
-}
-
-// Representative DED over-deposition (bead over-run beyond the planned nominal),
-// used for the stop summary when the job carries no recorded actual-vs-estimate
-// figure. The whole print flow here is a synthetic simulation.
-const PRINT_OVERDEPOSITION_SIM_PCT = 4.2;
 
 // Snapshot of what was laid down when a print is stopped mid-way. Must be built
 // from the live progress + selected-job material figures BEFORE the sim is reset
@@ -10282,7 +10266,7 @@ function applyChamberAtmosphere(data) {
     chamberTempC: num(data.chamberTempC),
     ts: Date.now(),
   };
-  if (printCompleteModalEl && !printCompleteModalEl.hidden) {
+  if (printDialogsUi.isCompleteModalOpen()) {
     renderChamberAtmosphere();
   }
 }
@@ -10338,103 +10322,13 @@ function renderChamberAtmosphere() {
   }
 }
 
-function formatPrintDuration(seconds) {
-  const s = Number(seconds);
-  if (!Number.isFinite(s) || s <= 0) {
-    return "—";
-  }
-  const totalMin = Math.floor(s / 60);
-  const sec = Math.round(s % 60);
-  if (totalMin >= 60) {
-    return `${Math.floor(totalMin / 60)}h ${totalMin % 60}m`;
-  }
-  return totalMin > 0 ? `${totalMin}m ${sec}s` : `${sec}s`;
-}
 
-// Absolute wall-clock finish estimate for a running print — complements the
-// relative ETA with "when will it be done" ("Finishes 14:32", "Finishes tomorrow
-// 08:15", "Finishes Wed 19:40", "Finishes Aug 03 06:00"). 24h clock to match the
-// topbar clock. Empty string when the remaining time is unknown / non-positive.
-function formatPrintFinishClock(remainingSeconds) {
-  const s = Number(remainingSeconds);
-  if (!Number.isFinite(s) || s <= 0) {
-    return "";
-  }
-  const now = new Date();
-  const finish = new Date(now.getTime() + s * 1000);
-  const time = CLOCK_TIME_FORMAT.format(finish);
-  // Whole-calendar-day difference (not a 24h-bucket difference) so an 11pm→1am
-  // print reads "tomorrow", not "today".
-  const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-  const dayDelta = Math.round((startOfDay(finish) - startOfDay(now)) / 86400000);
-  if (dayDelta <= 0) {
-    return `Finishes ${time}`;
-  }
-  if (dayDelta === 1) {
-    return `Finishes tomorrow ${time}`;
-  }
-  if (dayDelta < 7) {
-    return `Finishes ${finish.toLocaleDateString([], { weekday: "short" })} ${time}`;
-  }
-  return `Finishes ${finish.toLocaleDateString([], { day: "2-digit", month: "short" })} ${time}`;
-}
 
 // ── Print-complete summary + accept/reset ──────────────────────────────────
 let printCompletionHandled = false;
 
-function buildPrintCompleteSummary() {
-  const focusKey = normalizeSpoolKey(hotspotMaterialsFocusSpoolKey) || "spool1";
-  const usedThis = Number(lastPrintUsedGramsBySpool[focusKey]);
-  const materialUsedGrams = Number.isFinite(usedThis) && usedThis > 0
-    ? usedThis
-    : buildPrintStopSummary(1).materialUsedGrams;
-  const remainingGrams = Number(spoolRemainingAmountGramsByKey[focusKey]) || 0;
-  const printsLeft = materialUsedGrams > 0 ? Math.floor(remainingGrams / materialUsedGrams) : null;
-  const stats = printSim && typeof printSim.getStats === "function" ? printSim.getStats() : null;
-  return { spoolKey: focusKey, materialUsedGrams, remainingGrams, printsLeft, stats };
-}
 
-function openPrintCompleteModal(summary) {
-  if (!printCompleteModalEl || !summary) {
-    return;
-  }
-  if (printCompleteMaterialEl) {
-    printCompleteMaterialEl.textContent = formatGramsText(summary.materialUsedGrams);
-  }
-  if (printCompleteSpoolEl) {
-    let txt = `${formatGramsText(summary.remainingGrams)} left (${getSpoolDisplayLabel(summary.spoolKey)})`;
-    if (Number.isFinite(summary.printsLeft)) {
-      txt += ` · ~${summary.printsLeft} more print(s)`;
-    }
-    printCompleteSpoolEl.textContent = txt;
-  }
-  const st = summary.stats;
-  if (printCompleteTimeEl) {
-    printCompleteTimeEl.textContent = st ? formatPrintDuration(st.printSeconds) : "—";
-  }
-  if (printCompleteLayersEl) {
-    const layers = st && Number.isFinite(st.layerCount) ? `${st.layerCount} layers` : "—";
-    const height = st && Number.isFinite(st.heightMm) ? ` · ${st.heightMm.toFixed(1)} mm` : "";
-    printCompleteLayersEl.textContent = layers + height;
-  }
-  if (printCompleteThermalEl) {
-    const t = st && st.thermal ? st.thermal : null;
-    printCompleteThermalEl.textContent = t
-      ? `peak ${Math.round(t.peak * 100)}% · avg ${Math.round(t.avg * 100)}% · hottest layer ${t.hottestLayer}`
-      : "no thermal data";
-  }
-  renderChamberAtmosphere();
-  printCompleteModalEl.hidden = false;
-  printCompleteModalEl.setAttribute("aria-hidden", "false");
-}
 
-function closePrintCompleteModal() {
-  if (!printCompleteModalEl) {
-    return;
-  }
-  printCompleteModalEl.hidden = true;
-  printCompleteModalEl.setAttribute("aria-hidden", "true");
-}
 
 // Fired once when a docked print reaches 100%. Accounts for the material drawn,
 // moves the machine to the maintenance position CARRYING the part (it rides
@@ -10445,15 +10339,15 @@ function handlePrintComplete() {
   }
   printCompletionHandled = true;
   consumeMaterialForCompletedPrint();
-  const summary = buildPrintCompleteSummary();
+  const summary = printDialogsUi.buildCompleteSummary();
   runMaintenancePositionAction();
-  openPrintCompleteModal(summary);
+  printDialogsUi.openCompleteModal(summary);
 }
 
 // Accept: clear the part off the gantry and reset to the Files browser so a new
 // print/file-selection cycle can begin (mirrors confirmStopPrint's teardown).
 function confirmPrintComplete() {
-  closePrintCompleteModal();
+  printDialogsUi.closeCompleteModal();
   printCompletionHandled = false;
   cancelPrePrintSequence();
   setFeederDriveStop(); // don't leave a manually-jogged feeder wheel spinning
@@ -10498,78 +10392,16 @@ function resetGantryToPrintPosition() {
   }
 }
 
-function buildPrintStopSummary(progress) {
-  const fraction = clamp(Number(progress) || 0, 0, 1);
-  const estimatedTotal = Number(selectedPrintJobEstimatedGrams);
-  const estTotal =
-    Number.isFinite(estimatedTotal) && estimatedTotal > 0
-      ? estimatedTotal
-      : DEFAULT_PRINT_JOB_USAGE_GRAMS;
-  // Planned (nominal) material for just the printed fraction.
-  const nominalGrams = estTotal * fraction;
-  // Over-deposition: excess laid down beyond nominal. Prefer the job's recorded
-  // actual-vs-estimate delta; otherwise fall back to the representative figure.
-  const actualTotal = Number(selectedPrintJobActualGrams);
-  const overPct =
-    Number.isFinite(actualTotal) && actualTotal > estTotal
-      ? (actualTotal / estTotal - 1) * 100
-      : PRINT_OVERDEPOSITION_SIM_PCT;
-  const overGrams = nominalGrams * (overPct / 100);
-  return {
-    percentPrinted: Math.round(fraction * 100),
-    materialUsedGrams: nominalGrams + overGrams, // actual off-spool draw
-    overGrams,
-    overPct,
-  };
-}
 
-function openPrintStopSummary(summary) {
-  if (!printStopSummaryModalEl || !summary) {
-    return;
-  }
-  if (printStopSummaryPrintedEl) {
-    printStopSummaryPrintedEl.textContent = `${summary.percentPrinted}% complete`;
-  }
-  if (printStopSummaryMaterialEl) {
-    printStopSummaryMaterialEl.textContent = formatGramsText(summary.materialUsedGrams);
-  }
-  if (printStopSummaryOverprintEl) {
-    printStopSummaryOverprintEl.textContent =
-      `+${summary.overGrams.toFixed(1)}g (${summary.overPct.toFixed(1)}% over nominal)`;
-  }
-  printStopSummaryModalEl.hidden = false;
-  printStopSummaryModalEl.setAttribute("aria-hidden", "false");
-}
 
-function closePrintStopSummary() {
-  if (!printStopSummaryModalEl) {
-    return;
-  }
-  printStopSummaryModalEl.hidden = true;
-  printStopSummaryModalEl.setAttribute("aria-hidden", "true");
-}
 
-function openPrintPauseNotice() {
-  if (!printPauseNoticeEl) {
-    return;
-  }
-  printPauseNoticeEl.hidden = false;
-  printPauseNoticeEl.setAttribute("aria-hidden", "false");
-}
 
-function closePrintPauseNotice() {
-  if (!printPauseNoticeEl) {
-    return;
-  }
-  printPauseNoticeEl.hidden = true;
-  printPauseNoticeEl.setAttribute("aria-hidden", "true");
-}
 
 // Stop = halt playback and return the print to the start. Also clears any
 // pause notice and reverts the door button (updateBottomNavState handles that).
 function confirmStopPrint() {
-  closePrintStopConfirm();
-  closePrintPauseNotice();
+  printDialogsUi.closeStopConfirm();
+  printDialogsUi.closePauseNotice();
   slicerPaneUi.setMenuOpen(false);  // close the Slicer flyout so it can't linger
   cancelPrePrintSequence(); // stop the homing routine if it's still running
   setFeederDriveStop(); // don't leave a manually-jogged feeder wheel spinning
@@ -10626,7 +10458,7 @@ function confirmStopPrint() {
   // Report what was printed / deposited before the stop, and log the partial
   // material used to the usage history.
   if (stopSummary) {
-    openPrintStopSummary(stopSummary);
+    printDialogsUi.openStopSummary(stopSummary);
     recordMaterialUsage(
       normalizeSpoolKey(hotspotMaterialsFocusSpoolKey) || "spool1",
       stopSummary.materialUsedGrams,
@@ -10681,7 +10513,7 @@ function updateTopbarPrintProgress() {
   if (finishEl) {
     const finishText =
       state !== "paused" && Number.isFinite(total) && total > 0
-        ? formatPrintFinishClock(remainSec)
+        ? printDialogsUi.formatFinishClock(remainSec)
         : "";
     if (finishEl.textContent !== finishText) finishEl.textContent = finishText;
   }
@@ -11846,9 +11678,9 @@ if (navPlayToggleEl) {
     // pulse on the (now "Play") button is applied by updateBottomNavState.
     const nowPaused = printSim.getState() === "paused";
     if (nowPaused) {
-      openPrintPauseNotice();
+      printDialogsUi.openPauseNotice();
     } else {
-      closePrintPauseNotice();
+      printDialogsUi.closePauseNotice();
     }
     // Machine is authoritative: send the matching command. On rejection, surface
     // it; the next telemetry snapshot will resync the visual to the real state.
@@ -11885,7 +11717,7 @@ if (navDoorToggleEl) {
     // confirmation first; otherwise it toggles the front door as before.
     const simState = printSim ? printSim.getState() : "idle";
     if (simState === "playing" || simState === "paused" || isPrePrintSequenceActive) {
-      openPrintStopConfirm();
+      printDialogsUi.openStopConfirm();
       return;
     }
     runBottomNavDoorToggleAction();
@@ -11895,7 +11727,7 @@ if (navDoorToggleEl) {
 if (printStopCancelEl) {
   printStopCancelEl.addEventListener("click", () => {
     markUserActivity();
-    closePrintStopConfirm();
+    printDialogsUi.closeStopConfirm();
   });
 }
 
@@ -11906,28 +11738,10 @@ if (printStopConfirmEl) {
   });
 }
 
-if (printStopConfirmModalEl) {
-  // Click on the scrim (outside the card) cancels, matching the other modals.
-  printStopConfirmModalEl.addEventListener("click", (event) => {
-    if (event.target === printStopConfirmModalEl) {
-      closePrintStopConfirm();
-    }
-  });
-}
-
 if (printStopSummaryCloseEl) {
   printStopSummaryCloseEl.addEventListener("click", () => {
     markUserActivity();
-    closePrintStopSummary();
-  });
-}
-
-if (printStopSummaryModalEl) {
-  // Click on the scrim (outside the card) dismisses the summary.
-  printStopSummaryModalEl.addEventListener("click", (event) => {
-    if (event.target === printStopSummaryModalEl) {
-      closePrintStopSummary();
-    }
+    printDialogsUi.closeStopSummary();
   });
 }
 
@@ -11944,7 +11758,7 @@ if (printCompleteAcceptEl) {
 if (printPauseResumeEl) {
   printPauseResumeEl.addEventListener("click", () => {
     markUserActivity();
-    closePrintPauseNotice();
+    printDialogsUi.closePauseNotice();
     if (printSim && printSim.getState() === "paused") {
       printSim.togglePlay();
       if (machineConnected()) {
@@ -11960,7 +11774,7 @@ if (printPauseResumeEl) {
 if (printPauseDismissEl) {
   printPauseDismissEl.addEventListener("click", () => {
     markUserActivity();
-    closePrintPauseNotice();
+    printDialogsUi.closePauseNotice();
   });
 }
 
@@ -12693,7 +12507,7 @@ window.MeltioMachine = {
         const state = printSim.getState();
         if (state !== "idle" && state !== "paused" && typeof printSim.togglePlay === "function") {
           printSim.togglePlay();
-          openPrintPauseNotice();
+          printDialogsUi.openPauseNotice();
           updateBottomNavState();
         }
       }
