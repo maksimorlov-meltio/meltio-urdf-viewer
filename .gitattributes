@@ -10,3 +10,7 @@
 # checks it out with CRLF on Windows and gate 8 reports the file as stale on
 # every fresh checkout — a gate that cries wolf gets ignored.
 contract-dom.json text eol=lf
+# Same, for the generated HTTP contract. Its gate compares parsed JSON so line
+# endings cannot make it flap, but a file that flips every byte on checkout
+# makes the release diff unreadable for the consumer tracking it.
+contract-http.json text eol=lf

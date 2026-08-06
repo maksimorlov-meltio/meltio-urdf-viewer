@@ -93,6 +93,20 @@ points at a missing file, which is a load-time-fatal 404 that kills the whole mo
 node tools/check_imports.mjs
 ```
 
+**`contract-http.json` (repo root, generated) is the third contract**: the HTTP surface an
+embedder must provide. It exists because the `release` branch ships `hmi/` + `viewer/` but not
+`app.py`, so a consumer that hosts those modules itself — notably the **.NET-only WPF host,
+which has no Python at all and reimplements this backend in C#** — otherwise has to
+reverse-engineer a file it does not have. Per route it records the method and path, whether a
+**published** module calls it (`calledBy` non-empty ⇒ not optional), and whether it enforces
+authorisation **server-side**. Regenerate after any route change; `apps/dev-host/tests/test_http_contract.py`
+fails the PR if it is stale, and asserts independently that the three security-bearing routes
+still enforce:
+
+```powershell
+.\.venv\Scripts\python.exe apps/dev-host/tools/gen_http_contract.py
+```
+
 **`contract.json` (repo root) is the UI↔host message contract** (v2, host-owned). Any new
 machine command the frontend emits must be declared there first (camelCase name, or listed
 as a legacy alias). CI enforces it:
