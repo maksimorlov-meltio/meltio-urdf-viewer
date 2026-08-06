@@ -35,6 +35,7 @@ import { t, applyDomTranslations, getLocale } from "/hmi/i18n/index.js";
 import { createCalendarUi, formatCalendarDateTime } from "/hmi/calendar.js";
 import { createNotificationsUi } from "/hmi/notifications.js";
 import { createSettingsUi } from "/hmi/settings.js";
+import { createMovePanelUi, canOperateMotion } from "/hmi/movePanel.js";
 import {
   initMaterialsUi,
   setMaterialsMenuOpen,
@@ -96,6 +97,10 @@ import {
 // every earlier reference lives inside listeners/arrows that run post-boot.
 let notificationsUi = null;
 let settingsUi = null;
+// Assigned where the old move-panel block used to sit, which is AFTER animate()
+// starts its rAF loop — hence the optional call in animate(), replacing the
+// `typeof updateMoveReadout === "function"` guard that served the same purpose.
+let movePanelUi = null;
 // Mirror of the module-owned advanced flag, updated via onAdvancedModeChanged;
 // read by cloud-control code that runs during the module's own init.
 let isAdvancedModeActive = false;
@@ -11374,7 +11379,7 @@ function animate(nowMs = performance.now()) {
   animateFeederWheels(deltaSeconds);
   animateWireDrumAppearance(deltaSeconds);
   updateJointControlTransitions(deltaSeconds);
-  if (typeof updateMoveReadout === "function") updateMoveReadout();
+  movePanelUi?.updateReadout();
   if (typeof updateTopbarPrintProgress === "function") updateTopbarPrintProgress();
   updateFilesMenuDoorSeeThrough();
   updateMaterialsModelLift(deltaSeconds);
@@ -12090,115 +12095,27 @@ if (topbarPanToggleEl) {
 }
 
 
-// ---- Move panel: X/Y/Z jog + step + live position readout -------------------
-// Drives the linear joints directly via setJointValue (the raw joint sliders are
-// hidden but still back the engine). Jog step is in mm; linear joint values are
-// metres, so mm/1000. WD reads the palpador/probe joint.
-let moveStepMm = 10;
-const MOVE_AXIS_JOINT = { x: EJE_X_JOINT, y: EJE_Y_JOINT, z: Z_AXIS_JOINT };
-// Smooth jog: glide the axis to its next step (constant velocity feel) instead of
-// snapping it there. Repeated presses accumulate from the last COMMANDED target
-// (not the mid-glide value) so N taps always equal N steps, even mid-motion.
-const JOG_SPEED_MM_S = 45;          // jog velocity used to derive the glide time
-const JOG_MIN_DURATION_SEC = 0.12;  // floor so a tiny step still eases, never snaps
-const HOME_DURATION_SEC = MOTION_PRESET_DURATION_SEC;
-const moveJogTargetM = { x: null, y: null, z: null };
-const moveReadoutEls = {
-  x: document.getElementById("movePosX"),
-  y: document.getElementById("movePosY"),
-  z: document.getElementById("movePosZ"),
-  wd: document.getElementById("movePosWd"),
-};
-// Polled from animate() (the joints move continuously during glides/prints),
-// but each readout cell is only written when its formatted text changes.
-const lastMoveReadoutText = { x: null, y: null, z: null, wd: null };
-
-function updateMoveReadout() {
-  const fmt = (name) => { const s = getJointStateByName(name); return s ? (s.value * 1000).toFixed(1) : "—"; };
-  const apply = (key, name) => {
-    const el = moveReadoutEls[key];
-    if (!el) return;
-    const text = fmt(name);
-    if (text !== lastMoveReadoutText[key]) {
-      lastMoveReadoutText[key] = text;
-      el.textContent = text;
-    }
-  };
-  apply("x", EJE_X_JOINT);
-  apply("y", EJE_Y_JOINT);
-  apply("z", Z_AXIS_JOINT);
-  apply("wd", PALPADOR_PRO_JOINT);
-}
-function canOperateMotion() {
-  // Defense in depth: re-check the capability inside the handler, never trusting
-  // the DOM's disabled state alone. A scripted/assistive-tech activation that
-  // slips past the visual gate must still be refused here.
-  return !(window.MeltioPermissions && typeof window.MeltioPermissions.can === "function"
-    && !window.MeltioPermissions.can("machine.motion"));
-}
-function jogMoveAxis(axis, dir) {
-  if (!canOperateMotion()) return;
-  // The jog D-pad drives the same joints (EJE_X/EJE_Y/Z_AXIS) the print-sim
-  // pins while a print is underway — jogging mid-print would corrupt the
-  // running toolpath. The Top Door sub-control in the same panel stays
-  // usable; only axis motion is blocked.
-  if (isPrintActivelyRunning()) {
-    showPrintNotice("Stop the print to jog the axes.");
-    return;
-  }
-  const name = MOVE_AXIS_JOINT[axis];
-  const state = name ? getJointStateByName(name) : null;
-  if (!state) return;
-  const deltaInternal = dir * (moveStepMm / 1000);
-  // While a glide is already running for this axis, keep stacking onto the last
-  // commanded target; otherwise start from where the axis actually is.
-  const transitionKey = `joint-preset:${state.name}`;
-  const base = (jointControlTransitions.has(transitionKey) && moveJogTargetM[axis] != null)
-    ? moveJogTargetM[axis] : state.value;
-  const next = Math.max(state.lower, Math.min(state.upper, base + deltaInternal));
-  moveJogTargetM[axis] = next;
-  // Constant-velocity feel: glide time scales with the distance actually travelled.
-  const distanceMm = Math.abs(next - state.value) * 1000;
-  const duration = Math.max(distanceMm / JOG_SPEED_MM_S, JOG_MIN_DURATION_SEC);
-  moveJointToValue(state, next, duration); // live readout + render handled by animate()
-  markUserActivity();
-}
-function homeMoveAxes(which) {
-  if (!canOperateMotion()) return;
-  // Same print-safety gate as jogMoveAxis — homing mid-print would corrupt
-  // the running toolpath.
-  if (isPrintActivelyRunning()) {
-    showPrintNotice("Stop the print to jog the axes.");
-    return;
-  }
-  const axes = which === "z" ? ["z"] : ["x", "y"];
-  let moved = false;
-  for (const axis of axes) {
-    const name = MOVE_AXIS_JOINT[axis];
-    const state = name ? getJointStateByName(name) : null;
-    if (!state) continue;
-    const target = Math.max(state.lower, Math.min(state.upper, 0)); // home = origin (readout 0.0)
-    moveJogTargetM[axis] = target;
-    moveJointToValue(state, target, HOME_DURATION_SEC);
-    moved = true;
-  }
-  if (moved) setMotionStatus(which === "z" ? "Homing Z" : "Homing XY");
-  markUserActivity();
-}
-document.querySelectorAll("[data-move-axis]").forEach((btn) => {
-  btn.addEventListener("click", () => jogMoveAxis(btn.getAttribute("data-move-axis"), Number(btn.getAttribute("data-move-dir")) || 1));
+// Move panel domain (hmi/movePanel.js) — owns the jog step, the per-axis
+// commanded targets, the readout cells and its own listeners. Motion-bearing:
+// the axis commands go through the injected moveJointToValue, and the
+// capability re-check lives in the module (canOperateMotion, imported above and
+// reused by the palpador sweep button).
+movePanelUi = createMovePanelUi({
+  joints: {
+    x: EJE_X_JOINT,
+    y: EJE_Y_JOINT,
+    z: Z_AXIS_JOINT,
+    probe: PALPADOR_PRO_JOINT,
+  },
+  getJointStateByName: (name) => getJointStateByName(name),
+  jointControlTransitions,
+  moveJointToValue: (state, value, duration) => moveJointToValue(state, value, duration),
+  isPrintActivelyRunning: () => isPrintActivelyRunning(),
+  showPrintNotice: (text) => showPrintNotice(text),
+  setMotionStatus: (text) => setMotionStatus(text),
+  markUserActivity: () => markUserActivity(),
+  homeDurationSec: MOTION_PRESET_DURATION_SEC,
 });
-document.querySelectorAll("[data-move-home]").forEach((btn) => {
-  btn.addEventListener("click", () => homeMoveAxes(btn.getAttribute("data-move-home")));
-});
-document.querySelectorAll("[data-move-step]").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    moveStepMm = Number(btn.getAttribute("data-move-step")) || 10;
-    document.querySelectorAll("[data-move-step]").forEach((b) => b.classList.toggle("is-active", b === btn));
-    markUserActivity();
-  });
-});
-updateMoveReadout();
 
 // Switching menus (any topbar icon or bottom-nav item) dismisses the transient
 // arrival toasts; the notifications remain in the notification center.
