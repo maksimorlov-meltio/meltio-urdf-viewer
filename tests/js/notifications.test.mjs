@@ -72,15 +72,37 @@ test("severity escalates to warning while a process is running", () => {
   }
 });
 
-test("coolant crosses to critical above 60 degrees", () => {
-  assert.equal(recordFor({ coolantFlowLow: true }, "coolant_warning").severity, "warning");
-  assert.equal(recordFor({ coolantTemperature: 59 }, "coolant_warning").severity, "warning");
+test("a reported coolant temperature is not a fault", () => {
+  // The condition was `coolantFlowLow || Number.isFinite(coolantTemperature)`,
+  // so ANY numeric reading raised the warning — permanently, on any machine
+  // that reports coolant telemetry at all.
+  for (const nominal of [0, 20, 48, 59, 60]) {
+    assert.deepEqual(typesFor({ coolantTemperature: nominal }), [],
+      `${nominal} C is nominal and must stay silent`);
+  }
+});
+
+test("coolant warns above 60 degrees, and on a low-flow flag at any temperature", () => {
+  assert.deepEqual(typesFor({ coolantTemperature: 61 }), ["coolant_warning"]);
   assert.equal(recordFor({ coolantTemperature: 61 }, "coolant_warning").severity, "critical");
+  assert.deepEqual(typesFor({ coolantFlowLow: true }), ["coolant_warning"]);
+  assert.equal(recordFor({ coolantFlowLow: true }, "coolant_warning").severity, "warning",
+    "low flow without over-temperature is a warning, not critical");
+  assert.equal(recordFor({ coolantFlowLow: true, coolantTemperature: 65 }, "coolant_warning").severity,
+    "critical");
 });
 
 test("internet is reported by absence, and only when explicitly disconnected", () => {
   assert.deepEqual(typesFor({ internetConnected: true }), []);
   assert.deepEqual(typesFor({ internetConnected: false }), ["internet_connection_unavailable"]);
+});
+
+test("with no machine linked, the console raises nothing at all", () => {
+  // The standalone demo used to show a permanent, false "internet connection
+  // unavailable" (connectivity was scraped from a #topbarConnection label that
+  // is not in the page) plus a permanent coolant warning. Both are the state an
+  // operator sees on a console that is working perfectly.
+  assert.deepEqual(ui.buildSignalRecords(ui.getSignalsSnapshot()), []);
 });
 
 test("simultaneous faults all surface, each once", () => {

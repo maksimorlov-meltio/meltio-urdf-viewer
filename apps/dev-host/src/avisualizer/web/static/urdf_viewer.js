@@ -46,8 +46,6 @@ import {
   setHotspotMaterialsFocusSpool,
   updateSpoolSelectionCards,
   updateHotspotMaterialAssignmentStatus,
-  updateHotspotMaterialAssignButtons,
-  updateHotspotMaterialUnloadButtons,
   updateFocusedSpoolAmountInput,
   populateHotspotMaterialSelect,
   openMaterialsPanelForSpool,
@@ -2520,8 +2518,6 @@ function setActiveHotspotPanel(panelId) {
   if (normalizedPanelId === HOTSPOT_PANEL_MATERIALS_ID) {
     const focusedSpoolKey = ensureHotspotMaterialsFocusSpool();
     syncHotspotMaterialSelectionForSpool(focusedSpoolKey);
-    updateHotspotMaterialAssignButtons();
-    updateHotspotMaterialUnloadButtons();
     updateHotspotMaterialAssignmentStatus();
     setSpoolAssemblyHighlight(focusedSpoolKey);
   }
@@ -12578,8 +12574,6 @@ updateSpoolSelectionCards();
 ensureHotspotMaterialsFocusSpool();
 syncHotspotMaterialSelectionForSpool(hotspotMaterialsFocusSpoolKey);
 updateFocusedSpoolAmountInput();
-updateHotspotMaterialAssignButtons();
-updateHotspotMaterialUnloadButtons();
 updateHotspotMaterialAssignmentStatus();
 updateFilesSelectedSpoolFeederButtons();
 keepHotspotContextPanelVisible = false;

@@ -917,6 +917,25 @@
             <span id="materialsSpool2Status" class="spool-select-status status-unassigned">Not assigned</span>
           </span>
         </button>
+
+        <!-- Third feedstock: the wire drum. Its state, scene visibility and
+             assignment logic already existed; the card was never added, so the
+             drum could be selected as a feed type but never seen or edited.
+             Full-width row under the two spools (.spool-select-card-wide). -->
+        <button id="materialsSpoolCardWireDrum" class="spool-select-card spool-select-card-wide" type="button" aria-pressed="false" data-spool-key="wiredrum">
+          <span class="spool-select-card-header">
+            <span class="spool-select-icon" aria-hidden="true"></span>
+            <span class="spool-select-name">Wire Drum</span>
+          </span>
+          <span id="materialsWireDrumMaterial" class="spool-select-material">Not assigned</span>
+          <span class="spool-select-meta">
+            <span class="spool-select-type">Drum</span>
+            <span class="spool-select-meta-sep" aria-hidden="true">·</span>
+            <span id="materialsWireDrumAmount" class="spool-select-amount">15000g</span>
+            <span class="spool-select-meta-sep" aria-hidden="true">·</span>
+            <span id="materialsWireDrumStatus" class="spool-select-status status-unassigned">Not assigned</span>
+          </span>
+        </button>
       </div>
 
       <div class="control-row">
@@ -987,6 +1006,23 @@
   </button>
 
   <div id="annotationLayer" class="annotation-layer" aria-hidden="true"></div>
+
+  <!-- Feeder-wheel floating jog: an Up/Stop/Down panel that tracks each feeder
+       wheel on screen while its camera anchor is active (the docked twin lives
+       in the Controls panel). viewer/overlays/feederWheelFloat.js projects the
+       wheel anchor and positions these via transform; both are motion-bearing,
+       so they carry the same machine.motion gate as the docked panel. -->
+  <div id="feederWheelFloatingLeft" class="feeder-wheel-floating-controls" data-requires-permission="machine.motion" aria-label="Left feeder wheel jog" hidden aria-hidden="true">
+    <button id="feederWheelFloatLeftUp" class="tool-btn" type="button" aria-pressed="false" aria-label="Left feeder wheel up">&#9650;</button>
+    <button id="feederWheelFloatLeftStop" class="tool-btn feeder-wheel-stop-button" type="button" aria-pressed="false" aria-label="Stop left feeder wheel">STOP</button>
+    <button id="feederWheelFloatLeftDown" class="tool-btn" type="button" aria-pressed="false" aria-label="Left feeder wheel down">&#9660;</button>
+  </div>
+
+  <div id="feederWheelFloatingRight" class="feeder-wheel-floating-controls" data-requires-permission="machine.motion" aria-label="Right feeder wheel jog" hidden aria-hidden="true">
+    <button id="feederWheelFloatRightUp" class="tool-btn" type="button" aria-pressed="false" aria-label="Right feeder wheel up">&#9650;</button>
+    <button id="feederWheelFloatRightStop" class="tool-btn feeder-wheel-stop-button" type="button" aria-pressed="false" aria-label="Stop right feeder wheel">STOP</button>
+    <button id="feederWheelFloatRightDown" class="tool-btn" type="button" aria-pressed="false" aria-label="Right feeder wheel down">&#9660;</button>
+  </div>
 
   <!-- Transient arrival toasts for new critical/warning notifications. -->
   <div id="notificationToastLayer" class="notification-toast-layer" aria-live="polite" aria-atomic="false"></div>

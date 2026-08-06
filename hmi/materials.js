@@ -20,7 +20,6 @@ import {
   selectedPrintJobActualGrams,
   normalizeSpoolKey,
   getMaterialLabelById,
-  getMaterialSpecById,
   getMaterialChipColor,
   getSpoolDisplayLabel,
   getSpoolStatusState,
@@ -35,7 +34,6 @@ import {
   formatGramsText,
   initMaterialsState,
 } from "./state/materialsState.js";
-import { t } from "./i18n/index.js";
 
 // Host-side edges (god-file scene/state), injected by initMaterialsUi().
 let deps = {};
@@ -65,7 +63,6 @@ export function isTargetInsideMaterialsPopup(target) {
 }
 
 // Shared with host-side code (same DOM nodes; duplicate lookups are harmless).
-const hotspotContextTitleEl = document.getElementById("hotspotContextTitle");
 const slicerFrameEl = document.getElementById("slicerFrame");
 const printMaterialWarningEl = document.getElementById("printMaterialWarning");
 const printMaterialWarningTextEl = document.getElementById("printMaterialWarningText");
@@ -73,9 +70,6 @@ const printMaterialReassignModalEl = document.getElementById("printMaterialReass
 const printMaterialReassignTextEl = document.getElementById("printMaterialReassignText");
 const printMaterialReassignCancelEl = document.getElementById("printMaterialReassignCancel");
 const printMaterialReassignConfirmEl = document.getElementById("printMaterialReassignConfirm");
-const hotspotMaterialSelectEl = document.getElementById("hotspotMaterialSelect");
-const hotspotMaterialLoadActionEl = document.getElementById("hotspotMaterialLoadAction");
-const hotspotMaterialUnloadActionEl = document.getElementById("hotspotMaterialUnloadAction");
 const hotspotMaterialAssignmentStatusEl = document.getElementById("hotspotMaterialAssignmentStatus");
 const hotspotSpoolCard1El = document.getElementById("hotspotSpoolCard1");
 const hotspotSpoolCard2El = document.getElementById("hotspotSpoolCard2");
@@ -89,8 +83,6 @@ const hotspotSpool1AmountEl = document.getElementById("hotspotSpool1Amount");
 const hotspotSpool2AmountEl = document.getElementById("hotspotSpool2Amount");
 const hotspotSpool1StatusEl = document.getElementById("hotspotSpool1Status");
 const hotspotSpool2StatusEl = document.getElementById("hotspotSpool2Status");
-const hotspotSpoolAmountInputEl = document.getElementById("hotspotSpoolAmountInput");
-const hotspotSpoolAmountValidationEl = document.getElementById("hotspotSpoolAmountValidation");
 const hotspotMaterialUsageStatusEl = document.getElementById("hotspotMaterialUsageStatus");
 const hotspotMaterialRequiredStatusEl = document.getElementById("hotspotMaterialRequiredStatus");
 const hotspotMaterialPrintWarningEl = document.getElementById("hotspotMaterialPrintWarning");
@@ -104,9 +96,6 @@ const filesSpool1AmountEl = document.getElementById("filesSpool1Amount");
 const filesSpool2AmountEl = document.getElementById("filesSpool2Amount");
 const filesSpool1StatusEl = document.getElementById("filesSpool1Status");
 const filesSpool2StatusEl = document.getElementById("filesSpool2Status");
-const filesMaterialSelectEl = document.getElementById("filesMaterialSelect");
-const filesMaterialLoadActionEl = document.getElementById("filesMaterialLoadAction");
-const filesMaterialUnloadActionEl = document.getElementById("filesMaterialUnloadAction");
 const filesMaterialAssignmentStatusEl = document.getElementById("filesMaterialAssignmentStatus");
 const materialsMenuPopupEl = document.getElementById("materialsMenuPopup");
 const materialsMenuPopupHeaderEl = materialsMenuPopupEl
@@ -116,8 +105,6 @@ const materialsMenuCloseEl = document.getElementById("materialsMenuClose");
 const materialsReturnToSlicerEl = document.getElementById("materialsReturnToSlicer");
 const materialsHistoryToggleEl = document.getElementById("materialsHistoryToggle");
 const materialsMenuBodyEl = document.getElementById("materialsMenuBody");
-const materialInfoNameEl = document.getElementById("materialInfoName");
-const materialInfoRowsEl = document.getElementById("materialInfoRows");
 const materialsHistoryViewEl = document.getElementById("materialsHistoryView");
 const materialsHistoryListEl = document.getElementById("materialsHistoryList");
 const materialsHistoryEmptyEl = document.getElementById("materialsHistoryEmpty");
@@ -127,27 +114,19 @@ const materialsSpoolCard1El = document.getElementById("materialsSpoolCard1");
 const materialsSpoolCard2El = document.getElementById("materialsSpoolCard2");
 const materialsSpool1MaterialEl = document.getElementById("materialsSpool1Material");
 const materialsSpool2MaterialEl = document.getElementById("materialsSpool2Material");
-const materialsSpool1InitialAmountEl = document.getElementById("materialsSpool1InitialAmount");
-const materialsSpool2InitialAmountEl = document.getElementById("materialsSpool2InitialAmount");
-const materialsSpool1UsedAmountEl = document.getElementById("materialsSpool1UsedAmount");
-const materialsSpool2UsedAmountEl = document.getElementById("materialsSpool2UsedAmount");
 const materialsSpool1AmountEl = document.getElementById("materialsSpool1Amount");
 const materialsSpool2AmountEl = document.getElementById("materialsSpool2Amount");
 const materialsSpool1StatusEl = document.getElementById("materialsSpool1Status");
 const materialsSpool2StatusEl = document.getElementById("materialsSpool2Status");
 const materialsSpoolCardWireDrumEl = document.getElementById("materialsSpoolCardWireDrum");
 const materialsWireDrumMaterialEl = document.getElementById("materialsWireDrumMaterial");
-const materialsWireDrumInitialAmountEl = document.getElementById("materialsWireDrumInitialAmount");
-const materialsWireDrumUsedAmountEl = document.getElementById("materialsWireDrumUsedAmount");
 const materialsWireDrumAmountEl = document.getElementById("materialsWireDrumAmount");
 const materialsWireDrumStatusEl = document.getElementById("materialsWireDrumStatus");
 const materialsMaterialSelectEl = document.getElementById("materialsMaterialSelect");
 const materialsSpoolAmountInputEl = document.getElementById("materialsSpoolAmountInput");
 const materialsSpoolAmountValidationEl = document.getElementById("materialsSpoolAmountValidation");
-const materialsConfirmActionEl = document.getElementById("materialsConfirmAction");
 const materialsConfirmStatusEl = document.getElementById("materialsConfirmStatus");
 const materialsMenuUsageStatusEl = document.getElementById("materialsMenuUsageStatus");
-const materialsMenuRequiredStatusEl = document.getElementById("materialsMenuRequiredStatus");
 const materialsMenuPrintWarningEl = document.getElementById("materialsMenuPrintWarning");
 
 export function getSelectedPrintJobUsedGrams() {
@@ -216,13 +195,15 @@ const SPOOL_CARDS = [
   { key: "spool2", card: filesSpoolCard2El, material: filesSpool2MaterialEl,
     initial: null, used: null, amount: filesSpool2AmountEl, status: filesSpool2StatusEl },
   { key: "spool1", card: materialsSpoolCard1El, material: materialsSpool1MaterialEl,
-    initial: materialsSpool1InitialAmountEl, used: materialsSpool1UsedAmountEl,
+    initial: null, used: null,  // the popup shows the breakdown in materialsMenuUsageStatus
     amount: materialsSpool1AmountEl, status: materialsSpool1StatusEl },
   { key: "spool2", card: materialsSpoolCard2El, material: materialsSpool2MaterialEl,
-    initial: materialsSpool2InitialAmountEl, used: materialsSpool2UsedAmountEl,
+    initial: null, used: null,
     amount: materialsSpool2AmountEl, status: materialsSpool2StatusEl },
+  // Same shape as the two spool cards above it: the popup shows the breakdown
+  // once, in materialsMenuUsageStatus, not per card.
   { key: "wiredrum", card: materialsSpoolCardWireDrumEl, material: materialsWireDrumMaterialEl,
-    initial: materialsWireDrumInitialAmountEl, used: materialsWireDrumUsedAmountEl,
+    initial: null, used: null,
     amount: materialsWireDrumAmountEl, status: materialsWireDrumStatusEl },
 ];
 
@@ -253,7 +234,6 @@ export function updateSpoolSelectionCards() {
 
   for (const entry of SPOOL_CARDS) renderSpoolCard(entry, focusedSpoolKey);
 
-  updateMaterialInfoPanel();
   updateMaterialsFeederTypeUI();
   // Loaded amounts may have changed (load / unload / print consumption): a spool or
   // the drum with 0 g loaded must become invisible, so refresh 3D visibility here.
@@ -290,7 +270,6 @@ export function unloadFocusedFeeder() {
   }
   setSpoolAmountState(focusedKey, 0, { resetUsage: true });
   setMaterialsMenuAmountValidationMessage("");
-  setSpoolAmountValidationMessage("");
   setMaterialsMenuConfirmMessage(`${focusedLabel} unloaded.`);
   updateSpoolSelectionCards();
   updateHotspotMaterialAssignmentStatus();
@@ -305,8 +284,6 @@ export function setMaterialActionLoadingState(spoolKey, isLoading) {
   }
 
   hotspotMaterialActionLoadingBySpool[normalizedSpoolKey] = Boolean(isLoading);
-  updateHotspotMaterialAssignButtons();
-  updateHotspotMaterialUnloadButtons();
 }
 
 export function ensureHotspotMaterialsFocusSpool() {
@@ -333,12 +310,6 @@ export function syncHotspotMaterialSelectionForSpool(spoolKey) {
     selectedHotspotMaterialId = MELTIO_MATERIAL_LIBRARY[0].id;
   }
 
-  if (hotspotMaterialSelectEl) {
-    hotspotMaterialSelectEl.value = selectedHotspotMaterialId || "";
-  }
-  if (filesMaterialSelectEl) {
-    filesMaterialSelectEl.value = selectedHotspotMaterialId || "";
-  }
   if (materialsMaterialSelectEl) {
     materialsMaterialSelectEl.value = selectedHotspotMaterialId || "";
   }
@@ -352,21 +323,7 @@ export function setHotspotMaterialsFocusSpool(spoolKey) {
     hotspotMaterialsFocusSpoolKey = "spool1";
   }
 
-  if (hotspotContextTitleEl && deps.getActiveHotspotPanelId() === deps.HOTSPOT_PANEL_MATERIALS_ID) {
-    if (hotspotMaterialsFocusSpoolKey === "spool1") {
-      hotspotContextTitleEl.textContent = "Spool 1";
-    } else if (hotspotMaterialsFocusSpoolKey === "spool2") {
-      hotspotContextTitleEl.textContent = "Spool 2";
-    } else if (hotspotMaterialsFocusSpoolKey === "wiredrum") {
-      hotspotContextTitleEl.textContent = "Wire Drum";
-    } else {
-      hotspotContextTitleEl.textContent = t("materials.title");
-    }
-  }
-
   syncHotspotMaterialSelectionForSpool(hotspotMaterialsFocusSpoolKey);
-  updateHotspotMaterialAssignButtons();
-  updateHotspotMaterialUnloadButtons();
   updateHotspotMaterialAssignmentStatus();
   updateSpoolSelectionCards();
 
@@ -376,21 +333,6 @@ export function setHotspotMaterialsFocusSpool(spoolKey) {
 
   updateFocusedSpoolAmountInput();
   deps.updateFilesSelectedSpoolFeederButtons();
-}
-
-export function setSpoolAmountValidationMessage(message) {
-  if (!hotspotSpoolAmountValidationEl) {
-    return;
-  }
-
-  if (message) {
-    hotspotSpoolAmountValidationEl.hidden = false;
-    hotspotSpoolAmountValidationEl.textContent = message;
-    return;
-  }
-
-  hotspotSpoolAmountValidationEl.hidden = true;
-  hotspotSpoolAmountValidationEl.textContent = "";
 }
 
 export function setMaterialsMenuAmountValidationMessage(message) {
@@ -442,10 +384,6 @@ export function updateFocusedSpoolAmountInput() {
   const focusedSpoolKey = normalizeSpoolKey(hotspotMaterialsFocusSpoolKey) || "spool1";
   const amountText = String(Math.round(Number(spoolManualAmountGramsByKey[focusedSpoolKey]) || 0));
 
-  if (hotspotSpoolAmountInputEl) {
-    hotspotSpoolAmountInputEl.value = amountText;
-  }
-
   if (materialsSpoolAmountInputEl) {
     materialsSpoolAmountInputEl.value = amountText;
   }
@@ -456,14 +394,12 @@ export function commitFocusedSpoolManualAmount(rawValue) {
   const { grams, error } = parseMaterialAmountInput(rawValue);
 
   if (error || grams === null) {
-    setSpoolAmountValidationMessage(error);
     setMaterialsMenuAmountValidationMessage(error);
     return false;
   }
 
   setSpoolAmountState(focusedSpoolKey, grams, { resetUsage: true });
 
-  setSpoolAmountValidationMessage("");
   setMaterialsMenuAmountValidationMessage("");
   updateSpoolSelectionCards();
   updateHotspotMaterialAssignmentStatus();
@@ -671,33 +607,6 @@ export function formatUsageTs(ts) {
   });
 }
 
-// Populate the "Material information" panel for the focused spool's material:
-// full spec (type, wire diameter, density, thermal conductivity) + amounts.
-export function updateMaterialInfoPanel() {
-  if (!materialInfoRowsEl) {
-    return;
-  }
-  const key = normalizeSpoolKey(hotspotMaterialsFocusSpoolKey) || "spool1";
-  const spec = getMaterialSpecById(hotspotMaterialAssignments[key]);
-  if (materialInfoNameEl) {
-    materialInfoNameEl.textContent = spec ? spec.label : "No material assigned";
-  }
-  const rows = [["Spool", getSpoolDisplayLabel(key)]];
-  if (spec) {
-    rows.push(["Type", spec.category]);
-    rows.push(["Wire diameter", `${spec.wireDiameterMm} mm`]);
-    rows.push(["Density", `${spec.densityGCm3} g/cm³`]);
-    rows.push(["Thermal conductivity", `${spec.thermalWmK} W/m·K`]);
-  }
-  rows.push(["Initial", formatGramsText(spoolManualAmountGramsByKey[key])]);
-  rows.push(["Used", formatGramsText(spoolUsedAmountGramsByKey[key])]);
-  rows.push(["Remaining", formatGramsText(spoolRemainingAmountGramsByKey[key])]);
-  rows.push(["Required (current job)", formatGramsText(getSelectedPrintJobRequiredGrams())]);
-  materialInfoRowsEl.innerHTML = rows
-    .map(([k, v]) => `<div class="material-info-row"><dt>${deps.escapeHtml(k)}</dt><dd>${deps.escapeHtml(String(v))}</dd></div>`)
-    .join("");
-}
-
 // Render the per-print usage history (newest first) + a totals summary.
 export function renderMaterialUsageHistory() {
   if (!materialsHistoryListEl) {
@@ -788,10 +697,6 @@ export function updateHotspotMaterialAssignmentStatus() {
   if (materialsMenuUsageStatusEl) {
     materialsMenuUsageStatusEl.textContent = `Used: ${formatGramsText(usedGrams)} | Left: ${formatGramsText(leftGrams)}`;
   }
-  if (materialsMenuRequiredStatusEl) {
-    materialsMenuRequiredStatusEl.textContent = `Required: ${formatGramsText(requiredGrams)}`;
-  }
-
   const hasAssignedMaterial = Boolean(hotspotMaterialAssignments[focusedSpoolKey]);
   const hasNotEnoughMaterial = hasAssignedMaterial && leftGrams < requiredGrams;
   const filesStatusParts = [
@@ -829,86 +734,12 @@ export function updateHotspotMaterialAssignmentStatus() {
   }
 }
 
-export function updateHotspotMaterialAssignButtons() {
-  const focusedSpoolKey = normalizeSpoolKey(hotspotMaterialsFocusSpoolKey);
-  const hasSelection = Boolean(selectedHotspotMaterialId);
-  const isLoading = Boolean(focusedSpoolKey && hotspotMaterialActionLoadingBySpool[focusedSpoolKey]);
-  const isSelectedMaterialAssigned = Boolean(
-    hasSelection
-      && focusedSpoolKey
-      && hotspotMaterialAssignments[focusedSpoolKey] === selectedHotspotMaterialId,
-  );
-
-  deps.setToggleButtonState(
-    hotspotMaterialLoadActionEl,
-    isSelectedMaterialAssigned,
-    !hasSelection || !focusedSpoolKey || isLoading,
-  );
-
-  if (hotspotMaterialLoadActionEl) {
-    hotspotMaterialLoadActionEl.classList.toggle("is-loading", isLoading);
-    hotspotMaterialLoadActionEl.setAttribute("aria-busy", isLoading ? "true" : "false");
-  }
-
-  deps.setToggleButtonState(
-    filesMaterialLoadActionEl,
-    isSelectedMaterialAssigned,
-    !hasSelection || !focusedSpoolKey || isLoading,
-  );
-  if (filesMaterialLoadActionEl) {
-    filesMaterialLoadActionEl.classList.toggle("is-loading", isLoading);
-    filesMaterialLoadActionEl.setAttribute("aria-busy", isLoading ? "true" : "false");
-  }
-}
-
-export function updateHotspotMaterialUnloadButtons() {
-  const focusedSpoolKey = normalizeSpoolKey(hotspotMaterialsFocusSpoolKey);
-  const isLoading = Boolean(focusedSpoolKey && hotspotMaterialActionLoadingBySpool[focusedSpoolKey]);
-  const isFocusedSpoolLoaded = Boolean(
-    focusedSpoolKey && hotspotMaterialAssignments[focusedSpoolKey],
-  );
-
-  deps.setToggleButtonState(hotspotMaterialUnloadActionEl, false, !isFocusedSpoolLoaded || isLoading);
-  if (hotspotMaterialUnloadActionEl) {
-    hotspotMaterialUnloadActionEl.classList.toggle("is-loading", isLoading);
-    hotspotMaterialUnloadActionEl.setAttribute("aria-busy", isLoading ? "true" : "false");
-  }
-
-  deps.setToggleButtonState(filesMaterialUnloadActionEl, false, !isFocusedSpoolLoaded || isLoading);
-  if (filesMaterialUnloadActionEl) {
-    filesMaterialUnloadActionEl.classList.toggle("is-loading", isLoading);
-    filesMaterialUnloadActionEl.setAttribute("aria-busy", isLoading ? "true" : "false");
-  }
-}
-
 export function populateHotspotMaterialSelect() {
-  if (!hotspotMaterialSelectEl && !filesMaterialSelectEl && !materialsMaterialSelectEl) {
-    return;
-  }
-
-  if (hotspotMaterialSelectEl) {
-    hotspotMaterialSelectEl.innerHTML = "";
-  }
-  if (filesMaterialSelectEl) {
-    filesMaterialSelectEl.innerHTML = "";
-  }
   if (materialsMaterialSelectEl) {
     materialsMaterialSelectEl.innerHTML = "";
   }
 
   for (const material of MELTIO_MATERIAL_LIBRARY) {
-    if (hotspotMaterialSelectEl) {
-      const hotspotOptionEl = document.createElement("option");
-      hotspotOptionEl.value = material.id;
-      hotspotOptionEl.textContent = material.label;
-      hotspotMaterialSelectEl.appendChild(hotspotOptionEl);
-    }
-    if (filesMaterialSelectEl) {
-      const filesOptionEl = document.createElement("option");
-      filesOptionEl.value = material.id;
-      filesOptionEl.textContent = material.label;
-      filesMaterialSelectEl.appendChild(filesOptionEl);
-    }
     if (materialsMaterialSelectEl) {
       const materialsOptionEl = document.createElement("option");
       materialsOptionEl.value = material.id;
@@ -919,17 +750,9 @@ export function populateHotspotMaterialSelect() {
 
   if (!MELTIO_MATERIAL_LIBRARY.length) {
     selectedHotspotMaterialId = null;
-    if (hotspotMaterialSelectEl) {
-      hotspotMaterialSelectEl.value = "";
-    }
-    if (filesMaterialSelectEl) {
-      filesMaterialSelectEl.value = "";
-    }
     if (materialsMaterialSelectEl) {
       materialsMaterialSelectEl.value = "";
     }
-    updateHotspotMaterialAssignButtons();
-    updateHotspotMaterialUnloadButtons();
     updateHotspotMaterialAssignmentStatus();
     updateSpoolSelectionCards();
     return;
@@ -940,17 +763,9 @@ export function populateHotspotMaterialSelect() {
     selectedHotspotMaterialId = MELTIO_MATERIAL_LIBRARY[0].id;
   }
 
-  if (hotspotMaterialSelectEl) {
-    hotspotMaterialSelectEl.value = selectedHotspotMaterialId;
-  }
-  if (filesMaterialSelectEl) {
-    filesMaterialSelectEl.value = selectedHotspotMaterialId;
-  }
   if (materialsMaterialSelectEl) {
     materialsMaterialSelectEl.value = selectedHotspotMaterialId;
   }
-  updateHotspotMaterialAssignButtons();
-  updateHotspotMaterialUnloadButtons();
   updateHotspotMaterialAssignmentStatus();
   updateSpoolSelectionCards();
 }
@@ -964,8 +779,6 @@ export function assignSelectedMaterialToSpool(spoolKey) {
   setMaterialActionLoadingState(normalizedSpoolKey, true);
   hotspotMaterialAssignments[normalizedSpoolKey] = selectedHotspotMaterialId;
   setHotspotMaterialsFocusSpool(normalizedSpoolKey);
-  updateHotspotMaterialAssignButtons();
-  updateHotspotMaterialUnloadButtons();
   updateHotspotMaterialAssignmentStatus();
   updateSpoolSelectionCards();
   persistMaterialsState();
@@ -984,8 +797,6 @@ export function unloadMaterialFromSpool(spoolKey) {
   setMaterialActionLoadingState(normalizedSpoolKey, true);
   hotspotMaterialAssignments[normalizedSpoolKey] = null;
   setHotspotMaterialsFocusSpool(normalizedSpoolKey);
-  updateHotspotMaterialAssignButtons();
-  updateHotspotMaterialUnloadButtons();
   updateHotspotMaterialAssignmentStatus();
   updateSpoolSelectionCards();
   persistMaterialsState();
@@ -1006,8 +817,6 @@ export function openMaterialsPanelForSpool(spoolKey) {
   deps.setKeepHotspotContextPanelVisible(true);
   setHotspotMaterialsFocusSpool(normalizedSpoolKey);
   deps.setActiveHotspotPanel(deps.HOTSPOT_PANEL_MATERIALS_ID);
-  updateHotspotMaterialAssignButtons();
-  updateHotspotMaterialUnloadButtons();
   updateHotspotMaterialAssignmentStatus();
   deps.setSpoolAssemblyHighlight(normalizedSpoolKey);
   return true;
@@ -1027,7 +836,6 @@ export function commitMaterialsMenuSelection() {
   const { grams, error } = parseMaterialAmountInput(rawAmount);
   if (error || grams === null) {
     setMaterialsMenuAmountValidationMessage(error);
-    setSpoolAmountValidationMessage(error);
     setMaterialsMenuConfirmMessage("");
     return false;
   }
@@ -1036,7 +844,6 @@ export function commitMaterialsMenuSelection() {
   setSpoolAmountState(focusedSpoolKey, grams, { resetUsage: true });
 
   setMaterialsMenuAmountValidationMessage("");
-  setSpoolAmountValidationMessage("");
   setMaterialsMenuConfirmMessage(`${focusedSpoolLabel} updated.`);
   updateSpoolSelectionCards();
   updateHotspotMaterialAssignmentStatus();
@@ -1290,69 +1097,12 @@ export function initMaterialsUi(nextDeps) {
 }
 
 function wireMaterialsUi() {
-  if (hotspotMaterialSelectEl) {
-    hotspotMaterialSelectEl.addEventListener("change", () => {
-      deps.markUserActivity();
-      selectedHotspotMaterialId = hotspotMaterialSelectEl.value || null;
-      if (filesMaterialSelectEl && filesMaterialSelectEl.value !== (selectedHotspotMaterialId || "")) {
-        filesMaterialSelectEl.value = selectedHotspotMaterialId || "";
-      }
-      if (materialsMaterialSelectEl && materialsMaterialSelectEl.value !== (selectedHotspotMaterialId || "")) {
-        materialsMaterialSelectEl.value = selectedHotspotMaterialId || "";
-      }
-      updateHotspotMaterialAssignButtons();
-      updateHotspotMaterialUnloadButtons();
-      updateHotspotMaterialAssignmentStatus();
-      setMaterialsMenuConfirmMessage("");
-    });
-  }
-
-  if (filesMaterialSelectEl) {
-    filesMaterialSelectEl.addEventListener("change", () => {
-      deps.markUserActivity();
-      selectedHotspotMaterialId = filesMaterialSelectEl.value || null;
-      if (hotspotMaterialSelectEl && hotspotMaterialSelectEl.value !== (selectedHotspotMaterialId || "")) {
-        hotspotMaterialSelectEl.value = selectedHotspotMaterialId || "";
-      }
-      if (materialsMaterialSelectEl && materialsMaterialSelectEl.value !== (selectedHotspotMaterialId || "")) {
-        materialsMaterialSelectEl.value = selectedHotspotMaterialId || "";
-      }
-      updateHotspotMaterialAssignButtons();
-      updateHotspotMaterialUnloadButtons();
-      updateHotspotMaterialAssignmentStatus();
-      setMaterialsMenuConfirmMessage("");
-    });
-  }
-
   if (materialsMaterialSelectEl) {
     materialsMaterialSelectEl.addEventListener("change", () => {
       deps.markUserActivity();
       selectedHotspotMaterialId = materialsMaterialSelectEl.value || null;
-      if (hotspotMaterialSelectEl && hotspotMaterialSelectEl.value !== (selectedHotspotMaterialId || "")) {
-        hotspotMaterialSelectEl.value = selectedHotspotMaterialId || "";
-      }
-      if (filesMaterialSelectEl && filesMaterialSelectEl.value !== (selectedHotspotMaterialId || "")) {
-        filesMaterialSelectEl.value = selectedHotspotMaterialId || "";
-      }
-      updateHotspotMaterialAssignButtons();
-      updateHotspotMaterialUnloadButtons();
       updateHotspotMaterialAssignmentStatus();
       setMaterialsMenuConfirmMessage("");
-    });
-  }
-
-  if (hotspotSpoolAmountInputEl) {
-    hotspotSpoolAmountInputEl.addEventListener("input", () => {
-      deps.markUserActivity();
-      commitFocusedSpoolManualAmount(hotspotSpoolAmountInputEl.value);
-    });
-
-    hotspotSpoolAmountInputEl.addEventListener("change", () => {
-      deps.markUserActivity();
-      const committed = commitFocusedSpoolManualAmount(hotspotSpoolAmountInputEl.value);
-      if (!committed) {
-        updateFocusedSpoolAmountInput();
-      }
     });
   }
 
@@ -1372,13 +1122,6 @@ function wireMaterialsUi() {
     materialsSpoolAmountInputEl.addEventListener("change", () => {
       deps.markUserActivity();
       validateMaterialsMenuAmount();
-    });
-  }
-
-  if (materialsConfirmActionEl) {
-    materialsConfirmActionEl.addEventListener("click", () => {
-      deps.markUserActivity();
-      commitMaterialsMenuSelection();
     });
   }
 
@@ -1439,34 +1182,6 @@ function wireMaterialsUi() {
       deps.markUserActivity();
       const showingHistory = materialsHistoryViewEl && !materialsHistoryViewEl.hidden;
       setMaterialsHistoryOpen(!showingHistory);
-    });
-  }
-
-  if (hotspotMaterialLoadActionEl) {
-    hotspotMaterialLoadActionEl.addEventListener("click", () => {
-      deps.markUserActivity();
-      assignSelectedMaterialToSpool();
-    });
-  }
-
-  if (filesMaterialLoadActionEl) {
-    filesMaterialLoadActionEl.addEventListener("click", () => {
-      deps.markUserActivity();
-      assignSelectedMaterialToSpool();
-    });
-  }
-
-  if (hotspotMaterialUnloadActionEl) {
-    hotspotMaterialUnloadActionEl.addEventListener("click", () => {
-      deps.markUserActivity();
-      unloadMaterialFromSpool();
-    });
-  }
-
-  if (filesMaterialUnloadActionEl) {
-    filesMaterialUnloadActionEl.addEventListener("click", () => {
-      deps.markUserActivity();
-      unloadMaterialFromSpool();
     });
   }
 
