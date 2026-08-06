@@ -10,6 +10,8 @@ __pycache__/
 *.egg-info/
 .eggs/
 build/
+# Bare `dist/` — matches setuptools output AND the frontend esbuild bundle dir.
+# That double duty is intentional but easy to miss; see the Node section below.
 dist/
 .pytest_cache/
 .mypy_cache/
@@ -18,6 +20,12 @@ htmlcov/
 
 # --- Node / frontend build output ---
 node_modules/
+# NOTE: the esbuild bundle (apps/dev-host/.../static/dist/) is covered by the
+# bare `dist/` rule above and is deliberately NOT committed. `main` ships the
+# raw-source entry (`npm run build:dev`), which is what the launcher serves;
+# the bundle exists only as the gate-6 build proof and for the `release` branch.
+# tools/check_entry.mjs fails the gate if urdf.html ever points at an untracked
+# file again (see the ARQ-1 finding in docs/evaluacion-calidad-software.md).
 
 # --- Local dataset / cache artifacts (large, regenerated locally) ---
 **/projects/avisualizer/database/

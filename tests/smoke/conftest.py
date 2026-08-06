@@ -8,8 +8,18 @@ HTTP, not TestClient. Run from the repo root:
 
     .\\.venv\\Scripts\\python.exe -m pytest tests/smoke
 
-Skips (not fails) when the venvs are missing, so the per-app CI jobs — which
-install only one side — don't break. The repo-level gate runs it explicitly.
+Runs in two modes:
+
+  * BOTH SIDES (local, Windows, after the README setup): each server boots from
+    its own venv and all journeys run.
+  * VIEWER ONLY (CI): when the repo venvs are absent it falls back to the
+    interpreter running pytest, and the journeys that need the slicer skip
+    themselves via the `slicer_stack` fixture. That is enough for the CI job
+    that installs only the viewer package — and it is what catches a broken
+    app entry (test_viewer_serves_the_app_shell), the failure that finding
+    ARQ-1 describes. Installing the slicer's native deps (open3d, trimesh,
+    scipy, shapely, rtree) on every PR to gain three journeys is not worth
+    ~5 minutes of CI per run.
 """
 from __future__ import annotations
 
@@ -28,10 +38,30 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-VIEWER_PY = REPO_ROOT / ".venv" / "Scripts" / "python.exe"
-SLICER_PY = REPO_ROOT / "venv311" / "Scripts" / "python.exe"
 VIEWER_SRC = REPO_ROOT / "apps" / "dev-host" / "src"
 SLICER_SRC = REPO_ROOT / "_slicer_branch" / "projects" / "platform" / "src"
+
+
+def _venv_python(name: str) -> Path | None:
+    """The interpreter of a repo venv, or None when that venv isn't set up."""
+    for rel in (("Scripts", "python.exe"), ("bin", "python")):  # Windows, POSIX
+        candidate = REPO_ROOT / name / Path(*rel)
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _importable(python: Path, module: str) -> bool:
+    return subprocess.run(
+        [str(python), "-c", f"import {module}"],
+        capture_output=True, timeout=120,
+    ).returncode == 0
+
+
+# Fall back to the interpreter running pytest: in CI only the viewer package is
+# installed, and that is the mode this harness is designed to degrade into.
+VIEWER_PY = _venv_python(".venv") or Path(sys.executable)
+SLICER_PY = _venv_python("venv311") or Path(sys.executable)
 
 # Same PBKDF2 parameters as avisualizer.web.app._hash_password.
 def _hash_password(password: str, salt_hex: str) -> str:
@@ -118,9 +148,12 @@ def _wait_http_200(url: str, deadline_s: float, proc: subprocess.Popen, name: st
 
 @pytest.fixture(scope="session")
 def stack(tmp_path_factory: pytest.TempPathFactory):
-    """Boot slicer + viewer; yield their base URLs and the temp data root."""
-    if not VIEWER_PY.exists() or not SLICER_PY.exists():
-        pytest.skip("smoke needs both repo venvs (.venv and venv311); see README setup")
+    """Boot the viewer (always) and the slicer (when installed); yield their
+    base URLs and the temp data root. `stack["slicer"]` is None in viewer-only
+    mode — use the `slicer_stack` fixture instead of checking for it."""
+    if not _importable(VIEWER_PY, "avisualizer"):
+        pytest.skip("smoke needs the viewer package installed; see README setup")
+    with_slicer = _importable(SLICER_PY, "meltio_platform")
 
     data = tmp_path_factory.mktemp("smoke-data")
     db_root = data / "database"
@@ -129,10 +162,9 @@ def stack(tmp_path_factory: pytest.TempPathFactory):
     _seed_permissions(db_root)
     _write_cube_stl(stl_root / "smoke-cube.stl")
 
-    slicer_port = _free_port()
     viewer_port = _free_port()
-    slicer_url = f"http://127.0.0.1:{slicer_port}"
     viewer_url = f"http://127.0.0.1:{viewer_port}"
+    slicer_url = f"http://127.0.0.1:{_free_port()}" if with_slicer else None
 
     def spawn(python: Path, app_factory: str, port: int, extra_env: dict) -> subprocess.Popen:
         env = os.environ.copy()
@@ -145,21 +177,32 @@ def stack(tmp_path_factory: pytest.TempPathFactory):
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0,
         )
 
-    slicer = spawn(SLICER_PY, "meltio_platform.slicer.web.app:create_app", slicer_port,
-                   {"PYTHONPATH": str(SLICER_SRC)})
-    viewer = spawn(VIEWER_PY, "avisualizer.web.app:create_app", viewer_port,
-                   {"PYTHONPATH": str(VIEWER_SRC),
-                    "AVIS_DATABASE_ROOT": str(db_root),
-                    "AVIS_STL_ROOT": str(stl_root),
-                    "AVIS_SLICER_URL": slicer_url,
-                    "AVIS_SLICER_UI_URL": slicer_url})
+    viewer_env = {"PYTHONPATH": str(VIEWER_SRC),
+                  "AVIS_DATABASE_ROOT": str(db_root),
+                  "AVIS_STL_ROOT": str(stl_root)}
+    slicer = None
+    if with_slicer:
+        slicer = spawn(SLICER_PY, "meltio_platform.slicer.web.app:create_app",
+                       int(slicer_url.rsplit(":", 1)[1]), {"PYTHONPATH": str(SLICER_SRC)})
+        viewer_env["AVIS_SLICER_URL"] = slicer_url
+        viewer_env["AVIS_SLICER_UI_URL"] = slicer_url
+    viewer = spawn(VIEWER_PY, "avisualizer.web.app:create_app", viewer_port, viewer_env)
     try:
-        # The slicer imports open3d/trimesh at boot — give it a generous deadline.
-        _wait_http_200(f"{slicer_url}/api/health", 90, slicer, "slicer")
+        if slicer is not None:
+            # The slicer imports open3d/trimesh at boot — generous deadline.
+            _wait_http_200(f"{slicer_url}/api/health", 90, slicer, "slicer")
         _wait_http_200(f"{viewer_url}/health", 60, viewer, "viewer")
         yield {"viewer": viewer_url, "slicer": slicer_url, "db_root": db_root}
     finally:
         for proc in (viewer, slicer):
-            if proc.poll() is None:
+            if proc is not None and proc.poll() is None:
                 proc.kill()
                 proc.wait(timeout=15)
+
+
+@pytest.fixture(scope="session")
+def slicer_stack(stack):
+    """Same as `stack`, but skips the test when running viewer-only (CI)."""
+    if stack["slicer"] is None:
+        pytest.skip("needs the slicer package (venv311); see README setup")
+    return stack

@@ -50,14 +50,15 @@ def test_viewer_serves_the_app_shell(stack):
     client = Http(stack["viewer"])
     status, body = client.request("/urdf")
     assert status == 200
-    # The shell wires in the BUILT bundle (esbuild, hash-named) via the
-    # data-app-entry marker; the bundle itself must serve too.
+    # Whatever the data-app-entry marker points at MUST serve: `main` ships the
+    # raw source (/static/urdf_viewer.js), `npm run build` swaps in the hashed
+    # bundle. A 404 here means a dead HMI — see finding ARQ-1.
     import re
 
     match = re.search(rb'data-app-entry src="([^"]+)"', body)
     assert match, "app entry script not found in /urdf HTML"
-    status, bundle = client.request(match.group(1).decode())
-    assert status == 200 and len(bundle) > 100_000
+    status, entry = client.request(match.group(1).decode())
+    assert status == 200 and len(entry) > 100_000, "app entry does not serve"
 
 
 def test_hoisted_partitions_are_mounted(stack):
@@ -80,8 +81,8 @@ def test_urdf_model_catalog_resolves_and_assets_serve(stack):
 
 # --- Journey 2: the slicer is embedded and reachable -------------------------
 
-def test_slicer_is_configured_and_proxied(stack):
-    client = Http(stack["viewer"])
+def test_slicer_is_configured_and_proxied(slicer_stack):
+    client = Http(slicer_stack["viewer"])
     status, body = client.request("/api/slicer/status")
     assert status == 200 and body["configured"] is True
     status, _ = client.request("/slicer")
@@ -123,8 +124,8 @@ def test_machine_commands_are_gated_by_session_and_role(stack):
 
 # --- Journey 4: slice an STL end to end (viewer proxy -> real slicer) --------
 
-def test_slice_proxy_produces_a_toolpath(stack):
-    client = Http(stack["viewer"])
+def test_slice_proxy_produces_a_toolpath(slicer_stack):
+    client = Http(slicer_stack["viewer"])
     status, files = client.request("/api/stl/files")
     assert status == 200
     assert "smoke-cube.stl" in files["files"]  # names, not objects

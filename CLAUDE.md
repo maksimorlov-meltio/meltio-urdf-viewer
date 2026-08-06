@@ -57,17 +57,17 @@ Tests use pytest for the backends; the pure frontend `sim/` modules have a small
 node --test "tests/js/**/*.test.mjs"
 ```
 
-**`gate.sh` (repo root) runs the six frontend gates in one shot** — syntax,
-imports, contract, boundaries, lint, tests+build — and is what the `release`
+**`gate.sh` (repo root) runs the seven frontend gates in one shot** — syntax,
+imports, contract, boundaries, lint, tests+build, entry — and is what the `release`
 workflow requires before publishing `hmi/` + `viewer/` to the `release` branch:
 
 ```powershell
 bash gate.sh
 ```
 
-There is no configured linter/formatter. Validate edited frontend JS with `node --check`
-(catches syntax errors, but **not** a `getElementById(null).addEventListener` that only
-throws in the browser — see gotchas). After adding/renaming/removing any static JS module,
+The linter is eslint (`npm run lint`), enforced in CI; there is no formatter. `node --check`
+catches syntax errors but **not** a `getElementById(null).addEventListener` that only
+throws in the browser (see gotchas). After adding/renaming/removing any static JS module,
 also run the import-resolution gate — `node --check` does **not** catch an `import` that
 points at a missing file, which is a load-time-fatal 404 that kills the whole module:
 
@@ -116,7 +116,8 @@ the browser) are managed out-of-band:
 - **Auth & permissions** resolve a level (Operator / Operator+ / Support / God) that gates
   motion-bearing controls (the Move jog panel, machine commands) — **UI gating only, not a
   security boundary**. Sign-in is `POST /api/auth/login` (PBKDF2 against per-user fields in
-  `database/permissions.json`, managed with `tools/set_password.py`); the roles/users matrix
+  `apps/dev-host/database/permissions.json`, managed with
+  `apps/dev-host/tools/set_password.py`); the roles/users matrix
   is served by `GET/PUT /api/permissions/config` + `hmi/permissions.js`. The slicer package
   has its own `auth.py` / `permissions.py` / `role_config.py` (part of the dormant cloud shell).
 - **Windows-only, PowerShell 5.1.** The launcher expects the exact venv folder names `.venv`

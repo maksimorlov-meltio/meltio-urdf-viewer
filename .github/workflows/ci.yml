@@ -25,6 +25,12 @@ jobs:
           python -m pip install -e ./apps/dev-host pytest==8.4.0 httpx==0.27.2
       - name: pytest
         run: python -m pytest apps/dev-host/tests
+      # Boots the real viewer over HTTP and walks the operator journeys. Runs
+      # viewer-only here (the slicer's native deps are not installed, so its two
+      # journeys skip themselves) — enough to catch a dead app entry, which is
+      # how finding ARQ-1 reached main with all three checks green.
+      - name: pytest smoke (viewer-only)
+        run: python -m pytest tests/smoke -v
 
   slicer-python:
     name: slicer pytest
@@ -61,6 +67,10 @@ jobs:
         run: node tools/check_contract.mjs
       - name: Boundary gate (hmi/ no-three, viewer/ no-DOM outside overlays)
         run: node tools/check_boundaries.mjs
+      # Runs against the COMMITTED urdf.html, before the build step below
+      # rewrites it to the (gitignored) bundle. See finding ARQ-1.
+      - name: Entry gate (urdf.html references only tracked files)
+        run: node tools/check_entry.mjs
       - name: Viewer JS unit tests (pure hmi/ + viewer/ modules)
         run: node --test "tests/js/**/*.test.mjs"
       - name: Install, lint & build (frontend, repo root)
