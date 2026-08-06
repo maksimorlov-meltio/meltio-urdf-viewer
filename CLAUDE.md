@@ -57,6 +57,14 @@ Tests use pytest for the backends; the pure frontend `sim/` modules have a small
 node --test "tests/js/**/*.test.mjs"
 ```
 
+**`gate.sh` (repo root) runs the six frontend gates in one shot** — syntax,
+imports, contract, boundaries, lint, tests+build — and is what the `release`
+workflow requires before publishing `hmi/` + `viewer/` to the `release` branch:
+
+```powershell
+bash gate.sh
+```
+
 There is no configured linter/formatter. Validate edited frontend JS with `node --check`
 (catches syntax errors, but **not** a `getElementById(null).addEventListener` that only
 throws in the browser — see gotchas). After adding/renaming/removing any static JS module,
