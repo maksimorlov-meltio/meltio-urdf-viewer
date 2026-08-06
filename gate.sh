@@ -45,9 +45,11 @@ echo "=== gate 8/8 — dom contract: contract-dom.json matches what hmi/+viewer/
 # Compare the file against a fresh generation, NOT against git: a developer who
 # has correctly regenerated but not staged yet must pass, while a stale file
 # (committed or not) must fail. CI runs the git-diff form on a clean checkout.
-before=$(cat contract-dom.json 2>/dev/null || true)
+# tr -d '\r': compare content, not line endings. .gitattributes pins this file
+# to LF, but a clone made before that would still check it out with CRLF.
+before=$(tr -d '\r' < contract-dom.json 2>/dev/null || true)
 node tools/gen_dom_contract.mjs
-if [ "$before" != "$(cat contract-dom.json)" ]; then
+if [ "$before" != "$(tr -d '\r' < contract-dom.json)" ]; then
   echo "contract-dom.json was stale — the published modules' DOM/deps contract changed."
   echo "It has been regenerated; review and commit it (the C# host embeds against it)."
   git --no-pager diff --stat -- contract-dom.json
