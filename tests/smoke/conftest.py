@@ -83,9 +83,12 @@ def _seed_permissions(db_root: Path) -> None:
         }
 
     doc = {
+        # Machine commands are gated by RANK against contract.json's per-command
+        # level: rank 4 clears everything, rank 1 does not reach `home`
+        # (operatorPlus). Capability keys gate the UI and admin endpoints only.
         "roles": [
             {"id": "role_admin", "name": "Administrator", "rank": 4,
-             "permissions": ["admin.users", "machine.command"]},
+             "permissions": ["admin.users"]},
             {"id": "role_viewer", "name": "Watcher", "rank": 1,
              "permissions": ["data.read"]},
         ],

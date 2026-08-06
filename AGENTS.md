@@ -28,10 +28,13 @@ resolves via its esbuild plugin. Intra-partition imports stay relative.
 1. **The gate must pass before any PR**: `bash gate.sh` (six checks: syntax,
    imports, contract, boundaries, lint, tests+build). CI enforces the same;
    `main` is protected — all changes go through PRs with 3 required checks.
-2. **`contract.json` is host-owned.** Any new machine command the frontend
-   emits must be declared there first (camelCase, or a legacy alias). The
-   permission/motion flags are enforced by the host, not the browser — UI
-   gating here is NOT a security boundary.
+2. **`contract.json` is host-owned and now ENFORCED.** Any new machine command
+   the frontend emits must be declared there first (camelCase, or a legacy
+   alias) — an undeclared command is a 400. Its `permission` level is compared
+   against the operator's role `rank` server-side in `POST /api/machine/command`;
+   the browser's `data-requires-permission` gating is a convenience, NOT a
+   security boundary. Declaring a command with too low a level is a real
+   authorization change: think before picking one.
 3. **Respect the partition when carving code out of
    `apps/dev-host/.../urdf_viewer.js`** (the shrinking god-file): what the
    scene shows → `viewer/`; hardware/UI state → `hmi/`. Two established

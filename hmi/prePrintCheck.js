@@ -7,38 +7,69 @@
 // (God / Support), via an explicit override of a failed check.
 //
 // The machine is the source of truth: the automatic checks read the live signal
-// snapshot (window.PRINTER_NOTIFICATION_SIGNALS via the host's getSignals()). In
-// the standalone demo those signals are all nominal, so only the build-plate
+// snapshot (window.PRINTER_NOTIFICATION_SIGNALS via the host's getSignals(),
+// wired to notifications' getSafetySignalsSnapshot() — which returns telemetry
+// VERBATIM when a machine is linked, never merged with demo defaults). In the
+// standalone demo those signals are all nominal, so only the build-plate
 // confirmation and the material check gate the start. The panel re-evaluates
 // continuously, so a red check turns green the moment the operator fixes it
 // (closes the door, etc.) without reopening the dialog.
 //
 // Framework-free; builds its own DOM so it needs no markup in the page.
 
-// Each check: id, label, kind, and a predicate over the signal snapshot.
+// Each check: id, label, kind, the signal keys it needs, and a predicate.
 // kind "auto"     → evaluated from machine signals
 //      "material" → evaluated from the host's material gate
 //      "operator" → confirmed by the operator (build-plate checkbox)
+//
+// FAIL-CLOSED, deliberately. Every predicate demands an explicit boolean: a key
+// the machine did not report is a failure with its own reason, never a pass.
+// These used to read `!s.emergencyStopActive` / `s.doorsClosed !== false`, so an
+// absent key passed — and combined with the old signal source (which filled
+// gaps from the demo mock's nominal values) a partially-reporting machine
+// produced an all-green safety checklist that had verified nothing.
 const CHECKS = [
-  { id: "estop", label: "Emergency stop released", kind: "auto",
-    hint: "E-stop is engaged.", pass: (s) => !s.emergencyStopActive },
-  { id: "security", label: "Safety circuit OK", kind: "auto",
-    hint: "External safety/security fault.", pass: (s) => !s.externalSecurityFault },
-  { id: "doors", label: "Doors closed", kind: "auto",
-    hint: "A door is open.", pass: (s) => s.doorsClosed !== false },
-  { id: "controller", label: "Controller connected", kind: "auto",
-    hint: "Controller board not connected.", pass: (s) => s.controllerBoardConnected !== false },
-  { id: "gas", label: "Inert atmosphere ready", kind: "auto",
-    hint: "Gas flow low / not inerted.", pass: (s) => s.inertedSystemActive !== false && !s.gasFlowLow },
-  { id: "laser", label: "Laser head ready", kind: "auto",
-    hint: "Laser head not responding.", pass: (s) => s.laserHeadReady !== false },
-  { id: "coolant", label: "Coolant OK", kind: "auto",
-    hint: "Coolant flow low.", pass: (s) => !s.coolantFlowLow },
+  { id: "estop", label: "Emergency stop released", kind: "auto", keys: ["emergencyStopActive"],
+    hint: "E-stop is engaged.", pass: (s) => s.emergencyStopActive === false },
+  { id: "security", label: "Safety circuit OK", kind: "auto", keys: ["externalSecurityFault"],
+    hint: "External safety/security fault.", pass: (s) => s.externalSecurityFault === false },
+  { id: "doors", label: "Doors closed", kind: "auto", keys: ["doorsClosed"],
+    hint: "A door is open.", pass: (s) => s.doorsClosed === true },
+  { id: "controller", label: "Controller connected", kind: "auto", keys: ["controllerBoardConnected"],
+    hint: "Controller board not connected.", pass: (s) => s.controllerBoardConnected === true },
+  { id: "gas", label: "Inert atmosphere ready", kind: "auto", keys: ["inertedSystemActive", "gasFlowLow"],
+    hint: "Gas flow low / not inerted.",
+    pass: (s) => s.inertedSystemActive === true && s.gasFlowLow === false },
+  { id: "laser", label: "Laser head ready", kind: "auto", keys: ["laserHeadReady"],
+    hint: "Laser head not responding.", pass: (s) => s.laserHeadReady === true },
+  { id: "coolant", label: "Coolant OK", kind: "auto", keys: ["coolantFlowLow"],
+    hint: "Coolant flow low.", pass: (s) => s.coolantFlowLow === false },
   { id: "material", label: "Material loaded & sufficient", kind: "material",
     hint: "No / insufficient material assigned." },
   { id: "buildplate", label: "Build plate installed", kind: "operator",
     hint: "Confirm the build plate is installed." },
 ];
+
+// A signal the machine never sent. Distinguished from a reported failure so the
+// operator can tell "the door is open" from "nobody is telling me about doors".
+function missingKeys(check, signals) {
+  return (check.keys || []).filter((key) => typeof signals[key] !== "boolean");
+}
+
+// The interlock decision, as a pure function of the signal snapshot — no DOM,
+// so it can be unit-tested. Returns one entry per automatic check:
+//   { id, ok, reason }   reason is null when ok.
+export function evaluateAutoChecks(signals) {
+  const s = signals && typeof signals === "object" ? signals : {};
+  return CHECKS.filter((check) => check.kind === "auto").map((check) => {
+    const absent = missingKeys(check, s);
+    if (absent.length) {
+      return { id: check.id, ok: false, reason: `Signal not reported (${absent.join(", ")}).` };
+    }
+    const ok = check.pass(s) === true;
+    return { id: check.id, ok, reason: ok ? null : check.hint };
+  });
+}
 
 const CSS_ID = "prePrintCheckStyles";
 const STYLE = `
@@ -75,6 +106,8 @@ const STYLE = `
 `;
 
 export function createPrePrintCheck(options = {}) {
+  // No signal source wired => every auto check reports "signal not reported"
+  // and the start stays blocked. That is the intended default for a safety gate.
   const getSignals = typeof options.getSignals === "function" ? options.getSignals : () => ({});
   const getMaterialStatus = typeof options.getMaterialStatus === "function"
     ? options.getMaterialStatus : () => ({ ok: true });
@@ -138,9 +171,9 @@ export function createPrePrintCheck(options = {}) {
           evaluate();
         });
         li.insertBefore(cb, ico.nextSibling);
-        rowEls[check.id] = { li, ico, cb };
+        rowEls[check.id] = { li, ico, cb, msg: label.querySelector(".ppc-msg") };
       } else {
-        rowEls[check.id] = { li, ico };
+        rowEls[check.id] = { li, ico, msg: label.querySelector(".ppc-msg") };
       }
       li.appendChild(label);
       list.appendChild(li);
@@ -200,6 +233,13 @@ export function createPrePrintCheck(options = {}) {
     document.body.appendChild(overlayEl);
   }
 
+  // textContent, not innerHTML: the reason can carry signal keys that came off
+  // the wire.
+  function setRowMessage(id, text) {
+    const row = rowEls[id];
+    if (row && row.msg) row.msg.textContent = text;
+  }
+
   function setRow(id, status) {
     const row = rowEls[id];
     if (!row) return;
@@ -212,6 +252,9 @@ export function createPrePrintCheck(options = {}) {
   function evaluate() {
     const signals = getSignals() || {};
     lastMaterialStatus = getMaterialStatus() || { ok: true };
+    const autoResults = new Map(
+      evaluateAutoChecks(signals).map((result) => [result.id, result]),
+    );
     let allPass = true;
     let materialFailed = false;
     for (const check of CHECKS) {
@@ -222,7 +265,9 @@ export function createPrePrintCheck(options = {}) {
         ok = Boolean(lastMaterialStatus.ok);
         if (!ok) materialFailed = true;
       } else {
-        ok = Boolean(check.pass(signals));
+        const result = autoResults.get(check.id);
+        ok = Boolean(result && result.ok);
+        setRowMessage(check.id, (result && result.reason) || check.hint);
       }
       setRow(check.id, ok ? "pass" : "fail");
       if (!ok) allPass = false;

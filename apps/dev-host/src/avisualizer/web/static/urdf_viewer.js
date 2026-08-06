@@ -5428,7 +5428,9 @@ function getPrePrintCheck() {
     prePrintCheck = createPrePrintCheck({
       // Auto checks read the live machine signal snapshot (real telemetry when a
       // machine is linked; nominal mock signals in the standalone demo).
-      getSignals: () => notificationsUi.getSignalsSnapshot(),
+      // Safety snapshot, not the notification-centre one: with a machine linked
+      // it must be raw telemetry, never merged with the demo mock's nominals.
+      getSignals: () => notificationsUi.getSafetySignalsSnapshot(),
       getMaterialStatus: () => validatePrintMaterial(),
       // Authorised = God / Support (advanced role). Only they may override a
       // failed safety check.

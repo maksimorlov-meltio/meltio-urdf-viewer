@@ -88,6 +88,10 @@ roles/users document `database/permissions.json`, stripped before serving it to
 the browser) are managed out-of-band:
 
 ```powershell
+# Bootstrap a fresh install (creates the built-in roles + the first user):
+.\.venv\Scripts\python.exe apps/dev-host/tools/set_password.py --create --username admin --role role_admin
+
+# Set/clear an existing user's password:
 .\.venv\Scripts\python.exe apps/dev-host/tools/set_password.py --username <user>
 ```
 
@@ -113,13 +117,22 @@ the browser) are managed out-of-band:
 - **The slicer is optional in the viewer**, gated by env vars `AVIS_SLICER_URL` (API base) and
   `AVIS_SLICER_UI_URL` (UI base). Without them, the print flow falls back to a "clip-plane"
   Z-sweep preview instead of real toolpath animation. The launcher wires both to `:8765`.
-- **Auth & permissions** resolve a level (Operator / Operator+ / Support / God) that gates
-  motion-bearing controls (the Move jog panel, machine commands) — **UI gating only, not a
-  security boundary**. Sign-in is `POST /api/auth/login` (PBKDF2 against per-user fields in
-  `apps/dev-host/database/permissions.json`, managed with
-  `apps/dev-host/tools/set_password.py`); the roles/users matrix
-  is served by `GET/PUT /api/permissions/config` + `hmi/permissions.js`. The slicer package
-  has its own `auth.py` / `permissions.py` / `role_config.py` (part of the dormant cloud shell).
+- **Auth & permissions** are two distinct vocabularies, on purpose:
+  - **Role `rank`** (1 Operator · 2 Operator+ · 3 Support · 4 Administrator) authorises
+    **machine commands, server-side**. `POST /api/machine/command` looks the command up in
+    `contract.json` (by camelCase name or legacy alias), reads its `permission` level, and
+    compares. An undeclared command is a 400; `emergencyStop` is level `none` and is
+    therefore allowed signed-out, as the contract requires. Every accepted command is
+    audited.
+  - **Capability keys** (`files.browse`, `print.control`, `admin.users`, …) gate UI controls
+    via `data-requires-permission` — **a convenience, not a security boundary** — plus
+    `PUT /api/permissions/config`, which requires `admin.users` server-side.
+  Sign-in is `POST /api/auth/login` (PBKDF2 against per-user fields in
+  `apps/dev-host/database/permissions.json`); sessions carry a server-side TTL and
+  `POST /api/auth/logout` revokes them. **A fresh clone has no `permissions.json`**: the
+  backend serves four built-in roles and zero users, and the first operator is created with
+  `set_password.py --create` (see Commands). The slicer package has its own `auth.py` /
+  `permissions.py` / `role_config.py` (part of the dormant cloud shell).
 - **Windows-only, PowerShell 5.1.** The launcher expects the exact venv folder names `.venv`
   and `venv311`. Use `py -3.11` — Python 3.11 has prebuilt wheels for the heavy native deps
   (`open3d`, `trimesh`, `scipy`, `shapely`, `rtree`); other versions may not.

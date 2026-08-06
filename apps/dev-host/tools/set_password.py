@@ -19,8 +19,15 @@ Usage
     # Remove a user's credential (they can no longer sign in):
     python set_password.py --username operator1 --delete
 
+    # Bootstrap a fresh install: create the first user AND its password. The
+    # store does not exist in a fresh clone (database/ is gitignored), and the
+    # permissions UI needs an `admin.users` session to open — so without this
+    # there is no way in:
+    python set_password.py --create --username admin --role role_admin
+
 The store path defaults to the app's database/permissions.json; override with
---store.
+--store. `--create` writes the built-in roles (Operator / Operator+ / Meltio
+Support / Administrator) if the document has none yet.
 """
 from __future__ import annotations
 
@@ -32,7 +39,7 @@ import json
 import secrets
 from pathlib import Path
 
-from avisualizer.web.app import PERMISSIONS_STORE
+from avisualizer.web.app import DEFAULT_PERMISSIONS_DOC, PERMISSIONS_STORE
 
 
 # app.py's _hash_password is nested inside create_app(); replicate the exact
@@ -45,9 +52,13 @@ def _hash_password(password: str, salt_hex: str) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--username", required=True, help="Sign-in username (must already exist in the users list).")
+    parser.add_argument("--username", required=True, help="Sign-in username.")
     parser.add_argument("--password", default=None, help="Password (omit to be prompted, not echoed).")
     parser.add_argument("--delete", action="store_true", help="Remove this username's credential.")
+    parser.add_argument("--create", action="store_true",
+                        help="Create the user (and the built-in roles) if missing. Use to bootstrap a fresh install.")
+    parser.add_argument("--role", default="role_admin",
+                        help="Role id for --create (default: role_admin, the only role that can open the permissions UI).")
     parser.add_argument("--store", type=Path, default=PERMISSIONS_STORE, help="Path to permissions.json.")
     args = parser.parse_args()
 
@@ -56,9 +67,16 @@ def main() -> int:
         doc = json.loads(store.read_text(encoding="utf-8")) if store.exists() else {}
     except (OSError, ValueError):
         doc = {}
-    users = doc.get("users") if isinstance(doc, dict) else None
-    if not isinstance(users, list) or not users:
-        print(f"No users found in {store} — create the user from the permissions UI first.")
+    if not isinstance(doc, dict):
+        doc = {}
+    if args.create and not doc.get("roles"):
+        doc["roles"] = json.loads(json.dumps(DEFAULT_PERMISSIONS_DOC["roles"]))
+    users = doc.get("users")
+    if not isinstance(users, list):
+        users = []
+        doc["users"] = users
+    if not users and not args.create:
+        print(f"No users found in {store} — bootstrap one with --create (see --help).")
         return 1
 
     match = None
@@ -66,9 +84,24 @@ def main() -> int:
         if isinstance(user, dict) and str(user.get("username", "")).strip().lower() == args.username.lower():
             match = user
             break
+    if match is None and args.create:
+        if args.delete:
+            parser.error("--create and --delete are mutually exclusive")
+        known_roles = {r.get("id") for r in doc.get("roles", []) if isinstance(r, dict)}
+        if args.role not in known_roles:
+            print(f"No role '{args.role}' in {store}. Known roles: {', '.join(sorted(map(str, known_roles)))}")
+            return 1
+        match = {
+            "id": f"u_{args.username.strip().lower()}",
+            "name": args.username.strip(),
+            "username": args.username.strip(),
+            "roleId": args.role,
+        }
+        users.append(match)
+        print(f"Created user '{args.username}' with role '{args.role}'.")
     if match is None:
         known = ", ".join(str(u.get("username", "?")) for u in users if isinstance(u, dict))
-        print(f"No user '{args.username}' in {store}. Known usernames: {known}")
+        print(f"No user '{args.username}' in {store}. Known usernames: {known} (or pass --create)")
         return 1
 
     if args.delete:

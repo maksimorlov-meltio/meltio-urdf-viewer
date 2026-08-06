@@ -25,8 +25,10 @@ def _hash(password: str, salt_hex: str) -> str:
 
 
 def _write_permissions(path: Path) -> None:
-  """A minimal roles/users doc: operator (no machine rights) + support (has
-  machine.command). Passwords are PBKDF2-hashed exactly as the app expects."""
+  """A minimal roles/users doc: operator (rank 1) + support (rank 3). Machine
+  commands are authorised by RANK against the level contract.json declares per
+  command, so what matters here is the rank, not the capability keys.
+  Passwords are PBKDF2-hashed exactly as the app expects."""
   doc = {
     "version": 1,
     "roles": [
@@ -35,7 +37,7 @@ def _write_permissions(path: Path) -> None:
         "id": "support",
         "name": "Support",
         "rank": 3,
-        "permissions": ["files.browse", "machine.motion", "machine.command"],
+        "permissions": ["files.browse", "machine.motion"],
       },
     ],
     "users": [
@@ -70,7 +72,7 @@ def test_machine_command_requires_auth_and_audits(monkeypatch: pytest.MonkeyPatc
   assert r.status_code in (401, 403)
   assert not audit.exists()
 
-  # 2) Authenticated but the role lacks machine.command -> 403, still not audited.
+  # 2) Authenticated but rank 1 < operatorPlus (ARM's level) -> 403, not audited.
   assert client.post("/api/auth/login", json={"username": "op", "password": "op-pass"}).status_code == 200
   r = client.post("/api/machine/command", json={"id": "c2", "command": "ARM"})
   assert r.status_code == 403
