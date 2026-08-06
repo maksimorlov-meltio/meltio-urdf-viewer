@@ -57,12 +57,26 @@ Tests use pytest for the backends; the pure frontend `sim/` modules have a small
 node --test "tests/js/**/*.test.mjs"
 ```
 
-**`gate.sh` (repo root) runs the seven frontend gates in one shot** — syntax,
-imports, contract, boundaries, lint, tests+build, entry — and is what the `release`
-workflow requires before publishing `hmi/` + `viewer/` to the `release` branch:
+**`gate.sh` (repo root) runs the nine frontend gates in one shot** — syntax,
+imports, contract, boundaries, lint, tests+build, entry, dom-contract, dead-lookups —
+and is what the `release` workflow requires before publishing `hmi/` + `viewer/` to
+the `release` branch:
 
 ```powershell
 bash gate.sh
+```
+
+**None of those nine starts the application.** They parse, lint and mount modules in
+isolation; a module that throws at boot passes all nine and takes the whole HMI with
+it (that is exactly what `515877b` did — two days of green merges on a dead app). The
+boot check is the one that runs it for real, in headless Chrome, and fails on a single
+console error. It is kept out of `gate.sh` because it needs a running server and ~30 s
+of GLB parsing; CI runs it as its own `boot check` job:
+
+```powershell
+# with the viewer already up (Start-Viewer.bat)
+node tools/check_boot.mjs
+node tools/check_boot.mjs --screenshot boot.png   # 1080x1920, what the operator sees
 ```
 
 The linter is eslint (`npm run lint`), enforced in CI; there is no formatter. `node --check`
