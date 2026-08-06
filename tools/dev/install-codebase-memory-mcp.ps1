@@ -1,6 +1,11 @@
-# install.ps1 — One-line installer for codebase-memory-mcp (Windows).
+# install-codebase-memory-mcp.ps1 — installer for codebase-memory-mcp (Windows).
 #
-# Usage: see README.md for install instructions.
+# NOT part of the Meltio HMI setup. This is an optional third-party developer
+# tool (an MCP server); the HMI is installed and run per README.md /
+# Start-Viewer.bat and never invokes this script. It lived at the repo root
+# under the name `install.ps1`, where it read as part of the product setup.
+#
+# Usage: see the codebase-memory-mcp project for install instructions.
 #
 # Environment:
 #   CBM_DOWNLOAD_URL  Override base URL for downloads (for testing)

@@ -23,9 +23,13 @@ The app is **two local services** that run together:
 
 The viewer embeds the slicer (via the `AVIS_SLICER_URL` environment variable) so
 the Files-menu **slice** and the in-scene **Start print** flow work end to end.
-The front-end is a single-page **vanilla-JS + Three.js** app (no build step) served
-from `urdf_viewer/…/web/static/`; the Python side is a small FastAPI backend
-(auth, permissions, error codes, slicer proxy, machine-link transport).
+The front-end is a single-page **vanilla-JS + Three.js** app served from
+`apps/dev-host/src/avisualizer/web/static/` plus the repo-root `hmi/` and
+`viewer/` partitions. **Nothing to build to run it**: the shipped app entry is
+the raw source and the launcher never invokes `npm` (esbuild is used only as a
+CI gate and to bundle the `release` branch for the C# host). The Python side is
+a small FastAPI backend (auth, permissions, error codes, slicer proxy,
+machine-link transport).
 
 ---
 
