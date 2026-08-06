@@ -1,0 +1,86 @@
+name: release
+
+# Step-8 release channel: publishes the consumable frontend — the root hmi/
+# and viewer/ partitions plus contract.json — to the `release` branch, ONLY
+# when the step-7 gate (gate.sh, six checks) is green. Downstream consumers
+# (the C# WPF host) track `release` as a read-only submodule; commits are
+# appended (fast-forward friendly), one per published main commit, and nothing
+# is published when the release content is unchanged.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: gate + publish release branch
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install frontend tooling
+        run: npm ci
+      - name: Gate (six checks — publish is refused if any fails)
+        run: bash gate.sh
+      - name: Assemble and publish
+        run: |
+          set -euo pipefail
+          SHA=$(git rev-parse HEAD)
+          SHORT=$(git rev-parse --short HEAD)
+
+          STAGE=$(mktemp -d)
+          cp -r hmi viewer contract.json "$STAGE"/
+          cat > "$STAGE/README.md" <<EOF
+          # Meltio HMI — release channel
+
+          Auto-published snapshot of the frontend partitions, for read-only
+          consumption (e.g. as a git submodule of the C# WPF host).
+
+          - \`hmi/\` — UI-side ES modules (DOM, host state, transports). No
+            \`three\` imports (CI-enforced boundary).
+          - \`viewer/\` — scene-side ES modules (Three.js; DOM only under
+            \`overlays/\`). \`three\` / \`three/addons/*\` are bare imports:
+            the embedder provides them via an import map or bundler alias.
+          - \`contract.json\` — the UI↔host message contract (v2, host-owned).
+
+          Source: \`$SHA\` on \`main\` — do not edit this branch; changes land
+          on \`main\` and are re-published by the \`release\` workflow after
+          the six-gate check (\`gate.sh\`).
+          EOF
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          WT=$(mktemp -d)
+          if git fetch origin release 2>/dev/null; then
+            git worktree add "$WT" FETCH_HEAD
+            git -C "$WT" checkout -B release FETCH_HEAD
+          else
+            git worktree add --detach "$WT"
+            git -C "$WT" checkout --orphan release
+            git -C "$WT" rm -rfq . 2>/dev/null || true
+          fi
+
+          find "$WT" -mindepth 1 -maxdepth 1 -not -name .git -exec rm -rf {} +
+          cp -r "$STAGE"/. "$WT"/
+
+          git -C "$WT" add -A
+          if git -C "$WT" diff --cached --quiet; then
+            echo "release: content unchanged — nothing to publish."
+            exit 0
+          fi
+          git -C "$WT" commit -m "release: hmi + viewer + contract from $SHORT"
+          git -C "$WT" push origin release
+          echo "release: published $SHORT to the release branch."
