@@ -12585,7 +12585,12 @@ settingsUi = createSettingsUi({
   markUserActivity: () => markUserActivity(),
   getLastActivityMs: () => advancedModeLastActivityMs,
   touchActivity: () => { advancedModeLastActivityMs = performance.now(); },
-  closeNotificationCenter: () => notificationsUi.setCenterOpen(false),
+  // Optional-chained on purpose: createSettingsUi() runs its own boot tail
+  // (setTopbarSettingsMenuOpen(false)) BEFORE notificationsUi exists a few
+  // lines below, and the two domains reference each other. "Close it if it is
+  // there" is the correct semantics at boot; without the ?. this throws and
+  // kills the whole module.
+  closeNotificationCenter: () => notificationsUi?.setCenterOpen(false),
   closeCalendarIfOpen: () => {
     if (calendarUi.isOpen()) {
       calendarUi.setOpen(false);
