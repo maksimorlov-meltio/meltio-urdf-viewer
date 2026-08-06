@@ -72,37 +72,51 @@ export function evaluateAutoChecks(signals) {
 }
 
 const CSS_ID = "prePrintCheckStyles";
+// Built from the STYLEGUIDE's :root tokens, not from its own palette. This
+// dialog used to carry ~20 hardcoded hex values — a second, drifting theme
+// living inside the one screen an operator sees before starting a print. The
+// `var(--token, fallback)` form keeps it readable if it is ever rendered
+// outside the host page (the release artefact ships without urdf_viewer.css).
 const STYLE = `
 .ppc-overlay{position:fixed;inset:0;z-index:10050;display:flex;align-items:center;
-  justify-content:center;background:rgba(6,10,16,.66);backdrop-filter:blur(2px);padding:16px;}
+  justify-content:center;background:rgba(0,0,0,.66);backdrop-filter:blur(2px);padding:16px;}
 .ppc-card{width:min(460px,100%);max-height:calc(100vh - 32px);overflow:auto;
-  background:#151b24;color:#e8edf3;border:1px solid #2a3542;border-radius:14px;
-  box-shadow:0 24px 60px rgba(0,0,0,.5);font:14px system-ui,sans-serif;}
+  background:var(--ui-bg-canvas-top,#151515);color:var(--ui-text-primary,#ededed);
+  border:1px solid var(--ui-border-subtle,rgba(255,255,255,.08));
+  border-radius:var(--ui-radius-lg,14px);
+  box-shadow:var(--ui-shadow-panel,0 14px 30px rgba(0,0,0,.5));font:14px system-ui,sans-serif;}
 .ppc-hd{padding:18px 20px 8px;}
 .ppc-title{font-size:17px;font-weight:700;margin:0;}
-.ppc-sub{margin:4px 0 0;color:#9fb0c3;font-size:13px;}
+.ppc-sub{margin:4px 0 0;color:var(--ui-text-secondary,#bbbbbb);font-size:13px;}
 .ppc-list{list-style:none;margin:12px 0;padding:0 8px;}
-.ppc-row{display:flex;align-items:center;gap:12px;padding:9px 12px;border-radius:9px;}
+.ppc-row{display:flex;align-items:center;gap:12px;padding:9px 12px;
+  border-radius:var(--ui-radius-sm,9px);}
 .ppc-row+.ppc-row{margin-top:2px;}
 .ppc-ico{flex:0 0 22px;width:22px;height:22px;border-radius:50%;display:flex;
   align-items:center;justify-content:center;font-size:13px;font-weight:700;}
-.ppc-ico.checking{background:#2a3542;color:#9fb0c3;}
-.ppc-ico.pass{background:#123a24;color:#3ecf7a;}
-.ppc-ico.fail{background:#3a1620;color:#ff6b81;}
+.ppc-ico.checking{background:var(--ui-button-disabled-bg,rgba(52,52,52,.6));
+  color:var(--ui-text-secondary,#bbbbbb);}
+.ppc-ico.pass{background:rgba(67,181,106,.18);color:var(--ui-success,#43b56a);}
+.ppc-ico.fail{background:var(--ui-danger-soft,rgba(238,81,56,.18));
+  color:var(--ui-error,#ee5138);}
 .ppc-label{flex:1;}
 .ppc-name{font-weight:600;}
-.ppc-msg{display:block;color:#ff8ea0;font-size:12px;margin-top:1px;}
+.ppc-msg{display:block;color:var(--ui-error,#ee5138);font-size:12px;margin-top:1px;}
 .ppc-row.pass .ppc-msg{display:none;}
-.ppc-cb{width:18px;height:18px;accent-color:#3ecf7a;cursor:pointer;}
+.ppc-cb{width:18px;height:18px;accent-color:var(--ui-success,#43b56a);cursor:pointer;}
 .ppc-ft{display:flex;gap:8px;justify-content:flex-end;padding:12px 20px 18px;
-  border-top:1px solid #222c38;flex-wrap:wrap;}
-.ppc-btn{border:0;border-radius:9px;padding:10px 16px;font:600 14px system-ui,sans-serif;cursor:pointer;}
+  border-top:1px solid var(--ui-border-subtle,rgba(255,255,255,.08));flex-wrap:wrap;}
+.ppc-btn{border:0;border-radius:var(--ui-radius-sm,9px);padding:10px 16px;
+  font:600 14px system-ui,sans-serif;cursor:pointer;}
 .ppc-btn:disabled{opacity:.45;cursor:not-allowed;}
-.ppc-cancel{background:#243040;color:#cdd8e5;}
-.ppc-fix{background:#31414f;color:#cfe3ff;}
-.ppc-start{background:#2f9e57;color:#fff;}
-.ppc-override{background:#8a5a12;color:#ffe6bf;}
-.ppc-note{margin:0 20px 8px;color:#c79a52;font-size:12px;}
+.ppc-cancel{background:var(--ui-button-disabled-bg,rgba(52,52,52,.6));
+  color:var(--ui-text-secondary,#bbbbbb);}
+.ppc-fix{background:var(--ui-button-primary-bg,rgba(255,255,255,.05));
+  color:var(--ui-button-primary-text,#f0913a);}
+.ppc-start{background:var(--ui-success,#43b56a);color:var(--ui-bg-canvas,#0a0a0a);}
+/* Override is the deliberately uncomfortable button: warning, not success. */
+.ppc-override{background:var(--ui-warning,#f0b53a);color:var(--ui-bg-canvas,#0a0a0a);}
+.ppc-note{margin:0 20px 8px;color:var(--ui-warning,#f0b53a);font-size:12px;}
 `;
 
 export function createPrePrintCheck(options = {}) {
@@ -114,6 +128,11 @@ export function createPrePrintCheck(options = {}) {
   const isAuthorized = typeof options.isAuthorized === "function" ? options.isAuthorized : () => false;
   const onProceed = typeof options.onProceed === "function" ? options.onProceed : () => {};
   const onMaterialFix = typeof options.onMaterialFix === "function" ? options.onMaterialFix : null;
+  // Fired when the operator leaves without starting (Cancel, click-outside, or
+  // routing to Materials). The host needs this to undo whatever it set up for
+  // the print — the camera, in practice. Without it the caller had no way to
+  // learn the print did not start: open() hands over and returns immediately.
+  const onDismiss = typeof options.onDismiss === "function" ? options.onDismiss : () => {};
 
   let overlayEl = null;
   let rowEls = {};
@@ -190,7 +209,7 @@ export function createPrePrintCheck(options = {}) {
     const cancelBtn = document.createElement("button");
     cancelBtn.className = "ppc-btn ppc-cancel";
     cancelBtn.textContent = "Cancel";
-    cancelBtn.addEventListener("click", () => close());
+    cancelBtn.addEventListener("click", () => { close(); onDismiss("cancel"); });
 
     // "Go to Materials" appears only when the material check is the blocker and
     // the host provided a fix handler.
@@ -200,6 +219,7 @@ export function createPrePrintCheck(options = {}) {
     fixBtn.hidden = true;
     fixBtn.addEventListener("click", () => {
       close();
+      onDismiss("materialFix");
       if (onMaterialFix) onMaterialFix(lastMaterialStatus);
     });
 
@@ -228,7 +248,7 @@ export function createPrePrintCheck(options = {}) {
 
     // Click outside the card = cancel.
     overlayEl.addEventListener("click", (e) => {
-      if (e.target === overlayEl) close();
+      if (e.target === overlayEl) { close(); onDismiss("cancel"); }
     });
     document.body.appendChild(overlayEl);
   }

@@ -50,19 +50,10 @@ const settingsCalibrateArmServiceButtonEl = document.getElementById("settingsCal
 const settingsCalibrateLaserFocusButtonEl = document.getElementById("settingsCalibrateLaserFocusButton");
 const settingsCalibrateNozzleProbeButtonEl = document.getElementById("settingsCalibrateNozzleProbeButton");
 const advancedModeIndicatorEl = document.getElementById("advancedModeIndicator");
-const advancedModePinModalEl = document.getElementById("advancedModePinModal");
-const advancedModePinInputEl = document.getElementById("advancedModePinInput");
-const advancedModePinHintEl = document.getElementById("advancedModePinHint");
-const advancedModePinErrorEl = document.getElementById("advancedModePinError");
-const advancedModePinCancelEl = document.getElementById("advancedModePinCancel");
-const advancedModePinUnlockEl = document.getElementById("advancedModePinUnlock");
 const advancedModeTimeoutWarningModalEl = document.getElementById("advancedModeTimeoutWarningModal");
 const advancedModeTimeoutWarningMessageEl = document.getElementById("advancedModeTimeoutWarningMessage");
 const advancedModeStayActiveButtonEl = document.getElementById("advancedModeStayActiveButton");
 const advancedModeLockNowButtonEl = document.getElementById("advancedModeLockNowButton");
-const ADVANCED_MODE_PIN_FALLBACK = "7391";
-const ADVANCED_MODE_MAX_ATTEMPTS = 5;
-const ADVANCED_MODE_LOCKOUT_MS = 5 * 60 * 1000;
 const ADVANCED_MODE_IDLE_TIMEOUT_MS = 20 * 60 * 1000;
 const ADVANCED_MODE_WARNING_LEAD_MS = 60 * 1000;
 let isTopbarSettingsMenuOpen = false;
@@ -73,8 +64,6 @@ let isAdvancedModeEnabled = false;
 // (Meltio Support & God Mode enable advanced controls). When role-driven, the
 // inactivity auto-lock is suppressed — the mode, not idle time, governs access.
 let advancedRoleDriven = false;
-let advancedModePinAttempts = 0;
-let advancedModeLockUntilMs = 0;
 let isAdvancedModeTimeoutWarningOpen = false;
 let lastAdvancedWarningRemainingSeconds = null;
 
@@ -153,27 +142,13 @@ function returnToViewerMainScreen() {
   closeCalendarIfOpen();
 }
 
-function exitAdvancedMode(reason = "manual") {
+function exitAdvancedMode() {
   setAdvancedModeEnabled(false);
-  advancedModePinAttempts = 0;
-  advancedModeLockUntilMs = 0;
   setAdvancedTimeoutWarningOpen(false);
-  closeAdvancedModePinModal();
   setSettingsAdvancedMenuOpen(false);
   setSettingsCalibrateMenuOpen(false);
   setTopbarSettingsMenuOpen(false);
   returnToViewerMainScreen();
-
-  if (reason === "timeout" && advancedModePinErrorEl) {
-    advancedModePinErrorEl.hidden = true;
-  }
-}
-
-function getAdvancedModePin() {
-  const configuredPin = typeof window.ADVANCED_MODE_PIN === "string"
-    ? window.ADVANCED_MODE_PIN.trim()
-    : "";
-  return configuredPin || ADVANCED_MODE_PIN_FALLBACK;
 }
 
 function setAdvancedModeEnabled(isEnabled) {
@@ -205,68 +180,6 @@ function setAdvancedModeEnabled(isEnabled) {
   onAdvancedModeChanged(isAdvancedModeEnabled);
 }
 
-function openAdvancedModePinModal() {
-  if (!advancedModePinModalEl) {
-    return;
-  }
-
-  advancedModePinModalEl.hidden = false;
-  advancedModePinModalEl.setAttribute("aria-hidden", "false");
-  if (advancedModePinHintEl) {
-    advancedModePinHintEl.textContent = "Enter authorized service PIN.";
-    advancedModePinHintEl.hidden = false;
-  }
-  if (advancedModePinInputEl) {
-    advancedModePinInputEl.value = "";
-    advancedModePinInputEl.focus();
-  }
-  if (advancedModePinErrorEl) {
-    advancedModePinErrorEl.hidden = true;
-    advancedModePinErrorEl.textContent = "Incorrect PIN";
-  }
-}
-
-function closeAdvancedModePinModal() {
-  if (!advancedModePinModalEl) {
-    return;
-  }
-
-  advancedModePinModalEl.hidden = true;
-  advancedModePinModalEl.setAttribute("aria-hidden", "true");
-}
-
-function tryUnlockAdvancedMode() {
-  const nowMs = performance.now();
-  if (nowMs < advancedModeLockUntilMs) {
-    if (advancedModePinErrorEl) {
-      const secondsRemaining = Math.ceil((advancedModeLockUntilMs - nowMs) / 1000);
-      advancedModePinErrorEl.hidden = false;
-      advancedModePinErrorEl.textContent = `Too many attempts. Try again in ${secondsRemaining}s.`;
-    }
-    return false;
-  }
-
-  const enteredPin = String(advancedModePinInputEl?.value || "").trim();
-  if (enteredPin === getAdvancedModePin()) {
-    advancedModePinAttempts = 0;
-    advancedModeLockUntilMs = 0;
-    setAdvancedModeEnabled(true);
-    closeAdvancedModePinModal();
-    setSettingsAdvancedMenuOpen(true);
-    return true;
-  }
-
-  advancedModePinAttempts += 1;
-  if (advancedModePinAttempts >= ADVANCED_MODE_MAX_ATTEMPTS) {
-    advancedModeLockUntilMs = nowMs + ADVANCED_MODE_LOCKOUT_MS;
-  }
-  if (advancedModePinErrorEl) {
-    advancedModePinErrorEl.hidden = false;
-    advancedModePinErrorEl.textContent = "Incorrect PIN";
-  }
-  return false;
-}
-
 function updateAdvancedModeIdleTimeout(nowMs = performance.now()) {
   // Role-driven advanced access never times out — the active mode governs it.
   if (!isAdvancedModeEnabled || advancedRoleDriven) {
@@ -291,7 +204,7 @@ function updateAdvancedModeIdleTimeout(nowMs = performance.now()) {
   }
 
   if (idleMs >= ADVANCED_MODE_IDLE_TIMEOUT_MS) {
-    exitAdvancedMode("timeout");
+    exitAdvancedMode();
   }
 }
 
@@ -505,21 +418,7 @@ if (settingsCalibrateCloseEl) {
 if (settingsExitAdvancedModeEl) {
   settingsExitAdvancedModeEl.addEventListener("click", () => {
     markUserActivity();
-    exitAdvancedMode("manual");
-  });
-}
-
-if (advancedModePinCancelEl) {
-  advancedModePinCancelEl.addEventListener("click", () => {
-    markUserActivity();
-    closeAdvancedModePinModal();
-  });
-}
-
-if (advancedModePinUnlockEl) {
-  advancedModePinUnlockEl.addEventListener("click", () => {
-    markUserActivity();
-    tryUnlockAdvancedMode();
+    exitAdvancedMode();
   });
 }
 
@@ -533,19 +432,7 @@ if (advancedModeStayActiveButtonEl) {
 if (advancedModeLockNowButtonEl) {
   advancedModeLockNowButtonEl.addEventListener("click", () => {
     markUserActivity();
-    exitAdvancedMode("manual");
-  });
-}
-
-if (advancedModePinInputEl) {
-  advancedModePinInputEl.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter") {
-      return;
-    }
-
-    event.preventDefault();
-    markUserActivity();
-    tryUnlockAdvancedMode();
+    exitAdvancedMode();
   });
 }
 
@@ -596,14 +483,6 @@ return {
     }
   },
   handleOutsideClick: (target) => {
-    if (advancedModePinModalEl && !advancedModePinModalEl.hidden) {
-      const pinCard = advancedModePinModalEl.querySelector(".advanced-pin-modal-card");
-      const isInsidePinModal = Boolean(pinCard && pinCard.contains(target));
-      if (!isInsidePinModal) {
-        closeAdvancedModePinModal();
-      }
-    }
-
     if (advancedModeTimeoutWarningModalEl && !advancedModeTimeoutWarningModalEl.hidden) {
       const warningCard = advancedModeTimeoutWarningModalEl.querySelector(".advanced-timeout-warning-card");
       const isInsideWarningModal = Boolean(warningCard && warningCard.contains(target));
@@ -626,9 +505,6 @@ return {
   closeOnEscape: () => {
     if (advancedModeTimeoutWarningModalEl && !advancedModeTimeoutWarningModalEl.hidden) {
       setAdvancedTimeoutWarningOpen(false);
-    }
-    if (advancedModePinModalEl && !advancedModePinModalEl.hidden) {
-      closeAdvancedModePinModal();
     }
     if (isTopbarSettingsMenuOpen) {
       setTopbarSettingsMenuOpen(false);
