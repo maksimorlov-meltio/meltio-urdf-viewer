@@ -15,7 +15,7 @@ and component classes; never invent new hex colors or one-off button styles).
 | `viewer/` | scene-side partition (Three.js) | must NOT touch the DOM, except under `viewer/overlays/` (CI-enforced) |
 | `apps/dev-host/` | the FastAPI dev server + remaining static shell (`urdf_viewer.js`, html, css) + URDF assets + backend tests | Python edits need a server restart |
 | `tools/` | the JS gates (`check_imports`, `check_contract`, `check_boundaries`) | keep them green |
-| `tests/js/`, `tests/smoke/` | unit tests (pure modules) and full-stack smoke | extend when you add pure modules |
+| `tests/js/`, `tests/smoke/` | unit tests and full-stack smoke | extend when you add a module. `support/domStub.mjs` = import an `hmi/` module with no DOM (pure logic); `support/domFixture.mjs` = the real `urdf.html` under jsdom (rendering, listeners) |
 | `contract.json` | the UI↔host message contract, v2, **host-owned** | see below |
 | `contract-dom.json` | generated: the DOM ids + injected deps the published modules require of an embedder | never hand-edit — `node tools/gen_dom_contract.mjs` |
 | `release` branch | auto-published `hmi/` + `viewer/` + both contracts | **never commit to it** — the `release` workflow owns it |
@@ -26,9 +26,9 @@ resolves via its esbuild plugin. Intra-partition imports stay relative.
 
 ## Non-negotiable rules
 
-1. **The gate must pass before any PR**: `bash gate.sh` (eight checks: syntax,
-   imports, contract, boundaries, lint, tests+build, entry, dom-contract). CI
-   enforces the same; `main` is protected — all changes go through PRs with 3
+1. **The gate must pass before any PR**: `bash gate.sh` (nine checks: syntax,
+   imports, contract, boundaries, lint, tests+build, entry, dom-contract,
+   dead-lookups). CI enforces the same; `main` is protected — all PRs need 3
    required checks. Adding a `getElementById` or a `deps` key to `hmi/` or
    `viewer/` changes the published artefact's contract: regenerate
    `contract-dom.json` and commit it in the same change.
@@ -56,7 +56,10 @@ resolves via its esbuild plugin. Intra-partition imports stay relative.
    `updateBottomNavState`).
 6. **Removing a DOM element? Delete its `addEventListener` wiring in the same
    change** — a listener on a missing element throws at load and kills the
-   whole module.
+   whole module. The reverse direction is now gated: `getElementById` on an id
+   that is not in `urdf.html` fails **silently** (every lookup is guarded), so
+   `tools/check_dead_lookups.mjs` refuses new ones. 36 pre-existing dead
+   lookups are grandfathered in its list; that number may only go down.
 7. **Mesh assets are Git LFS** (root `.gitattributes`). If you move them,
    verify the pointer state afterwards:
    `git show HEAD:<path>.glb | head -1` must show an LFS pointer.
@@ -67,7 +70,7 @@ resolves via its esbuild plugin. Intra-partition imports stay relative.
 ## Commands (from the repo root)
 
 ```bash
-bash gate.sh                                   # the eight gates (frontend)
+bash gate.sh                                   # the nine gates (frontend)
 node --test "tests/js/**/*.test.mjs"           # JS unit tests only
 npm run build                                  # hashed bundle + html rewrite
 npm run build:dev                              # point urdf.html at raw source

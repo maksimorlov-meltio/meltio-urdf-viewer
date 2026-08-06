@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Step-7 gate: the eight checks every frontend change must pass. CI (ci.yml)
+# Step-7 gate: the nine checks every frontend change must pass. CI (ci.yml)
 # runs the same commands as separate steps; the release workflow refuses to
 # publish unless this script exits 0. Run locally from the repo root:
 #
@@ -11,25 +11,25 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-echo "=== gate 1/8 — syntax: node --check over own JS (vendored three excluded)"
+echo "=== gate 1/9 — syntax: node --check over own JS (vendored three excluded)"
 find hmi viewer apps/dev-host/src/avisualizer/web/static tools tests/js \
      \( -name '*.js' -o -name '*.mjs' \) \
      -not -path '*/vendor/*' -not -path '*/dist/*' -print0 \
   | xargs -0 -r -n1 node --check
 
-echo "=== gate 2/8 — imports: every module specifier resolves (incl. /hmi, /viewer)"
+echo "=== gate 2/9 — imports: every module specifier resolves (incl. /hmi, /viewer)"
 node tools/check_imports.mjs
 
-echo "=== gate 3/8 — contract: every emitted machine command is declared"
+echo "=== gate 3/9 — contract: every emitted machine command is declared"
 node tools/check_contract.mjs
 
-echo "=== gate 4/8 — boundaries: hmi/ never imports three; viewer/ no DOM outside overlays/"
+echo "=== gate 4/9 — boundaries: hmi/ never imports three; viewer/ no DOM outside overlays/"
 node tools/check_boundaries.mjs
 
-echo "=== gate 5/8 — lint: eslint (errors fail; warnings tolerated)"
+echo "=== gate 5/9 — lint: eslint (errors fail; warnings tolerated)"
 npm run --silent lint
 
-echo "=== gate 6/8 — unit tests + build proof (esbuild resolves the whole graph)"
+echo "=== gate 6/9 — unit tests + build proof (esbuild resolves the whole graph)"
 node --test "tests/js/**/*.test.mjs"
 npm run --silent build
 
@@ -37,11 +37,11 @@ npm run --silent build
 # this must run AFTER it and after build:dev restores the committed state —
 # otherwise the gate would flag its own side effect. `main` ships the raw-source
 # entry; the bundle is a build proof here and the artefact on `release`.
-echo "=== gate 7/8 — entry: urdf.html references only files a fresh clone gets"
+echo "=== gate 7/9 — entry: urdf.html references only files a fresh clone gets"
 npm run --silent build:dev
 node tools/check_entry.mjs
 
-echo "=== gate 8/8 — dom contract: contract-dom.json matches what hmi/+viewer/ need"
+echo "=== gate 8/9 — dom contract: contract-dom.json matches what hmi/+viewer/ need"
 # Compare the file against a fresh generation, NOT against git: a developer who
 # has correctly regenerated but not staged yet must pass, while a stale file
 # (committed or not) must fail. CI runs the git-diff form on a clean checkout.
@@ -56,4 +56,7 @@ if [ "$before" != "$(tr -d '\r' < contract-dom.json)" ]; then
   exit 1
 fi
 
-echo "gate: all eight gates green."
+echo "=== gate 9/9 — dead lookups: every id hmi/+viewer/ look up exists in urdf.html"
+node tools/check_dead_lookups.mjs
+
+echo "gate: all nine gates green."

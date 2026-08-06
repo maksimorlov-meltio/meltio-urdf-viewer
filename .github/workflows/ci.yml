@@ -91,6 +91,11 @@ jobs:
         run: |
           node tools/gen_dom_contract.mjs
           git diff --exit-code -- contract-dom.json
+      # Every getElementById is guarded, so an element that was never added to
+      # the page fails silently forever. Ratchet: the known ones are listed, new
+      # ones fail.
+      - name: Dead-lookup gate (no new lookups without an element)
+        run: node tools/check_dead_lookups.mjs
       - name: Viewer JS unit tests (pure hmi/ + viewer/ modules)
         run: node --test "tests/js/**/*.test.mjs"
       - name: Lint & build (frontend, repo root)

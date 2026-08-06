@@ -3,7 +3,7 @@ name: release
 # Step-8 release channel: publishes the consumable frontend — the root hmi/
 # and viewer/ partitions plus contract.json + contract-dom.json — to the
 # `release` branch, ONLY
-# when the step-7 gate (gate.sh, eight checks) is green. Downstream consumers
+# when the step-7 gate (gate.sh, nine checks) is green. Downstream consumers
 # (the C# WPF host) track `release` as a read-only submodule; commits are
 # appended (fast-forward friendly), one per published main commit, and nothing
 # is published when the release content is unchanged.
@@ -33,7 +33,7 @@ jobs:
           node-version: "22"
       - name: Install frontend tooling
         run: npm ci
-      - name: Gate (eight checks — publish is refused if any fails)
+      - name: Gate (nine checks — publish is refused if any fails)
         run: bash gate.sh
       - name: Assemble and publish
         run: |
