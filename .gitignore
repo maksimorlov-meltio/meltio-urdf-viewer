@@ -57,7 +57,7 @@ MeltioViewer/
 **/seed_data/
 *.mp4
 
-# Default output of tools/gen_shell.mjs when run without --out. The shell is
+# Default output of tools/gen_artifact.mjs when run without --out. The artefact is
 # assembled at release time, never committed: a second copy of urdf.html in the
 # repo is a copy that drifts.
-/shell/
+/artifact/

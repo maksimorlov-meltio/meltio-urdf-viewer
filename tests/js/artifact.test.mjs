@@ -1,4 +1,4 @@
-// The publishable shell (tools/gen_shell.mjs).
+// The publishable shell (tools/gen_artifact.mjs).
 //
 // The shell is the release artefact's answer to a problem contract-dom.json
 // only half solves: it lists the 215 element ids the modules look up, but every
@@ -23,7 +23,7 @@ const SRC_HTML = join(REPO_ROOT, "apps", "dev-host", "src", "avisualizer",
   "web", "static", "urdf.html");
 
 const OUT = mkdtempSync(join(tmpdir(), "meltio-shell-"));
-execFileSync(process.execPath, [join(REPO_ROOT, "tools", "gen_shell.mjs"), "--out", OUT],
+execFileSync(process.execPath, [join(REPO_ROOT, "tools", "gen_artifact.mjs"), "--out", OUT],
   { stdio: "pipe" });
 
 const html = readFileSync(join(OUT, "index.html"), "utf8");
@@ -68,14 +68,75 @@ test("the stylesheet and the icons it references are in the artefact", () => {
   }
 });
 
-test("the dev host's own entry script is gone, and the hole is documented", () => {
-  // Shipping it would 404 for every consumer: /static/urdf_viewer.js is not in
-  // the release artefact and never will be — it owns the Three.js scene.
+test("the stylesheet's own dependencies are rewritten and shipped", () => {
+  // urdf_viewer.css opens with `@import "/static/meltio-design-system.css"`.
+  // Checking the HTML for absolute URLs cannot see that, and it took a real
+  // browser load to find it: CSS pulls its own graph and it has to be walked.
+  const css = readFileSync(join(OUT, "urdf_viewer.css"), "utf8");
+  const absolute = [...css.matchAll(/(?:@import\s+"|url\(['"]?)(\/[^"')]*)/g)].map((m) => m[1]);
+  assert.deepEqual(absolute, [], `the stylesheet still points outside the artefact: ${absolute}`);
+
+  const imported = [...css.matchAll(/@import\s+"\.\/([^"]+)"/g)].map((m) => m[1]);
+  assert.ok(imported.length > 0, "the design-system import should have been rewritten, not dropped");
+  for (const name of imported) {
+    assert.ok(existsSync(join(OUT, name)), `${name} is @imported but not shipped`);
+  }
+});
+
+test("the entry points at the shipped assembly, not at a dev-host path", () => {
   assert.equal(html.includes("/static/urdf_viewer.js"), false);
   assert.equal(html.includes("static/dist/"), false, "a built bundle leaked into the shell");
-  assert.match(html, /data-app-entry/,
-    "the entry point must still be marked, so an embedder can find where to plug in");
-  assert.match(html, /APP ENTRY — intentionally empty/);
+  assert.match(html, /<script type="module" data-app-entry src="\.\/app\.js">/);
+  assert.ok(existsSync(join(OUT, "app.js")), "the entry is declared but not shipped");
+});
+
+test("every import in the artefact resolves inside the artefact", () => {
+  // A static import of a missing file is a load-time-fatal 404 that kills the
+  // whole module — the failure tools/check_imports.mjs exists for, applied to
+  // the thing the consumer actually receives. Walk from app.js outwards.
+  const importMap = JSON.parse(
+    html.match(/<script type="importmap">([\s\S]*?)<\/script>/)[1],
+  ).imports;
+
+  function resolve(specifier, fromFile) {
+    if (specifier.startsWith(".")) {
+      return join(dirname(fromFile), specifier);
+    }
+    if (importMap[specifier]) {
+      return join(OUT, importMap[specifier]);
+    }
+    const prefix = Object.keys(importMap).find(
+      (key) => key.endsWith("/") && specifier.startsWith(key),
+    );
+    if (prefix) {
+      return join(OUT, importMap[prefix], specifier.slice(prefix.length));
+    }
+    return null; // bare and unmapped
+  }
+
+  const seen = new Set();
+  const queue = [join(OUT, "app.js")];
+  const unresolved = [];
+  while (queue.length) {
+    const file = queue.pop();
+    if (seen.has(file)) continue;
+    seen.add(file);
+    assert.ok(existsSync(file), `${file.slice(OUT.length + 1)} is imported but not shipped`);
+    const source = readFileSync(file, "utf8");
+    for (const match of source.matchAll(/^\s*(?:import|export)[\s\S]{0,400}?from\s+"([^"]+)"/gm)) {
+      const target = resolve(match[1], file);
+      if (target === null) {
+        unresolved.push(`${file.slice(OUT.length + 1)} -> ${match[1]}`);
+        continue;
+      }
+      queue.push(target);
+    }
+  }
+
+  assert.deepEqual(unresolved, [],
+    "bare specifiers with no import-map entry cannot load in a browser");
+  assert.ok(seen.size > 25,
+    `the walk should reach the whole graph, only reached ${seen.size} files`);
 });
 
 test("the classic scripts point at the published partitions", () => {
@@ -100,7 +161,7 @@ test("the generator refuses rather than guesses if the entry markup changes", ()
     let stderr = "";
     try {
       execFileSync(process.execPath,
-        [join(REPO_ROOT, "tools", "gen_shell.mjs"), "--in", badHtml, "--out", badOut],
+        [join(REPO_ROOT, "tools", "gen_artifact.mjs"), "--in", badHtml, "--out", badOut],
         { stdio: "pipe" });
     } catch (error) {
       failed = true;
