@@ -153,6 +153,16 @@ its root-absolute esbuild plugin.
   maintenance calendar, the notification center/toasts/bell, and the settings
   menu + Advanced mode (factories `createXxxUi(deps)` instantiated at boot).
 - **`prePrintCheck.js`** — the pre-print material/signal gate dialog.
+- **`slicerPane.js`** — the embedded-slicer pane (`createSlicerPaneUi(deps)`):
+  the lazily-iframed slicer UI off `/api/slicer/status`, the flyout anchored to
+  the Files menu, the fullscreen slice view, and the compact docked-print
+  variant above the bottom nav. Its `getFrameWindow()` is what the host's
+  postMessage handler authenticates senders against.
+- **`state/printFlowState.js`** — the print-flow flags shared across those
+  domains (`printSim`, `isDockedPrintActive`, `printHideStl`,
+  `bridgedSliceData`, …) as ES live bindings plus setters, with the two derived
+  rules that read them: `isPrintActivelyRunning()` (what motion is refused on)
+  and `slicerPlacementOffsetMm()`.
 - **`movePanel.js`** — the Move panel: X/Y/Z jog, jog step, homing and the live
   mm readout (`createMovePanelUi(deps)`). **Motion-bearing**: axis commands go
   out through the injected `moveJointToValue`, and the exported
