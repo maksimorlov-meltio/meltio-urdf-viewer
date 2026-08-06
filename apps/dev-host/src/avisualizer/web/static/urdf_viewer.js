@@ -36,6 +36,24 @@ import { createCalendarUi, formatCalendarDateTime } from "/hmi/calendar.js";
 import { createNotificationsUi } from "/hmi/notifications.js";
 import { createSettingsUi } from "/hmi/settings.js";
 import { createMovePanelUi, canOperateMotion } from "/hmi/movePanel.js";
+// Print-flow state. The READS below are ES live bindings — `printSim`,
+// `bridgedSliceData` etc. are used exactly as when they were locals here; only
+// assignment goes through the setters.
+import {
+  initPrintFlowState,
+  isPrintActivelyRunning,
+  slicerPlacementOffsetMm,
+  printSim, setPrintSim,
+  isDockedPrintActive, setDockedPrintActive,
+  printHideStl, setPrintHideStl,
+  autoSliceFlowActive, setAutoSliceFlowActive,
+  printSimAutoRunInProgress, setPrintSimAutoRunInProgress,
+  printSimulationConsumptionPending, setPrintSimulationConsumptionPending,
+  bridgedSliceData, setBridgedSliceData,
+  filesListCollapsedForPrint, setFilesListCollapsedForPrint,
+  isPrePrintSequenceActive, setPrePrintSequenceActive,
+  printViewResetTimerId, setPrintViewResetTimerId,
+} from "/hmi/state/printFlowState.js";
 import {
   initMaterialsUi,
   setMaterialsMenuOpen,
@@ -108,9 +126,12 @@ let isAdvancedModeActive = false;
 // Runs at module load; JS-driven copy uses t(...) directly.
 applyDomTranslations();
 
-// Print-simulation controller. Created at boot once the scene exists; declared
-// here so the camera-guard helpers below can reference it before assignment.
-let printSim = null;
+// Wire the one scene fact the print-flow state cannot reach for itself. Done
+// here, at the top of the module body, because isPrintActivelyRunning() is
+// reachable from any listener the moment the page is interactive. The closure
+// defers reading `inertPhase` (declared much further down) until call time.
+initPrintFlowState({ isInertPurging: () => inertPhase === "purging" });
+
 
 // Machine transport link (sim/machineLink.js). Null until enabled at boot. When
 // connected, the machine is the source of truth: Start/Stop/Pause/E-stop send
@@ -810,10 +831,6 @@ let feederSavedHeadTransparency = null;
 let feederSavedHeadTransparencyEnabled = null;
 let cloudStlObject = null;
 let cloudStlVisible = true;
-// When printing from a slicer toolpath we substitute the STL with the sliced
-// model, so the solid STL is force-hidden regardless of the user's visibility
-// toggle. Restored when the print sim tears down.
-let printHideStl = false;
 let cloudStlOpacity = 1;
 let cloudStlPlacementSide = "top";
 let cloudStlLoadToken = 0;
@@ -933,7 +950,6 @@ function persistFeederFeedType() {
     /* storage may be unavailable */
   }
 }
-let printSimulationConsumptionPending = false;
 const feederWheelEnabled = {
   central: true,
   right: true,
@@ -3872,7 +3888,7 @@ async function runCloudPrintSimulationPlayToggleAction() {
     setCloudPrintSimulationProgress(0);
   }
 
-  printSimulationConsumptionPending = true;
+  setPrintSimulationConsumptionPending(true);
   setCloudPrintSimulationPlaying(true);
   return true;
 }
@@ -3960,7 +3976,7 @@ function setCloudPrintSimulationProgress(progress, options = {}) {
 function resetCloudPrintSimulation(options = {}) {
   const { keepPlaying = false } = options;
   setCloudPrintSimulationProgress(0);
-  printSimulationConsumptionPending = false;
+  setPrintSimulationConsumptionPending(false);
   if (!keepPlaying) {
     setCloudPrintSimulationPlaying(false);
   }
@@ -4006,7 +4022,7 @@ function updateCloudPrintSimulation(deltaSeconds) {
       setCloudPrintSimulationPlaying(false);
       if (printSimulationConsumptionPending) {
         consumeMaterialForCompletedPrint();
-        printSimulationConsumptionPending = false;
+        setPrintSimulationConsumptionPending(false);
       }
     }
     return;
@@ -4478,21 +4494,12 @@ if (slicerEmbedToggleEl) {
 // The slicer is no longer shown permanently in the viewer. It is a flyout panel
 // anchored to the top-right corner of the Files menu, opened/closed on demand.
 let isSlicerMenuOpen = false;
-// When true, the Files list panel is hidden (part revealed) but the cloud menu
-// stays open so the STL/camera are untouched; the Slicer flyout detaches to a
-// fixed corner via CSS.
-let filesListCollapsedForPrint = false;
 // When true, the slicer takes the whole view (full slice UI) and the robot model
 // + Files menu are hidden via the `slicer-fullscreen` body class. This is the
 // "prepare a slice" phase; "Load to viewer" leaves it and drops the part into
 // the 3D scene.
 let isSlicerFullscreen = false;
 
-// Latest slice data pushed up from the embedded slicer (model mesh + toolpath +
-// thermal, all in build-plate coords, mm). Cached proactively so "Start print"
-// can consume it even after the slicer iframe is closed. See the slicer's
-// postSliceDataToParent().
-let bridgedSliceData = null;
 // Set when the embedded slicer pushes a fresh slice; forces the next Start-print
 // to re-prepare (consume this toolpath) instead of reusing a stale ready slice —
 // so a reorient + re-slice actually prints the NEW geometry. See startDockedPrint.
@@ -4506,7 +4513,7 @@ window.addEventListener("message", (event) => {
   if (!data || data.source !== "meltio-slicer" || data.type !== "slice-data") {
     return;
   }
-  bridgedSliceData = {
+  setBridgedSliceData({
     toolpath: data.toolpath || null,
     thermal: data.thermal || null,
     mesh: data.mesh || null,
@@ -4516,7 +4523,7 @@ window.addEventListener("message", (event) => {
     plate: data.plate || null,
     // Real deposition movement speed (mm/s) for true-1x print playback.
     speedMmPerSec: Number.isFinite(data.speedMmPerSec) ? data.speedMmPerSec : null,
-  };
+  });
   const hasMoves = Boolean(
     bridgedSliceData.toolpath
     && Array.isArray(bridgedSliceData.toolpath.moves)
@@ -4543,11 +4550,11 @@ window.addEventListener("message", (event) => {
     // preview (the cloud STL keeps its loaded orientation, so we swap to the
     // slicer geometry, which carries the reorientation the operator applied).
     if (!isDockedPrintActive && !filesListCollapsedForPrint && printSim && !printSimAutoRunInProgress) {
-      printSimAutoRunInProgress = true;
+      setPrintSimAutoRunInProgress(true);
       Promise.resolve(printSim.prepare())
         .then(() => updateSlicerModelPreview())
         .catch(() => {})
-        .finally(() => { printSimAutoRunInProgress = false; });
+        .finally(() => { setPrintSimAutoRunInProgress(false); });
     }
   } else {
     // Mesh-only update (e.g. a reorient/move in the slicer): the toolpath is now
@@ -4587,7 +4594,7 @@ function updateSlicerModelPreview() {
     typeof printSim.getSource === "function" && printSim.getSource() === "toolpath"
     && typeof printSim.hasStlView === "function" && printSim.hasStlView();
   printSim.setSolidPreview(showSlicerSolid);
-  printHideStl = showSlicerSolid;
+  setPrintHideStl(showSlicerSolid);
   applyCloudStlDisplayState();
 }
 
@@ -4604,18 +4611,15 @@ function hasBridgedToolpath() {
 // part on the slicer build plate: (part-centre − plate-centre) in plate mm, laid
 // in the horizontal plane. Null when no bridged slice carries a plate + bounds.
 // Fed to alignCloudStlUnderHeadViaXY so the preview matches the slicer layout.
+// The mm arithmetic lives in printFlowState with the slice payload it reads;
+// only the THREE.Vector3 (and the mm→m scale) stays here, because hmi/ may not
+// import three.
 function getSlicerPlacementWorldOffset() {
-  const plate = bridgedSliceData && bridgedSliceData.plate;
-  const bounds = bridgedSliceData && bridgedSliceData.mesh && bridgedSliceData.mesh.bounds;
-  if (!plate || !bounds || !Array.isArray(bounds.min) || !Array.isArray(bounds.max)) {
+  const offsetMm = slicerPlacementOffsetMm();
+  if (!offsetMm) {
     return null;
   }
-  if (!Number.isFinite(plate.centerXmm) || !Number.isFinite(plate.centerYmm)) {
-    return null;
-  }
-  const offXmm = (bounds.min[0] + bounds.max[0]) / 2 - plate.centerXmm;
-  const offYmm = (bounds.min[1] + bounds.max[1]) / 2 - plate.centerYmm;
-  return new THREE.Vector3(offXmm / 1000, offYmm / 1000, 0);
+  return new THREE.Vector3(offsetMm.x / 1000, offsetMm.y / 1000, 0);
 }
 
 function updateSlicerChosenFileLabel() {
@@ -4697,7 +4701,7 @@ function loadSlicerIframeForFile(fileName) {
 // with the chosen file auto-loaded, and warm the viewer-side slice in the
 // background so the later "Load to viewer" 3D print sim is ready.
 function loadFileToSlicer(fileName) {
-  autoSliceFlowActive = true;
+  setAutoSliceFlowActive(true);
   setSelectedCloudLibraryFile(fileName, { updateSelect: true, syncDataset: true });
   setCloudFileRowSliceStatus(fileName, "slicing");
   updateSlicerChosenFileLabel();
@@ -4807,7 +4811,7 @@ function collapseFilesForPrint() {
   if (!isCloudModelMenuOpen || filesListCollapsedForPrint) {
     return;
   }
-  filesListCollapsedForPrint = true;
+  setFilesListCollapsedForPrint(true);
   document.body.classList.add("files-collapsed-for-print");
   if (slicerPaneEl) {
     // Clear anchored inline styles so the detached CSS position takes over.
@@ -4821,10 +4825,9 @@ function collapseFilesForPrint() {
 // as opposed to merely "docked" (filesListCollapsedForPrint), which stays true
 // right up until the stop/complete teardown. Used to lock the bottom nav to the
 // print controls so the operator can't wander off to Files/Materials mid-print.
-function isPrintActivelyRunning() {
-  const st = printSim ? printSim.getState() : "idle";
-  return st === "playing" || st === "paused" || isPrePrintSequenceActive || inertPhase === "purging";
-}
+// isPrintActivelyRunning moved to hmi/state/printFlowState.js, which owns the
+// flags it reads. The one scene fact it needs — the chamber-inert purge — is
+// injected there via initPrintFlowState below.
 
 function expandFilesListForPrint() {
   if (!filesListCollapsedForPrint) {
@@ -4839,7 +4842,7 @@ function expandFilesListForPrint() {
   if (isPrintActivelyRunning()) {
     return;
   }
-  filesListCollapsedForPrint = false;
+  setFilesListCollapsedForPrint(false);
   document.body.classList.remove("files-collapsed-for-print");
   if (isSlicerMenuOpen) {
     positionSlicerMenu();
@@ -4899,20 +4902,15 @@ function updatePrintStyleButtons() {
 // material check already passed. Extracted so the reassign-confirm flow can also
 // start the print after the user resolves a material issue.
 let prePrintSequenceTimeoutId = null;
-let isPrePrintSequenceActive = false;
 
 function cancelPrePrintSequence() {
   if (prePrintSequenceTimeoutId !== null) {
     window.clearTimeout(prePrintSequenceTimeoutId);
     prePrintSequenceTimeoutId = null;
   }
-  isPrePrintSequenceActive = false;
+  setPrePrintSequenceActive(false);
 }
 
-// True from the moment a docked print begins preparing until it is torn down /
-// stopped. Suppresses the STL→head preview alignment so it can't drive the gantry
-// while the print flow positions + traces the part.
-let isDockedPrintActive = false;
 const _printCurrentPoint = new THREE.Vector3();
 const _printPinDelta = new THREE.Vector3();
 
@@ -4924,12 +4922,11 @@ const _printPinDelta = new THREE.Vector3();
 // active AND a print-view snapshot exists (so the homing window is excluded).
 const PRINT_VIEW_RESET_DELAY_MS = 50000;
 let printViewCameraState = null;
-let printViewResetTimerId = null;
 
 function clearPrintViewResetTimer() {
   if (printViewResetTimerId !== null) {
     window.clearTimeout(printViewResetTimerId);
-    printViewResetTimerId = null;
+    setPrintViewResetTimerId(null);
   }
 }
 
@@ -4949,10 +4946,10 @@ function hidePrintResetViewButton() {
 
 function schedulePrintViewAutoReset() {
   clearPrintViewResetTimer();
-  printViewResetTimerId = window.setTimeout(() => {
-    printViewResetTimerId = null;
+  setPrintViewResetTimerId(window.setTimeout(() => {
+    setPrintViewResetTimerId(null);
     performPrintViewReset();
-  }, PRINT_VIEW_RESET_DELAY_MS);
+  }, PRINT_VIEW_RESET_DELAY_MS));
 }
 
 // Glide back to the captured print framing and dismiss the button/timer.
@@ -5128,13 +5125,13 @@ function runPrePrintHomingSequence(onComplete) {
   //    the nozzle), so playback starts already centred and in position.
   steps.push([bigDur, () => moveGantryToPrintStart(bigDur)]);
 
-  isPrePrintSequenceActive = true;
+  setPrePrintSequenceActive(true);
   setMotionStatus("Homing for print");
   let index = 0;
   const runNext = () => {
     if (index >= steps.length) {
       prePrintSequenceTimeoutId = null;
-      isPrePrintSequenceActive = false;
+      setPrePrintSequenceActive(false);
       onComplete();
       return;
     }
@@ -5295,7 +5292,7 @@ async function commandMachinePrintStart() {
     // and tell the operator why — never animate a print that isn't running.
     showPrintNotice(`Machine did not start the print: ${err && err.message ? err.message : "command failed"}`);
     if (typeof printSim.stop === "function") printSim.stop();
-    isDockedPrintActive = false;
+    setDockedPrintActive(false);
     updateBottomNavState();
   }
 }
@@ -5313,7 +5310,7 @@ async function startDockedPrint() {
   }
   // Suppress the STL→head preview alignment for the whole print (set before
   // prepare(), which loads the model and would otherwise trigger it).
-  isDockedPrintActive = true;
+  setDockedPrintActive(true);
   printCompletionHandled = false; // re-arm the post-print completion flow
   try {
     // A docked print MUST bead-trace a real toolpath. Decide where that toolpath
@@ -5355,7 +5352,7 @@ async function startDockedPrint() {
       if (typeof printSim.stop === "function") {
         printSim.stop(); // drop any warm clip source that was set up
       }
-      isDockedPrintActive = false;
+      setDockedPrintActive(false);
       return;
     }
     bridgedToolpathFresh = false; // consumed (reused or freshly prepared)
@@ -5368,7 +5365,7 @@ async function startDockedPrint() {
       if (typeof printSim.stop === "function") {
         printSim.stop(); // drop any clip source prepare() just set up
       }
-      isDockedPrintActive = false;
+      setDockedPrintActive(false);
       return;
     }
     // If this print draws from the wire drum, reveal the drum assembly (animated).
@@ -5950,7 +5947,7 @@ function clearCloudStlObject() {
   if (printSim && typeof printSim.setSolidPreview === "function") {
     printSim.setSolidPreview(false);
   }
-  printHideStl = false;
+  setPrintHideStl(false);
 
   if (!cloudStlObject) {
     if (loadedCloudLibraryFileName) {
@@ -7293,11 +7290,6 @@ async function loadCloudOverlayFromDataset() {
   return stlSuccess && pointSuccess;
 }
 
-let printSimAutoRunInProgress = false;
-// True only during the choose-a-file flow, so the auto-open/auto-collapse menu
-// behaviour fires only then — a manual flyout Prepare or a profile-change
-// re-slice must NOT open/collapse menus or move anything.
-let autoSliceFlowActive = false;
 
 // Preload/slice the just-selected STL so the bottom Play button appears once the
 // part is ready. Fire-and-forget: the load flow returns immediately while
@@ -7319,10 +7311,10 @@ async function autoPreparePrintSimulationForSelection() {
   // Capture the flag now (before any await) so only the choose-flow drives the
   // menu adaptation, and clear it once consumed.
   const isAutoFlow = autoSliceFlowActive;
-  autoSliceFlowActive = false;
+  setAutoSliceFlowActive(false);
   const fileName = selectedCloudLibraryFileName;
 
-  printSimAutoRunInProgress = true;
+  setPrintSimAutoRunInProgress(true);
   try {
     const ready = await printSim.prepare();
     // "ready" (→ the row's "Start print" button) must mean a REAL sliced toolpath,
@@ -7344,7 +7336,7 @@ async function autoPreparePrintSimulationForSelection() {
       setCloudFileRowSliceStatus(fileName, "");
     }
   } finally {
-    printSimAutoRunInProgress = false;
+    setPrintSimAutoRunInProgress(false);
     updateBottomNavState();
   }
 }
@@ -9119,7 +9111,7 @@ function getPrintBedMeasureObject() {
 function applyPrintModelSubstitution() {
   const usingSlicerModel =
     printSim && typeof printSim.getSource === "function" && printSim.getSource() === "toolpath";
-  printHideStl = Boolean(usingSlicerModel);
+  setPrintHideStl(Boolean(usingSlicerModel));
   applyCloudStlDisplayState();
 }
 
@@ -9240,11 +9232,11 @@ function teardownPrintBedSimulation() {
   printSimTrackJoints = [];
   printSimBedJointName = null;
   printSimBedNozzleTip = null;
-  isDockedPrintActive = false;
+  setDockedPrintActive(false);
   teardownPrintViewReset(); // drop the "Reset view" button/timer with the print
   // Un-substitute: let the STL show again per the user's visibility toggle.
   if (printHideStl) {
-    printHideStl = false;
+    setPrintHideStl(false);
     applyCloudStlDisplayState();
   }
 }
@@ -10785,7 +10777,7 @@ function confirmPrintComplete() {
   }
   clearCloudStlObject();       // the part disappears from eje_x / eje_y
   expandFilesListForPrint();
-  isDockedPrintActive = false; // re-enable normal preview behaviour
+  setDockedPrintActive(false); // re-enable normal preview behaviour
   if (slicerLoadToViewerEl) {
     slicerLoadToViewerEl.disabled = false;
   }
@@ -12657,7 +12649,7 @@ initFileLibrary({
   syncCloudDatasetFromSelectedStl: (opts) => syncCloudDatasetFromSelectedStl(opts),
   applyCloudThumbStyle: (thumbEl, entry) => applyCloudThumbStyle(thumbEl, entry),
   getLoadedViewerFileName: () => ((cloudStlObject && loadedCloudLibraryFileName) ? loadedCloudLibraryFileName : ""),
-  setAutoSliceFlowActive: (active) => { autoSliceFlowActive = active; },
+  setAutoSliceFlowActive: (active) => { setAutoSliceFlowActive(active); },
   CLOUD_STL_FILES_API_URL,
 });
 setCloudFileSourceFilter(cloudFileSourceFilter, { refresh: false });
@@ -12846,7 +12838,7 @@ function initializePrintSimulation() {
     }
   }
 
-  printSim = createPrintSimulation({
+  setPrintSim(createPrintSimulation({
     THREE,
     renderer,
     getStlObject: () => cloudStlObject,
@@ -12893,7 +12885,7 @@ function initializePrintSimulation() {
     // Solid mesh + thermal segments for the STL / Thermal view modes.
     getSlicerMesh: () => (bridgedSliceData && bridgedSliceData.mesh ? bridgedSliceData.mesh : null),
     getSlicerThermal: () => (bridgedSliceData && bridgedSliceData.thermal ? bridgedSliceData.thermal : null),
-  });
+  }));
 
   initMachineLink();
 
