@@ -50,11 +50,81 @@ ERROR_CODES_STORE = DATABASE_ROOT / "error_codes.json"
 # from it and enforce a permission — never trusting the client's own gating.
 SESSION_COOKIE = "avis_session"
 SESSION_TTL_SECONDS = 12 * 60 * 60  # 12h backstop; the UI also auto-signs-out when idle
-# Permission a role must hold to issue machine commands.
-MACHINE_COMMAND_PERMISSION = "machine.command"
+# Capability key required to edit the roles/users document. Same key the admin
+# UI gates itself on (hmi/permissions.js isGod()), so client and server agree.
+ADMIN_PERMISSION = "admin.users"
+# Machine commands are NOT authorised by a capability key. Each command declares
+# a minimum sign-in level in contract.json (the host-owned UI<->host contract);
+# a role's `rank` is compared against it. See _command_level() below.
+CONTRACT_PATH = REPO_ROOT / "contract.json"
+LEVEL_RANK = {"none": 0, "operator": 1, "operatorPlus": 2, "support": 3, "god": 4}
 # Append-only JSON-lines audit trail of accepted machine commands (who/when/what),
 # written under DATABASE_ROOT so it moves with the data dir (and tests redirect it).
 COMMAND_AUDIT_LOG_NAME = "command_audit.log"
+
+# Roles served when no permissions.json exists yet (a fresh clone: the data dir
+# is gitignored). Without this the console has no roles to show, no rank to
+# authorise against, and no way out: the admin UI needs `admin.users`, which
+# needs a signed-in user, which needs tools/set_password.py, which used to
+# require a users list that only the admin UI could create. Ranks map to the
+# contract's permission levels (LEVEL_RANK) and are what gates machine commands.
+# There are deliberately NO default users — nobody can sign in until an operator
+# is created with `set_password.py --create`, so this seeds no credentials.
+DEFAULT_PERMISSIONS_DOC = {
+    "roles": [
+        {"id": "role_operator", "name": "Operator", "rank": 1, "builtin": True,
+         "permissions": ["files.browse", "print.control", "materials.assign",
+                         "slice.run", "slice.profileSelect", "machine.doors",
+                         "data.read"]},
+        {"id": "role_operator_plus", "name": "Operator+", "rank": 2, "builtin": True,
+         "permissions": ["files.browse", "print.control", "materials.assign",
+                         "slice.run", "slice.profileSelect", "slice.placement",
+                         "machine.doors", "machine.motion", "data.read",
+                         "files.upload", "files.delete", "notifications.manage",
+                         "calendar.edit"]},
+        {"id": "role_support", "name": "Meltio Support", "rank": 3, "builtin": True,
+         "permissions": ["files.browse", "print.control", "materials.assign",
+                         "slice.run", "slice.profileSelect", "slice.placement",
+                         "slice.profileEdit", "machine.doors", "machine.motion",
+                         "data.read", "files.upload", "files.delete",
+                         "notifications.manage", "calendar.edit",
+                         "setup.calibration", "setup.firmware", "setup.network"]},
+        {"id": "role_admin", "name": "Administrator", "rank": 4, "builtin": True,
+         "permissions": ["files.browse", "print.control", "materials.assign",
+                         "slice.run", "slice.profileSelect", "slice.placement",
+                         "slice.profileEdit", "machine.doors", "machine.motion",
+                         "data.read", "files.upload", "files.delete",
+                         "notifications.manage", "calendar.edit",
+                         "setup.calibration", "setup.firmware", "setup.network",
+                         ADMIN_PERMISSION]},
+    ],
+    "users": [],
+}
+
+
+def _load_command_levels() -> dict[str, str]:
+    """Map every machine command name AND legacy alias to its required sign-in
+    level, read from the host-owned contract.json. Returns {} if the contract
+    cannot be read — callers treat that as "authorise nothing" (fail closed):
+    a missing authorization table must never mean "allow"."""
+    try:
+        contract = json.loads(CONTRACT_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    commands = (contract.get("channels", {}).get("shell", {})
+                .get("uiToHost", {}).get("commands", {}))
+    levels: dict[str, str] = {}
+    for name, spec in commands.items():
+        if not isinstance(spec, dict):
+            continue
+        level = spec.get("permission", "god")
+        levels[name] = level
+        for alias in spec.get("aliases", []) or []:
+            levels[str(alias)] = level
+    return levels
+
+
+COMMAND_LEVELS = _load_command_levels()
 
 # Optional external slicer (aslicer) integration. Disabled unless AVIS_SLICER_URL
 # is set, so the viewer runs fully standalone by default. See docs/PRINT_SIM.md.
@@ -452,10 +522,15 @@ def create_app() -> FastAPI:
     def _load_permissions_doc() -> dict:
         try:
             if PERMISSIONS_STORE.exists():
-                return json.loads(PERMISSIONS_STORE.read_text(encoding="utf-8"))
+                doc = json.loads(PERMISSIONS_STORE.read_text(encoding="utf-8"))
+                if isinstance(doc, dict) and doc.get("roles"):
+                    return doc
         except (OSError, ValueError):
             pass
-        return {}
+        # No store yet (fresh clone) or an unusable one: fall back to the built-in
+        # roles so the console has ranks to authorise against. No users, so this
+        # grants nobody anything until an operator is provisioned.
+        return json.loads(json.dumps(DEFAULT_PERMISSIONS_DOC))
 
     def _public_permissions_doc(doc: dict) -> dict:
         """Same doc with per-user auth secrets removed (safe to send to the UI)."""
@@ -486,11 +561,39 @@ def create_app() -> FastAPI:
     _sessions: dict[str, dict] = {}
 
     def _operator_from_request(request: Request) -> dict | None:
-        """Resolve the signed-in operator from the session cookie, or None."""
+        """Resolve the signed-in operator from the session cookie, or None.
+
+        Enforces SESSION_TTL_SECONDS server-side. The cookie's own max-age is a
+        browser-side courtesy: a client that keeps sending an expired token (or
+        a non-browser caller) must still be rejected here."""
         token = request.cookies.get(SESSION_COOKIE)
         if not token:
             return None
-        return _sessions.get(token)
+        session = _sessions.get(token)
+        if session is None:
+            return None
+        age = (datetime.now(timezone.utc) - session["createdAt"]).total_seconds()
+        if age > SESSION_TTL_SECONDS:
+            _sessions.pop(token, None)  # expire on read; no sweeper needed
+            return None
+        return session["operator"]
+
+    def _require_permission(request: Request, permission: str) -> dict:
+        """Authenticate + authorise by capability key, or raise. This is the one
+        place privileged non-command endpoints go through — before it existed,
+        PUT /api/permissions/config simply had no check at all."""
+        operator = _operator_from_request(request)
+        if operator is None:
+            raise HTTPException(status_code=401, detail="Sign in to perform this action")
+        role = _role_for(_load_permissions_doc(), operator.get("roleId")) or {}
+        if permission not in (role.get("permissions") or []):
+            raise HTTPException(status_code=403, detail="Not authorised to perform this action")
+        return operator
+
+    def _command_level(command: str) -> str | None:
+        """The sign-in level contract.json requires for this command (by canonical
+        name or legacy alias), or None when the command is not declared."""
+        return COMMAND_LEVELS.get(command)
 
     def _append_command_audit(operator: dict, command: str, args: dict, ack: dict) -> None:
         """Append one JSON line recording an accepted (authorised + dispatched)
@@ -498,8 +601,10 @@ def create_app() -> FastAPI:
         that has already been sent to the machine."""
         entry = {
             "ts": datetime.now(timezone.utc).isoformat(),
+            # Commands the contract allows signed-out (emergencyStop) still get
+            # a line; "anonymous" is a fact worth auditing, not a gap.
             "operatorId": operator.get("id"),
-            "operatorName": operator.get("name"),
+            "operatorName": operator.get("name") or "anonymous",
             "command": command,
             "args": args,
             "ackId": ack.get("id"),
@@ -550,9 +655,12 @@ def create_app() -> FastAPI:
         # the browser returns it automatically on same-origin requests.
         token = secrets.token_urlsafe(32)
         _sessions[token] = {
-            "id": user["id"],
-            "name": user["name"],
-            "roleId": user["roleId"],
+            "createdAt": datetime.now(timezone.utc),
+            "operator": {
+                "id": user["id"],
+                "name": user["name"],
+                "roleId": user["roleId"],
+            },
         }
         response.set_cookie(
             SESSION_COOKIE,
@@ -573,8 +681,20 @@ def create_app() -> FastAPI:
         return {"ok": True}
 
     @app.put("/api/permissions/config")
-    def put_permissions_config(payload: dict | None = Body(default=None)) -> dict:
+    def put_permissions_config(request: Request, payload: dict | None = Body(default=None)) -> dict:
+        # This document IS the authorization store: it holds every role's rank
+        # and capability keys, and the credentials of every operator. It was
+        # writable anonymously — `PUT {}` left it as `{}` and locked everyone
+        # out, and adding a permission to a role escalated at will (SEG-1).
+        _require_permission(request, ADMIN_PERMISSION)
         data = payload if isinstance(payload, dict) else {}
+        # A body carrying neither roles nor users is a no-op, not "replace the
+        # document with nothing". Refuse it rather than wiping the store.
+        if not isinstance(data.get("roles"), list) and not isinstance(data.get("users"), list):
+            raise HTTPException(
+                status_code=400,
+                detail="Body must carry 'roles' and/or 'users'; refusing to empty the store",
+            )
         # The client never holds password hashes, so merge incoming users onto the
         # stored ones to PRESERVE each user's salt/passwordHash (a naive overwrite
         # would wipe every credential). Roles/matrix are replaced as sent.
@@ -856,25 +976,41 @@ def create_app() -> FastAPI:
 
     @app.post("/api/machine/command")
     def machine_command(request: Request, payload: dict | None = Body(default=None)) -> dict:
-        # 1) Authenticate: the caller must hold a valid operator session.
-        operator = _operator_from_request(request)
-        if operator is None:
-            raise HTTPException(status_code=401, detail="Sign in to control the machine")
-        # 2) Authorise: the operator's role must grant machine-command rights.
-        doc = _load_permissions_doc()
-        role = _role_for(doc, operator.get("roleId")) or {}
-        if MACHINE_COMMAND_PERMISSION not in (role.get("permissions") or []):
-            raise HTTPException(status_code=403, detail="Not authorised to issue machine commands")
-        # 3) Validate + dispatch.
+        # Authorization is per COMMAND, not one bit for all of them: contract.json
+        # declares a minimum sign-in level per command and the operator's role
+        # rank is compared against it. Previously a single `machine.command`
+        # capability let a role that could jog also fire ESTOP and START_PRINT —
+        # and that key existed nowhere but app.py, so a clean install could not
+        # grant it at all and every command 403'd (ARQ-2 / SEG-3).
         data = payload if isinstance(payload, dict) else {}
         command = data.get("command")
         if not isinstance(command, str) or not command:
             raise HTTPException(status_code=400, detail="command is required")
+        level = _command_level(command)
+        if level is None:
+            # Undeclared command: refuse rather than forward something the
+            # contract does not describe.
+            raise HTTPException(status_code=400, detail=f"Unknown command '{command}'")
+        required_rank = LEVEL_RANK.get(level, max(LEVEL_RANK.values()))
+
+        operator = _operator_from_request(request)
+        if required_rank > 0:
+            if operator is None:
+                raise HTTPException(status_code=401, detail="Sign in to control the machine")
+            role = _role_for(_load_permissions_doc(), operator.get("roleId")) or {}
+            if int(role.get("rank") or 0) < required_rank:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"'{command}' requires {level} level or above",
+                )
+        # level "none" (today: only emergencyStop/ESTOP) is deliberately allowed
+        # signed-out — the contract says so, and refusing a stop request because
+        # nobody is logged in is the wrong failure direction. It is still audited.
+
         args = data.get("args") if isinstance(data.get("args"), dict) else {}
         ack = get_machine().command(command, args)
         ack["id"] = data.get("id")
-        # 4) Audit the accepted (authorised + dispatched) command.
-        _append_command_audit(operator, command, args, ack)
+        _append_command_audit(operator or {}, command, args, ack)
         return ack
 
     # --- Machine program library (read-only browse) ---------------------------
