@@ -71,6 +71,11 @@ import {
   refreshGlobalStlFiles,
   updateCloudFavoritesFilterButton,
 } from "./hmi/fileLibrary.js";
+import { createAssemblyAnnotationManager } from "./viewer/overlays/assemblyAnnotations.js";
+import {
+  initFeederWheelFloatOverlay,
+  updateFeederWheelFloatingControls,
+} from "./viewer/overlays/feederWheelFloat.js";
 import {
   MELTIO_MATERIAL_LIBRARY,
   DEFAULT_PRINT_JOB_USAGE_GRAMS,
@@ -288,11 +293,9 @@ const annotationNavTopCoverEl = document.getElementById("annotationNavTopCover")
 const controlsTopCoverButtonEl = document.getElementById("controlsTopCoverButton");
 const quickFrontDoorToggleEl = document.getElementById("quickFrontDoorToggle");
 const annotationLayerEl = document.getElementById("annotationLayer");
-const feederWheelFloatingLeftEl = document.getElementById("feederWheelFloatingLeft");
 const feederWheelFloatLeftUpEl = document.getElementById("feederWheelFloatLeftUp");
 const feederWheelFloatLeftStopEl = document.getElementById("feederWheelFloatLeftStop");
 const feederWheelFloatLeftDownEl = document.getElementById("feederWheelFloatLeftDown");
-const feederWheelFloatingRightEl = document.getElementById("feederWheelFloatingRight");
 const feederWheelFloatRightUpEl = document.getElementById("feederWheelFloatRightUp");
 const feederWheelFloatRightStopEl = document.getElementById("feederWheelFloatRightStop");
 const feederWheelFloatRightDownEl = document.getElementById("feederWheelFloatRightDown");
@@ -874,16 +877,6 @@ let sceneViewShiftCurrentPx = 0;
 const OVERLAY_MENU_SAFE_MARGIN_PX = 10;
 const HOTSPOT_CONTEXT_PANEL_BOTTOM_GAP_PX = 16;
 const HOTSPOT_UI_TRANSITION_MS = 200;
-const feederWheelFloatAnchorsBySide = {
-  left: {
-    world: new THREE.Vector3(),
-    ndc: new THREE.Vector3(),
-  },
-  right: {
-    world: new THREE.Vector3(),
-    ndc: new THREE.Vector3(),
-  },
-};
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -989,7 +982,67 @@ const GAS_SPRING_GEOMETRY = {
 };
 const gasSpringRotatedLocalXY = new THREE.Vector2();
 const gasSpringSecondaryWorldXY = new THREE.Vector2();
-const assemblyAnnotationManager = createAssemblyAnnotationManager(annotationLayerEl);
+// Projection overlays (viewer/overlays/ — the sanctioned DOM island). Host
+// state and door/hotspot actions are injected; camera/controls are the stable
+// sceneCore refs, mutable host state goes in as getters.
+const assemblyAnnotationManager = createAssemblyAnnotationManager(annotationLayerEl, {
+  camera,
+  controls,
+  clamp,
+  computeObjectLocalBounds,
+  getOverlayVerticalSafeBounds: (h) => getOverlayVerticalSafeBounds(h),
+  markUserActivity: () => markUserActivity(),
+  setToggleButtonState,
+  getRobotRoot: () => robotRoot,
+  getActiveHotspotPanelId: () => activeHotspotPanelId,
+  getKeepHotspotContextPanelVisible: () => keepHotspotContextPanelVisible,
+  isCloudModelMenuOpen: () => isCloudModelMenuOpen,
+  closeHotspotContextPanel: () => closeHotspotContextPanel(),
+  setHotspotTriggerRailVisible: (visible) => setHotspotTriggerRailVisible(visible),
+  toggleHotspotContextPanel: (panelId) => toggleHotspotContextPanel(panelId),
+  setHotspotMaterialsFocusSpool: (key) => setHotspotMaterialsFocusSpool(key),
+  getFrontDoorControlData: () => getFrontDoorControlData(),
+  getSpoolsDoorControlData: () => getSpoolsDoorControlData(),
+  getTopCoverControlData: () => getTopCoverControlData(),
+  isFrontDoorOpen: () => isFrontDoorOpen(),
+  isSpoolsDoorOpen: () => isSpoolsDoorOpen(),
+  isTopCoverOpen: () => isTopCoverOpen(),
+  runFrontDoorButtonAction: (point) => runFrontDoorButtonAction(point),
+  runSpoolsDoorButtonAction: (point) => runSpoolsDoorButtonAction(point),
+  runTopCoverButtonAction: () => runTopCoverButtonAction(),
+  setFrontDoorOpenState: (open) => setFrontDoorOpenState(open),
+  setSpoolsDoorOpenState: (open) => setSpoolsDoorOpenState(open),
+  setTopCoverOpenState: (open) => setTopCoverOpenState(open),
+  getLeftFeederWheelState: () => leftFeederWheelState,
+  getRightFeederWheelState: () => rightFeederWheelState,
+  ANNOTATION_DEFINITIONS,
+  annotationNavButtonsById,
+  ANNOTATION_UPDATE_INTERVAL_MS,
+  ANNOTATION_CLICK_ACTIVE_HOLD_MS,
+  ENABLE_ANNOTATION_OCCLUSION,
+  ANNOTATION_OCCLUSION_MAX_STALE_MS,
+  ANNOTATION_OCCLUSION_TOLERANCE,
+  ANNOTATION_OCCLUSION_RAYCASTS_PER_FRAME,
+  HOTSPOT_PANEL_MATERIALS_ID,
+});
+initFeederWheelFloatOverlay({
+  camera,
+  clamp,
+  getLinkWorldCenter: (link) => getLinkWorldCenter(link),
+  getOverlayVerticalSafeBounds: (h) => getOverlayVerticalSafeBounds(h),
+  setToggleButtonState,
+  getRobotRoot: () => robotRoot,
+  getActiveFeederCameraAnchorSide: () => activeFeederCameraAnchorSide,
+  getLeftFeederWheelState: () => leftFeederWheelState,
+  getRightFeederWheelState: () => rightFeederWheelState,
+  getFeederDriveSide: () => feederDriveSide,
+  getFeederDriveVertical: () => feederDriveVertical,
+  LEFT_FEEDER_WHEEL_LINK,
+  RIGHT_FEEDER_WHEEL_LINK,
+  CENTRAL_FEEDER_WHEEL_LINK,
+  FEEDER_LINK,
+  FEEDER_FLOAT_SIDE_OFFSET_PX,
+});
 const viewCubeController = createViewCubeController();
 const feederPreviewController = createFeederPreviewController();
 
@@ -1257,123 +1310,6 @@ function updateFeederCameraAnchorButtons() {
   updateFeederWheelFloatingControls();
 }
 
-function getFeederWheelFloatingPanelElements(side) {
-  if (side === "right") {
-    return {
-      panelEl: feederWheelFloatingRightEl,
-      upEl: feederWheelFloatRightUpEl,
-      stopEl: feederWheelFloatRightStopEl,
-      downEl: feederWheelFloatRightDownEl,
-    };
-  }
-
-  return {
-    panelEl: feederWheelFloatingLeftEl,
-    upEl: feederWheelFloatLeftUpEl,
-    stopEl: feederWheelFloatLeftStopEl,
-    downEl: feederWheelFloatLeftDownEl,
-  };
-}
-
-function getFeederFloatingAnchorWorldPoint(side) {
-  const resolvedSide = side === "right" ? "right" : "left";
-  const sideLink = resolvedSide === "right"
-    ? RIGHT_FEEDER_WHEEL_LINK
-    : LEFT_FEEDER_WHEEL_LINK;
-
-  const sideWheelCenter = getLinkWorldCenter(sideLink);
-  const centralWheelCenter = getLinkWorldCenter(CENTRAL_FEEDER_WHEEL_LINK);
-  const feederCenter = getLinkWorldCenter(FEEDER_LINK);
-
-  if (sideWheelCenter && centralWheelCenter) {
-    return sideWheelCenter.lerp(centralWheelCenter, 0.34);
-  }
-
-  return sideWheelCenter || centralWheelCenter || feederCenter || null;
-}
-
-function setFeederWheelFloatingControlsVisible(side, isVisible) {
-  const { panelEl } = getFeederWheelFloatingPanelElements(side);
-  if (!panelEl) {
-    return;
-  }
-
-  panelEl.hidden = !isVisible;
-  panelEl.setAttribute("aria-hidden", isVisible ? "false" : "true");
-}
-
-function updateSingleFeederWheelFloatingControls(side, shouldShowForCamera) {
-  const { panelEl, upEl, stopEl, downEl } = getFeederWheelFloatingPanelElements(side);
-  if (!panelEl) {
-    return;
-  }
-
-  const hasSideWheel = side === "right"
-    ? Boolean(rightFeederWheelState)
-    : Boolean(leftFeederWheelState);
-
-  const shouldShow = Boolean(shouldShowForCamera && hasSideWheel);
-  if (!shouldShow) {
-    setFeederWheelFloatingControlsVisible(side, false);
-    return;
-  }
-
-  const worldAnchor = getFeederFloatingAnchorWorldPoint(side);
-  if (!worldAnchor) {
-    setFeederWheelFloatingControlsVisible(side, false);
-    return;
-  }
-
-  const sideAnchors = feederWheelFloatAnchorsBySide[side];
-  sideAnchors.world.copy(worldAnchor);
-  sideAnchors.ndc.copy(sideAnchors.world).project(camera);
-
-  if (
-    !Number.isFinite(sideAnchors.ndc.x)
-    || !Number.isFinite(sideAnchors.ndc.y)
-    || !Number.isFinite(sideAnchors.ndc.z)
-    || sideAnchors.ndc.z <= -1
-    || sideAnchors.ndc.z >= 1
-  ) {
-    setFeederWheelFloatingControlsVisible(side, false);
-    return;
-  }
-
-  setFeederWheelFloatingControlsVisible(side, true);
-
-  const panelRect = panelEl.getBoundingClientRect();
-  const panelWidth = Math.max(panelRect.width, 48);
-  const panelHeight = Math.max(panelRect.height, 122);
-  const sideOffset = side === "right"
-    ? FEEDER_FLOAT_SIDE_OFFSET_PX
-    : -FEEDER_FLOAT_SIDE_OFFSET_PX;
-  // The camera view offset already pans the projection, so the anchor NDC
-  // reflects the shifted scene — no manual shift compensation needed here.
-  const screenX = ((sideAnchors.ndc.x * 0.5) + 0.5) * window.innerWidth;
-  const screenY = ((-sideAnchors.ndc.y * 0.5) + 0.5) * window.innerHeight;
-
-  const x = clamp(
-    screenX + sideOffset - (panelWidth * 0.5),
-    8,
-    Math.max(window.innerWidth - panelWidth - 8, 8),
-  );
-  const overlayYBounds = getOverlayVerticalSafeBounds(panelHeight);
-  const y = clamp(
-    screenY - (panelHeight * 0.5),
-    overlayYBounds.minY,
-    overlayYBounds.maxY,
-  );
-
-  panelEl.style.transform = `translate(${x.toFixed(2)}px, ${y.toFixed(2)}px)`;
-
-  const isSideDriving = feederDriveSide === side && Boolean(feederDriveVertical);
-  const upActive = isSideDriving && feederDriveVertical === "up";
-  const downActive = isSideDriving && feederDriveVertical === "down";
-  const stopActive = !isSideDriving;
-  setToggleButtonState(upEl, upActive, false);
-  setToggleButtonState(stopEl, stopActive, false);
-  setToggleButtonState(downEl, downActive, false);
-}
 
 // How far the rendered scene is panned to the right (in CSS px) to clear the
 // left-hand Controls / Cloud panel. This is applied via the camera view offset
@@ -1474,11 +1410,6 @@ function getOverlayVerticalSafeBounds(elementHeight = 0) {
   };
 }
 
-function updateFeederWheelFloatingControls() {
-  const shouldShowForCamera = Boolean(robotRoot && activeFeederCameraAnchorSide);
-  updateSingleFeederWheelFloatingControls("left", shouldShowForCamera);
-  updateSingleFeederWheelFloatingControls("right", shouldShowForCamera);
-}
 
 function runFeederFloatingCommand(side, command) {
   if (side !== "left" && side !== "right") {
@@ -9876,876 +9807,6 @@ function computeObjectLocalBounds(rootObject, options = {}) {
   return hasPoint ? localBounds : null;
 }
 
-function createAssemblyAnnotationManager(layerEl) {
-  if (!layerEl) {
-    return {
-      clear: () => {},
-      rebuildFromRobot: () => {},
-      update: () => {},
-      onResize: () => {},
-    };
-  }
-
-  const svgNs = "http://www.w3.org/2000/svg";
-  const calloutSvg = document.createElementNS(svgNs, "svg");
-  calloutSvg.classList.add("assembly-annotation-callouts");
-  layerEl.appendChild(calloutSvg);
-
-  const anchorWorld = new THREE.Vector3();
-  const projected = new THREE.Vector3();
-  const centerToAnchor = new THREE.Vector3();
-  const rayDirection = new THREE.Vector3();
-  const cameraForward = new THREE.Vector3();
-  const focusPoint = new THREE.Vector3();
-  const anchorOffset = new THREE.Vector3();
-  const raycaster = new THREE.Raycaster();
-  const previousCameraPosition = new THREE.Vector3();
-  const previousControlsTarget = new THREE.Vector3();
-  const previousCameraQuaternion = new THREE.Quaternion();
-  const silhouetteCornerWorld = new THREE.Vector3();
-  const silhouetteCornerProjected = new THREE.Vector3();
-  const outsideDirection = new THREE.Vector2();
-  const adjustedButtonPosition = { x: 0, y: 0 };
-  const items = [];
-  const robotLocalCorners = [];
-  const occlusionMeshes = [];
-  let activeItemId = null;
-  let activeItemUntilMs = 0;
-  let lastUpdateMs = -Infinity;
-  let cachedViewportWidth = 0;
-  let cachedViewportHeight = 0;
-  let hasCameraSnapshot = false;
-  let occlusionRoundRobinIndex = 0;
-  let lastInvokedItemId = null;
-  const modelScreenBounds = {
-    minX: 0,
-    maxX: 0,
-    minY: 0,
-    maxY: 0,
-    centerX: 0,
-    centerY: 0,
-    valid: false,
-  };
-
-  const isOccluderMaterial = (material) => {
-    if (!material) {
-      return true;
-    }
-
-    if (Array.isArray(material)) {
-      return material.some((entry) => isOccluderMaterial(entry));
-    }
-
-    if (material.visible === false) {
-      return false;
-    }
-
-    if (material.transparent && Number(material.opacity) < 0.8) {
-      return false;
-    }
-
-    return true;
-  };
-
-  const hideItem = (item) => {
-    item.button.hidden = true;
-    item.button.classList.remove("is-visible", "is-open", "is-occluded", "is-active");
-    item.line.style.display = "none";
-    item.lineEnd.style.display = "none";
-    item.currentButtonX = null;
-    item.currentButtonY = null;
-  };
-
-  const isDescendantOf = (node, ancestor) => {
-    let cursor = node;
-    while (cursor) {
-      if (cursor === ancestor) {
-        return true;
-      }
-      cursor = cursor.parent;
-    }
-    return false;
-  };
-
-  const collectOcclusionMeshes = () => {
-    occlusionMeshes.length = 0;
-    if (!robotRoot || !ENABLE_ANNOTATION_OCCLUSION) {
-      return;
-    }
-
-    robotRoot.traverse((node) => {
-      if (!node.isMesh || !node.visible || !node.geometry) {
-        return;
-      }
-      if (!isOccluderMaterial(node.material)) {
-        return;
-      }
-      occlusionMeshes.push(node);
-    });
-  };
-
-  const rebuildRobotLocalCorners = () => {
-    robotLocalCorners.length = 0;
-    if (!robotRoot) {
-      return;
-    }
-
-    const localBounds = computeObjectLocalBounds(robotRoot);
-    if (!localBounds || localBounds.isEmpty()) {
-      return;
-    }
-
-    for (let cornerIndex = 0; cornerIndex < 8; cornerIndex += 1) {
-      robotLocalCorners.push(new THREE.Vector3(
-        (cornerIndex & 1) ? localBounds.max.x : localBounds.min.x,
-        (cornerIndex & 2) ? localBounds.max.y : localBounds.min.y,
-        (cornerIndex & 4) ? localBounds.max.z : localBounds.min.z,
-      ));
-    }
-  };
-
-  const updateModelScreenBounds = () => {
-    modelScreenBounds.valid = false;
-
-    if (!robotRoot || !robotLocalCorners.length) {
-      return;
-    }
-
-    let minX = Number.POSITIVE_INFINITY;
-    let maxX = Number.NEGATIVE_INFINITY;
-    let minY = Number.POSITIVE_INFINITY;
-    let maxY = Number.NEGATIVE_INFINITY;
-    let visibleCornerCount = 0;
-
-    for (const localCorner of robotLocalCorners) {
-      silhouetteCornerWorld.copy(localCorner);
-      robotRoot.localToWorld(silhouetteCornerWorld);
-      silhouetteCornerProjected.copy(silhouetteCornerWorld).project(camera);
-
-      if (
-        !Number.isFinite(silhouetteCornerProjected.x)
-        || !Number.isFinite(silhouetteCornerProjected.y)
-        || !Number.isFinite(silhouetteCornerProjected.z)
-      ) {
-        continue;
-      }
-
-      const screenX = (silhouetteCornerProjected.x * 0.5 + 0.5) * window.innerWidth;
-      const screenY = (-silhouetteCornerProjected.y * 0.5 + 0.5) * window.innerHeight;
-      minX = Math.min(minX, screenX);
-      maxX = Math.max(maxX, screenX);
-      minY = Math.min(minY, screenY);
-      maxY = Math.max(maxY, screenY);
-      visibleCornerCount += 1;
-    }
-
-    if (visibleCornerCount < 2 || !Number.isFinite(minX) || !Number.isFinite(minY)) {
-      return;
-    }
-
-    modelScreenBounds.minX = minX;
-    modelScreenBounds.maxX = maxX;
-    modelScreenBounds.minY = minY;
-    modelScreenBounds.maxY = maxY;
-    modelScreenBounds.centerX = (minX + maxX) * 0.5;
-    modelScreenBounds.centerY = (minY + maxY) * 0.5;
-    modelScreenBounds.valid = true;
-  };
-
-  const rectOverlapsModelBounds = (left, top, width, height, padding = 6) => {
-    if (!modelScreenBounds.valid) {
-      return false;
-    }
-
-    const right = left + width;
-    const bottom = top + height;
-    const paddedMinX = modelScreenBounds.minX - padding;
-    const paddedMaxX = modelScreenBounds.maxX + padding;
-    const paddedMinY = modelScreenBounds.minY - padding;
-    const paddedMaxY = modelScreenBounds.maxY + padding;
-
-    return !(
-      right < paddedMinX
-      || left > paddedMaxX
-      || bottom < paddedMinY
-      || top > paddedMaxY
-    );
-  };
-
-  const moveButtonOutsideModelBounds = (buttonLeft, buttonTop, width, height, screenOffset) => {
-    if (!rectOverlapsModelBounds(buttonLeft, buttonTop, width, height, 8)) {
-      adjustedButtonPosition.x = buttonLeft;
-      adjustedButtonPosition.y = buttonTop;
-      return adjustedButtonPosition;
-    }
-
-    const maxX = Math.max(window.innerWidth - width - 8, 8);
-    const maxY = Math.max(window.innerHeight - height - 8, 8);
-    let nextX = buttonLeft;
-    let nextY = buttonTop;
-
-    outsideDirection.set(
-      (nextX + (width * 0.5)) - modelScreenBounds.centerX,
-      (nextY + (height * 0.5)) - modelScreenBounds.centerY,
-    );
-
-    if (outsideDirection.lengthSq() <= 1e-6) {
-      outsideDirection.set(
-        (screenOffset?.[0] || 1),
-        (screenOffset?.[1] || -1),
-      );
-    }
-    outsideDirection.normalize();
-
-    for (let step = 0; step < 8; step += 1) {
-      if (!rectOverlapsModelBounds(nextX, nextY, width, height, 8)) {
-        break;
-      }
-
-      nextX = clamp(nextX + (outsideDirection.x * 18), 8, maxX);
-      nextY = clamp(nextY + (outsideDirection.y * 18), 8, maxY);
-    }
-
-    adjustedButtonPosition.x = nextX;
-    adjustedButtonPosition.y = nextY;
-    return adjustedButtonPosition;
-  };
-
-  const isAnchorCrossingButtonBody = (anchorX, buttonLeft, width) => (
-    anchorX > buttonLeft && anchorX < (buttonLeft + width)
-  );
-
-  const computeFlippedButtonX = (anchorX, buttonLeft, width, screenOffsetX) => {
-    const maxX = Math.max(window.innerWidth - width - 8, 8);
-    const gap = Math.max(Math.abs(Number(screenOffsetX) || 0), 22);
-    const leftCandidate = clamp(anchorX - gap - width, 8, maxX);
-    const rightCandidate = clamp(anchorX + gap, 8, maxX);
-    const currentCenterX = buttonLeft + (width * 0.5);
-    const currentOnRightSide = currentCenterX >= anchorX;
-
-    let nextX = currentOnRightSide ? leftCandidate : rightCandidate;
-    if (!isAnchorCrossingButtonBody(anchorX, nextX, width)) {
-      return nextX;
-    }
-
-    const alternateX = currentOnRightSide ? rightCandidate : leftCandidate;
-    if (!isAnchorCrossingButtonBody(anchorX, alternateX, width)) {
-      return alternateX;
-    }
-
-    const leftDistance = Math.abs((leftCandidate + (width * 0.5)) - anchorX);
-    const rightDistance = Math.abs((rightCandidate + (width * 0.5)) - anchorX);
-    nextX = leftDistance >= rightDistance ? leftCandidate : rightCandidate;
-    return nextX;
-  };
-
-  const computeOccluded = (item, worldPoint, isProjectedOutside) => {
-    if (isProjectedOutside) {
-      return true;
-    }
-
-    rayDirection.copy(worldPoint).sub(camera.position);
-    const targetDistance = rayDirection.length();
-    if (!Number.isFinite(targetDistance) || targetDistance <= 1e-6) {
-      return false;
-    }
-
-    rayDirection.divideScalar(targetDistance);
-    raycaster.set(camera.position, rayDirection);
-    raycaster.near = 0.01;
-    raycaster.far = Math.max(targetDistance - ANNOTATION_OCCLUSION_TOLERANCE, 0.01);
-
-    const hits = raycaster.intersectObjects(occlusionMeshes, false);
-    for (const hit of hits) {
-      if (!hit.object || !hit.object.visible) {
-        continue;
-      }
-      if (isDescendantOf(hit.object, item.targetObject)) {
-        continue;
-      }
-      return true;
-    }
-
-    return false;
-  };
-
-  const getItemIsOpen = (itemId) => {
-    if (itemId === "front-door") {
-      return isFrontDoorOpen();
-    }
-    if (itemId === "spools-door") {
-      if (isFrontDoorOpen()) {
-        return activeHotspotPanelId === HOTSPOT_PANEL_MATERIALS_ID;
-      }
-      return isSpoolsDoorOpen();
-    }
-    if (itemId === "feeder-drive") {
-      return activeHotspotPanelId === HOTSPOT_PANEL_MATERIALS_ID;
-    }
-    if (itemId === "top-cover") {
-      return isTopCoverOpen();
-    }
-    return false;
-  };
-
-  const runItemToggleAction = (item) => {
-    if (item.id === "front-door") {
-      return setFrontDoorOpenState(!isFrontDoorOpen());
-    }
-    if (item.id === "spools-door") {
-      return setSpoolsDoorOpenState(!isSpoolsDoorOpen());
-    }
-    if (item.id === "top-cover") {
-      return setTopCoverOpenState(!isTopCoverOpen());
-    }
-    return false;
-  };
-
-  const runItemCameraAction = (item, worldPoint) => {
-    if (item.id === "front-door") {
-      closeHotspotContextPanel();
-      return runFrontDoorButtonAction(worldPoint);
-    }
-    if (item.id === "spools-door") {
-      if (isFrontDoorOpen()) {
-        setHotspotMaterialsFocusSpool(null);
-        return toggleHotspotContextPanel(HOTSPOT_PANEL_MATERIALS_ID);
-      }
-      closeHotspotContextPanel();
-      return runSpoolsDoorButtonAction(worldPoint);
-    }
-    if (item.id === "feeder-drive") {
-      setHotspotMaterialsFocusSpool(null);
-      return toggleHotspotContextPanel(HOTSPOT_PANEL_MATERIALS_ID);
-    }
-    if (item.id === "top-cover") {
-      closeHotspotContextPanel();
-      return runTopCoverButtonAction(worldPoint);
-    }
-    return false;
-  };
-
-  const setNavButtonState = (itemId, options = {}) => {
-    const buttonEl = annotationNavButtonsById[itemId];
-    if (!buttonEl) {
-      return;
-    }
-
-    const isEnabled = options.enabled !== false;
-    const isActive = isEnabled && Boolean(options.active);
-    const isOpen = isEnabled && Boolean(options.open);
-
-    buttonEl.disabled = !isEnabled;
-    buttonEl.classList.toggle("active", isActive || isOpen);
-    buttonEl.classList.toggle("is-open", isOpen);
-    buttonEl.setAttribute("aria-pressed", (isActive || isOpen) ? "true" : "false");
-  };
-
-  const closeAssemblyForItem = (itemId) => {
-    if (itemId === "front-door") {
-      return setFrontDoorOpenState(false);
-    }
-    if (itemId === "spools-door") {
-      return setSpoolsDoorOpenState(false);
-    }
-    if (itemId === "feeder-drive") {
-      return closeHotspotContextPanel();
-    }
-    if (itemId === "top-cover") {
-      return setTopCoverOpenState(false);
-    }
-    return false;
-  };
-
-  const runMenuActionWithSwitchHandling = (item, worldPoint) => {
-    const supportsSwitchHandling = item.id !== "feeder-drive" && !(isFrontDoorOpen() && item.id === "spools-door");
-    const switchedItem = supportsSwitchHandling && Boolean(lastInvokedItemId && lastInvokedItemId !== item.id);
-    const actionWorldPoint = worldPoint.clone();
-
-    if (switchedItem) {
-      closeAssemblyForItem(lastInvokedItemId);
-    }
-
-    runItemCameraAction(item, actionWorldPoint);
-    if (supportsSwitchHandling) {
-      lastInvokedItemId = item.id;
-    }
-  };
-
-  const resolveTargetObject = (definition) => {
-    if (!robotRoot) {
-      return null;
-    }
-
-    const primaryTarget = definition.targetObjectName
-      ? robotRoot.getObjectByName(definition.targetObjectName)
-      : null;
-    if (primaryTarget) {
-      return primaryTarget;
-    }
-
-    if (!definition.fallbackTargetObjectName) {
-      return null;
-    }
-
-    return robotRoot.getObjectByName(definition.fallbackTargetObjectName);
-  };
-
-  const computeLocalAnchorData = (targetObject, definition) => {
-    const localBounds = computeObjectLocalBounds(targetObject);
-    const localCenter = new THREE.Vector3();
-    const localSize = new THREE.Vector3(0.2, 0.2, 0.2);
-
-    if (localBounds && !localBounds.isEmpty()) {
-      localBounds.getCenter(localCenter);
-      localBounds.getSize(localSize);
-    }
-
-    const localAnchor = localCenter.clone();
-    const localOffset = Array.isArray(definition.localOffset) ? definition.localOffset : [0, 0, 0];
-    anchorOffset.set(
-      Number(localOffset[0]) || 0,
-      Number(localOffset[1]) || 0,
-      Number(localOffset[2]) || 0,
-    );
-    localAnchor.add(anchorOffset);
-
-    return {
-      localCenter,
-      localSize,
-      localAnchor,
-    };
-  };
-
-  const hasControlData = (itemId) => {
-    if (itemId === "front-door") {
-      return Boolean(getFrontDoorControlData());
-    }
-    if (itemId === "spools-door") {
-      return Boolean(getSpoolsDoorControlData());
-    }
-    if (itemId === "feeder-drive") {
-      return Boolean(leftFeederWheelState || rightFeederWheelState);
-    }
-    if (itemId === "top-cover") {
-      return Boolean(getTopCoverControlData());
-    }
-    return false;
-  };
-
-  const setCalloutSvgSize = () => {
-    const width = window.innerWidth;
-    const height = window.innerHeight;
-
-    if (width === cachedViewportWidth && height === cachedViewportHeight) {
-      return;
-    }
-
-    cachedViewportWidth = width;
-    cachedViewportHeight = height;
-    calloutSvg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-    calloutSvg.setAttribute("width", String(width));
-    calloutSvg.setAttribute("height", String(height));
-
-    for (const item of items) {
-      const rect = item.button.getBoundingClientRect();
-      item.buttonWidth = rect.width || item.buttonWidth;
-      item.buttonHeight = rect.height || item.buttonHeight;
-    }
-  };
-
-  const clear = () => {
-    for (const item of items) {
-      if (item.navButton) {
-        item.navButton.onclick = null;
-      }
-      item.button.remove();
-      item.line.remove();
-      item.lineEnd.remove();
-    }
-    items.length = 0;
-    robotLocalCorners.length = 0;
-    activeItemId = null;
-    activeItemUntilMs = 0;
-    occlusionRoundRobinIndex = 0;
-    hasCameraSnapshot = false;
-    lastInvokedItemId = null;
-
-    for (const itemId of Object.keys(annotationNavButtonsById)) {
-      setNavButtonState(itemId, { enabled: false, active: false, open: false });
-    }
-
-    layerEl.setAttribute("aria-hidden", "true");
-  };
-
-  const rebuildFromRobot = () => {
-    clear();
-
-    if (!robotRoot) {
-      return;
-    }
-
-    robotRoot.updateWorldMatrix(true, true);
-    rebuildRobotLocalCorners();
-    setCalloutSvgSize();
-    collectOcclusionMeshes();
-
-    for (const itemId of Object.keys(annotationNavButtonsById)) {
-      setNavButtonState(itemId, { enabled: false, active: false, open: false });
-    }
-
-    for (const definition of ANNOTATION_DEFINITIONS) {
-      if (!hasControlData(definition.id)) {
-        continue;
-      }
-
-      const targetObject = resolveTargetObject(definition);
-      if (!targetObject) {
-        continue;
-      }
-
-      const {
-        localCenter,
-        localSize,
-        localAnchor,
-      } = computeLocalAnchorData(targetObject, definition);
-
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "assembly-annotation";
-      button.setAttribute("aria-label", definition.label);
-      button.dataset.annotationId = definition.id;
-
-      const labelEl = document.createElement("span");
-      labelEl.className = "assembly-annotation-label";
-      labelEl.textContent = definition.label;
-
-      button.appendChild(labelEl);
-
-      const line = document.createElementNS(svgNs, "line");
-      line.classList.add("assembly-callout-line");
-      const lineEnd = document.createElementNS(svgNs, "circle");
-      lineEnd.classList.add("assembly-callout-end");
-      lineEnd.setAttribute("r", "3.1");
-      calloutSvg.appendChild(line);
-      calloutSvg.appendChild(lineEnd);
-      layerEl.appendChild(button);
-
-      const item = {
-        id: definition.id,
-        definition,
-        targetObject,
-        localCenter,
-        localSize,
-        localAnchor,
-        screenOffset: definition.screenOffset,
-        button,
-        line,
-        lineEnd,
-        navButton: annotationNavButtonsById[definition.id] || null,
-        buttonWidth: 130,
-        buttonHeight: 34,
-        occluded: false,
-        lastOcclusionUpdateMs: -Infinity,
-        previousAnchorWorld: new THREE.Vector3(),
-        hasPreviousAnchorWorld: false,
-        currentButtonX: null,
-        currentButtonY: null,
-      };
-
-      const buttonRect = button.getBoundingClientRect();
-      item.buttonWidth = buttonRect.width || item.buttonWidth;
-      item.buttonHeight = buttonRect.height || item.buttonHeight;
-
-      const triggerItemAction = () => {
-        markUserActivity();
-        activeItemId = item.id;
-        activeItemUntilMs = performance.now() + ANNOTATION_CLICK_ACTIVE_HOLD_MS;
-
-        focusPoint.copy(item.localAnchor);
-        item.targetObject.localToWorld(focusPoint);
-        runMenuActionWithSwitchHandling(item, focusPoint);
-      };
-
-      button.addEventListener("click", triggerItemAction);
-
-      if (item.navButton) {
-        const triggerNavAction = () => {
-          markUserActivity();
-          activeItemId = item.id;
-          activeItemUntilMs = performance.now() + ANNOTATION_CLICK_ACTIVE_HOLD_MS;
-
-          focusPoint.copy(item.localAnchor);
-          item.targetObject.localToWorld(focusPoint);
-          runMenuActionWithSwitchHandling(item, focusPoint);
-        };
-
-        const navLabel = item.id === "front-door" ? "Front Door" : definition.label;
-        item.navButton.textContent = navLabel;
-        item.navButton.onclick = triggerNavAction;
-        setNavButtonState(item.id, { enabled: true, active: false, open: false });
-      }
-
-      items.push(item);
-    }
-
-    layerEl.setAttribute("aria-hidden", items.length ? "false" : "true");
-  };
-
-  const update = (nowMs = performance.now()) => {
-    if (!items.length || !robotRoot) {
-      return;
-    }
-
-    if (ANNOTATION_UPDATE_INTERVAL_MS > 0 && (nowMs - lastUpdateMs) < ANNOTATION_UPDATE_INTERVAL_MS) {
-      return;
-    }
-    lastUpdateMs = nowMs;
-
-    cameraForward.copy(controls.target).sub(camera.position).normalize();
-    updateModelScreenBounds();
-
-    let cameraMoved = false;
-    if (ENABLE_ANNOTATION_OCCLUSION) {
-      cameraMoved = (
-        !hasCameraSnapshot ||
-        previousCameraPosition.distanceToSquared(camera.position) > 1e-8 ||
-        previousControlsTarget.distanceToSquared(controls.target) > 1e-8 ||
-        (1 - Math.abs(previousCameraQuaternion.dot(camera.quaternion))) > 1e-7
-      );
-
-      previousCameraPosition.copy(camera.position);
-      previousControlsTarget.copy(controls.target);
-      previousCameraQuaternion.copy(camera.quaternion);
-      hasCameraSnapshot = true;
-    }
-
-    const occlusionBudget = Math.max(0, Math.min(ANNOTATION_OCCLUSION_RAYCASTS_PER_FRAME, items.length));
-    const occlusionStartIndex = occlusionRoundRobinIndex;
-    const isFrontDoorViewActive = isFrontDoorOpen();
-    const shouldUseFilesPopupRail = isCloudModelMenuOpen;
-    setHotspotTriggerRailVisible(shouldUseFilesPopupRail);
-
-    if (!shouldUseFilesPopupRail && activeHotspotPanelId && !keepHotspotContextPanelVisible) {
-      closeHotspotContextPanel();
-    }
-
-    for (let itemIndex = 0; itemIndex < items.length; itemIndex += 1) {
-      const item = items[itemIndex];
-      const open = getItemIsOpen(item.id);
-      item.isOpen = open;
-
-      if (
-        item.id === "front-door"
-        || item.id === "spools-door"
-        || isFrontDoorViewActive
-        || (!isFrontDoorViewActive && item.id === "feeder-drive")
-        || (shouldUseFilesPopupRail && (item.id === "spools-door" || item.id === "feeder-drive"))
-      ) {
-        item.isVisible = false;
-        item.autoActiveScore = Number.POSITIVE_INFINITY;
-        hideItem(item);
-        continue;
-      }
-
-      anchorWorld.copy(item.localAnchor);
-      item.targetObject.localToWorld(anchorWorld);
-
-      let anchorMoved = !item.hasPreviousAnchorWorld;
-      if (!anchorMoved) {
-        anchorMoved = item.previousAnchorWorld.distanceToSquared(anchorWorld) > 1e-8;
-      }
-      item.previousAnchorWorld.copy(anchorWorld);
-      item.hasPreviousAnchorWorld = true;
-
-      projected.copy(anchorWorld).project(camera);
-
-      if (!Number.isFinite(projected.x) || !Number.isFinite(projected.y) || !Number.isFinite(projected.z)) {
-        item.isVisible = false;
-        hideItem(item);
-        continue;
-      }
-
-      const isProjectedOutside = (
-        projected.z <= -1 ||
-        projected.z >= 1 ||
-        Math.abs(projected.x) > 1 ||
-        Math.abs(projected.y) > 1
-      );
-
-      const clampedProjectedX = clamp(projected.x, -0.92, 0.92);
-      const clampedProjectedY = clamp(projected.y, -0.92, 0.92);
-
-      item.isVisible = true;
-
-      const anchorX = (clampedProjectedX * 0.5 + 0.5) * window.innerWidth;
-      const anchorY = (-clampedProjectedY * 0.5 + 0.5) * window.innerHeight;
-      const buttonWidth = item.buttonWidth;
-      const buttonHeight = item.buttonHeight;
-      const overlayYBounds = getOverlayVerticalSafeBounds(buttonHeight);
-
-      let buttonX = clamp(
-        anchorX + item.screenOffset[0],
-        8,
-        Math.max(window.innerWidth - buttonWidth - 8, 8),
-      );
-      let buttonY = clamp(
-        anchorY + item.screenOffset[1],
-        overlayYBounds.minY,
-        overlayYBounds.maxY,
-      );
-
-      const isActiveMaterialsPinnedLeft = item.id === "spools-door"
-        && (open || activeItemId === item.id);
-      if (isActiveMaterialsPinnedLeft) {
-        const maxScreenX = Math.max(window.innerWidth - buttonWidth - 8, 8);
-        const modelRelativeLeftTargetX = modelScreenBounds.valid
-          ? modelScreenBounds.minX - buttonWidth - 20
-          : 136;
-        buttonX = clamp(modelRelativeLeftTargetX, 128, Math.min(220, maxScreenX));
-      }
-
-      if (modelScreenBounds.valid && !isActiveMaterialsPinnedLeft) {
-        const moved = moveButtonOutsideModelBounds(buttonX, buttonY, buttonWidth, buttonHeight, item.screenOffset);
-        buttonX = moved.x;
-        buttonY = moved.y;
-      }
-
-      if (!isActiveMaterialsPinnedLeft && isAnchorCrossingButtonBody(anchorX, buttonX, buttonWidth)) {
-        buttonX = computeFlippedButtonX(anchorX, buttonX, buttonWidth, item.screenOffset?.[0]);
-
-        if (modelScreenBounds.valid) {
-          const moved = moveButtonOutsideModelBounds(buttonX, buttonY, buttonWidth, buttonHeight, item.screenOffset);
-          buttonX = moved.x;
-          buttonY = moved.y;
-        }
-      }
-
-      // Keep callouts clear of fixed top and bottom menus while camera moves.
-      buttonY = clamp(buttonY, overlayYBounds.minY, overlayYBounds.maxY);
-
-      if (item.id === "spools-door" && Number.isFinite(item.currentButtonX) && Number.isFinite(item.currentButtonY)) {
-        const xSmoothing = isActiveMaterialsPinnedLeft ? 0.2 : 0.14;
-        const ySmoothing = isActiveMaterialsPinnedLeft ? 0.18 : 0.14;
-        buttonX = THREE.MathUtils.lerp(item.currentButtonX, buttonX, xSmoothing);
-        buttonY = THREE.MathUtils.lerp(item.currentButtonY, buttonY, ySmoothing);
-      }
-
-      item.currentButtonX = buttonX;
-      item.currentButtonY = buttonY;
-
-      item.button.style.transform = `translate(${buttonX.toFixed(2)}px, ${buttonY.toFixed(2)}px)`;
-      item.button.hidden = false;
-      item.button.classList.add("is-visible");
-
-      const buttonCenterX = buttonX + (buttonWidth * 0.5);
-      const lineEndX = anchorX <= buttonCenterX ? buttonX : (buttonX + buttonWidth);
-      const lineEndY = buttonY + (buttonHeight * 0.5);
-      const lineStartX = anchorX;
-      const lineStartY = anchorY;
-
-      item.line.setAttribute("x1", String(lineStartX));
-      item.line.setAttribute("y1", String(lineStartY));
-      item.line.setAttribute("x2", String(lineEndX));
-      item.line.setAttribute("y2", String(lineEndY));
-      item.lineEnd.setAttribute("cx", String(lineStartX));
-      item.lineEnd.setAttribute("cy", String(lineStartY));
-
-      if (isProjectedOutside) {
-        item.occluded = true;
-        item.lastOcclusionUpdateMs = nowMs;
-      } else if (!ENABLE_ANNOTATION_OCCLUSION || occlusionBudget === 0) {
-        item.occluded = false;
-        item.lastOcclusionUpdateMs = nowMs;
-      } else {
-        const staleOcclusion = (nowMs - item.lastOcclusionUpdateMs) >= ANNOTATION_OCCLUSION_MAX_STALE_MS;
-        const isRoundRobinSelected =
-          items.length <= occlusionBudget ||
-          ((itemIndex - occlusionStartIndex + items.length) % items.length) < occlusionBudget;
-        const shouldRaycastOcclusion = isRoundRobinSelected && (cameraMoved || anchorMoved || staleOcclusion);
-
-        if (shouldRaycastOcclusion) {
-          item.occluded = computeOccluded(item, anchorWorld, false);
-          item.lastOcclusionUpdateMs = nowMs;
-        }
-      }
-
-      const centerDx = (anchorX - (window.innerWidth * 0.5)) / Math.max(window.innerWidth, 1);
-      const centerDy = (anchorY - (window.innerHeight * 0.5)) / Math.max(window.innerHeight, 1);
-      const centerDistanceSq = (centerDx * centerDx) + (centerDy * centerDy);
-      centerToAnchor.copy(anchorWorld).sub(controls.target);
-      let sideScore = 1;
-      let facingDot = -1;
-      if (centerToAnchor.lengthSq() > 1e-8) {
-        centerToAnchor.normalize();
-        facingDot = clamp(centerToAnchor.dot(cameraForward), -1, 1);
-        sideScore = 1 - facingDot;
-      }
-
-      const backsideOccluded = !isProjectedOutside && facingDot > 0.22;
-      const occluded = Boolean(item.occluded || backsideOccluded);
-
-      item.autoActiveScore = isProjectedOutside ? Number.POSITIVE_INFINITY : ((sideScore * 0.8) + (centerDistanceSq * 0.45));
-
-      item.button.classList.toggle("is-open", open);
-      item.button.classList.toggle("is-occluded", occluded);
-
-      item.line.classList.toggle("is-open", open);
-      item.line.classList.toggle("is-occluded", occluded);
-      item.lineEnd.classList.toggle("is-open", open);
-      item.lineEnd.classList.toggle("is-occluded", occluded);
-      item.line.style.display = occluded ? "none" : "block";
-      item.lineEnd.style.display = occluded ? "none" : "block";
-    }
-
-    if (items.length) {
-      occlusionRoundRobinIndex = (occlusionRoundRobinIndex + occlusionBudget) % items.length;
-    }
-
-    if (!ENABLE_ANNOTATION_OCCLUSION) {
-      hasCameraSnapshot = false;
-    }
-
-    if (activeItemId && nowMs > activeItemUntilMs) {
-      activeItemId = null;
-    }
-
-    let autoActiveId = null;
-    let bestAutoScore = Number.POSITIVE_INFINITY;
-    for (const item of items) {
-      if (!item.isVisible || !Number.isFinite(item.autoActiveScore)) {
-        continue;
-      }
-      if (item.autoActiveScore < bestAutoScore) {
-        bestAutoScore = item.autoActiveScore;
-        autoActiveId = item.id;
-      }
-    }
-
-    const effectiveActiveId = activeItemId || autoActiveId;
-    for (const item of items) {
-      const active = item.isVisible && (item.id === effectiveActiveId || Boolean(item.isOpen));
-      item.button.classList.toggle("is-active", active);
-      item.line.classList.toggle("is-active", active);
-      item.lineEnd.classList.toggle("is-active", active);
-      const navActive = item.id === activeItemId;
-      setNavButtonState(item.id, { enabled: true, active: navActive, open: Boolean(item.isOpen) });
-    }
-  };
-
-  const onResize = () => {
-    cachedViewportWidth = 0;
-    cachedViewportHeight = 0;
-    setCalloutSvgSize();
-  };
-
-  return {
-    clear,
-    rebuildFromRobot,
-    update,
-    onResize,
-  };
-}
 
 function rebuildJointControls() {
   jointControlsEl.textContent = "";

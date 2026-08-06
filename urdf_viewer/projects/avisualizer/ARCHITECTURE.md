@@ -119,7 +119,7 @@ here is the responsibility map by area (approximate line ranges):
 ### 3.3 The `hmi/` vs `viewer/` partition — `static/hmi/`, `static/viewer/`
 The modular (non-god-file) frontend code is split into two packages with
 CI-enforced boundaries (`tools/check_boundaries.mjs`): **`hmi/` never imports
-`three`**, **`viewer/` never touches the DOM** (except a future
+`three`**, **`viewer/` never touches the DOM** (except the sanctioned
 `viewer/overlays/` island for 3D→screen projections). As `urdf_viewer.js` is
 carved up, code lands on one side or the other. These directories will hoist to
 the repo root when the FastAPI backend moves to `apps/dev-host/`.
@@ -161,6 +161,13 @@ the repo root when the FastAPI backend moves to `apps/dev-host/`.
 - **`toolpath/toolpathTubes.js`** — builds the volumetric **bead** (tube)
   geometry so the deposition looks like a real weld bead, not a thin line.
 - **`effects/dustExhaust.js`**, **`effects/chamberInert.js`** — scene effects.
+- **`overlays/`** — the sanctioned DOM island (3D→screen projections):
+  **`assemblyAnnotations.js`** (`createAssemblyAnnotationManager(layerEl, deps)`
+  — the floating door/feeder callout buttons: per-frame projection, silhouette
+  avoidance, occlusion raycasts, SVG leader lines) and
+  **`feederWheelFloat.js`** (the Up/Stop/Down jog panel that follows each
+  feeder wheel while a feeder camera anchor is active). Host state and door /
+  hotspot actions are injected via `deps`.
 
 ### 3.4 Sensor/utility modules — `static/modules/`
 Support the point-cloud viewer (unrelated to printing):
