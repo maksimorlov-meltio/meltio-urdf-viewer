@@ -1,0 +1,7 @@
+# Large mesh assets are stored in Git LFS, not regular Git objects.
+# Root-level so the patterns cover every path (apps/dev-host/assets moved here
+# in phase C; the copies under urdf_viewer/ and _slicer_branch/ remain for
+# their own subtrees).
+*.obj filter=lfs diff=lfs merge=lfs -text
+*.glb filter=lfs diff=lfs merge=lfs -text
+*.gltf filter=lfs diff=lfs merge=lfs -text
