@@ -23,30 +23,18 @@ const REPO_ROOT = resolve(HERE, "..");
 const HTML = join(REPO_ROOT, "apps", "dev-host", "src", "avisualizer", "web", "static", "urdf.html");
 const CONTRACT = join(REPO_ROOT, "contract-dom.json");
 
-// Lookups with no element in urdf.html, as of 2026-08-06. Each is a code path
-// that cannot run in the shipped app. Do not add to this list — fix the wiring
-// (add the element) or remove the lookup, then delete the entry.
-const KNOWN_DEAD = new Set([
-  // Materials popup: the whole wire-drum card, and the initial/used breakdown
-  // that only the hotspot panel actually has.
-  "materialsSpoolCardWireDrum", "materialsWireDrumMaterial", "materialsWireDrumAmount",
-  "materialsWireDrumInitialAmount", "materialsWireDrumUsedAmount", "materialsWireDrumStatus",
-  "materialsSpool1InitialAmount", "materialsSpool1UsedAmount",
-  "materialsSpool2InitialAmount", "materialsSpool2UsedAmount",
-  "materialsConfirmAction", "materialsMenuRequiredStatus",
-  "materialInfoName", "materialInfoRows",
-  // Material assign/unload controls on the hotspot panel and the Files pane.
-  "hotspotContextTitle", "hotspotMaterialSelect", "hotspotMaterialLoadAction",
-  "hotspotMaterialUnloadAction", "hotspotSpoolAmountInput", "hotspotSpoolAmountValidation",
-  "filesMaterialSelect", "filesMaterialLoadAction", "filesMaterialUnloadAction",
-  // Feeder-wheel floating jog panel (viewer/overlays/feederWheelFloat.js).
-  "feederWheelFloatingLeft", "feederWheelFloatLeftUp", "feederWheelFloatLeftStop",
-  "feederWheelFloatLeftDown", "feederWheelFloatingRight", "feederWheelFloatRightUp",
-  "feederWheelFloatRightStop", "feederWheelFloatRightDown",
-  // Utilities readouts and misc.
-  "chillerSettingsFlow", "chillerSettingsFlowValue", "fanSettingsRpm",
-  "notificationDetailsGoToIssue", "topbarConnection",
-]);
+// EMPTY, and it should stay that way.
+//
+// It held 36 entries when this gate was introduced: every lookup in hmi/ and
+// viewer/ that had no element in urdf.html. They were cleared in one pass —
+// ~22 were leftovers of a UI redesign and were deleted along with the code that
+// served them, 14 were features built in JS but never given markup (the
+// wire-drum card, the feeder-wheel floating jog panel) and were wired up.
+//
+// If you are about to add an entry here: don't. Add the element, or remove the
+// lookup. A guarded getElementById that never resolves is a feature that does
+// nothing and says nothing.
+const KNOWN_DEAD = new Set([]);
 
 const html = readFileSync(HTML, "utf8");
 const present = new Set([...html.matchAll(/id="([^"]+)"/g)].map((m) => m[1]));

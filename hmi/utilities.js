@@ -128,8 +128,6 @@ function persistUtilitySettings() {
 const topbarFanSettingsEl = document.getElementById("topbarFanSettings");
 const topbarChillerSettingsEl = document.getElementById("topbarChillerSettings");
 
-function fanRpmFromSpeed(pct) { return Math.round((Math.max(0, Math.min(100, pct)) / 100) * 4200); }
-function chillerFlowLpm(pct) { return (Math.max(0, Math.min(100, pct)) / 100) * 6; }
 
 function applyFanSpin() {
   if (!topbarFanToggleEl) return;
@@ -148,8 +146,6 @@ function refreshFanSettingsUI() {
   const speedVal = document.getElementById("fanSettingsSpeedValue");
   if (speed) speed.value = String(Math.round(fanState.speed));
   if (speedVal) speedVal.textContent = `${Math.round(fanState.speed)}%`;
-  const rpm = document.getElementById("fanSettingsRpm");
-  if (rpm) rpm.textContent = fanState.on ? String(fanRpmFromSpeed(fanState.speed)) : "0";
   const auto = document.getElementById("fanSettingsModeAuto");
   const manual = document.getElementById("fanSettingsModeManual");
   if (auto) auto.classList.toggle("is-active", fanState.mode === "auto");
@@ -166,10 +162,6 @@ function refreshChillerSettingsUI() {
   if (target) target.textContent = `${chillerState.target.toFixed(1)} °C`;
   const current = document.getElementById("chillerSettingsCurrent");
   if (current) current.textContent = chillerState.on ? `${chillerState.current.toFixed(1)} °C` : "—";
-  const flow = document.getElementById("chillerSettingsFlow");
-  const flowVal = document.getElementById("chillerSettingsFlowValue");
-  if (flow) flow.value = String(Math.round(chillerState.flow));
-  if (flowVal) flowVal.textContent = chillerState.on ? `${chillerFlowLpm(chillerState.flow).toFixed(1)} L/min` : "0.0 L/min";
 }
 
 // If the chamber is holding gas (door locked, waiting to be purged) and the
@@ -279,7 +271,6 @@ export function initUtilities(nextDeps) {
   document.getElementById("chillerSettingsPower")?.addEventListener("click", () => { deps.markUserActivity(); setChillerOn(!chillerState.on); });
   document.getElementById("chillerSettingsTargetDown")?.addEventListener("click", () => { deps.markUserActivity(); chillerState.target = Math.max(5, chillerState.target - 0.5); refreshChillerSettingsUI(); persistUtilitySettings(); });
   document.getElementById("chillerSettingsTargetUp")?.addEventListener("click", () => { deps.markUserActivity(); chillerState.target = Math.min(30, chillerState.target + 0.5); refreshChillerSettingsUI(); persistUtilitySettings(); });
-  document.getElementById("chillerSettingsFlow")?.addEventListener("input", (e) => { deps.markUserActivity(); chillerState.flow = Number(e.target.value) || 0; refreshChillerSettingsUI(); persistUtilitySettings(); });
 
   // ---- On-screen numeric keypad (tap a readout to type a new value) --------
   const numpadOverlayEl = document.getElementById("numpadOverlay");
@@ -386,10 +377,6 @@ export function initUtilities(nextDeps) {
   attachNumpadToValue(document.getElementById("chillerSettingsTargetValue"), () => ({
     title: "Target temp", unit: "°C", value: chillerState.target, min: 5, max: 30, decimals: 1,
     onApply: (n) => { chillerState.target = n; refreshChillerSettingsUI(); persistUtilitySettings(); },
-  }));
-  attachNumpadToValue(document.getElementById("chillerSettingsFlowValue"), () => ({
-    title: "Coolant flow", unit: "%", value: chillerState.flow, min: 0, max: 100, decimals: 0,
-    onApply: (n) => { chillerState.flow = n; refreshChillerSettingsUI(); persistUtilitySettings(); },
   }));
 
   // Close buttons + outside-click / Escape dismissal

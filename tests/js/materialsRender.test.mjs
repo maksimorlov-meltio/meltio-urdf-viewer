@@ -122,18 +122,33 @@ test("every surface shows the same status class", () => {
   }
 });
 
-test("rendering the wire drum is a no-op — its card is not in the page", () => {
-  // Documenting reality, not endorsing it: SPOOL_CARDS declares a wire-drum row
-  // whose six elements do not exist in urdf.html, so the drum's material and
-  // amount are never shown anywhere. Every lookup is guarded, so this renders
-  // silently and without error. Delete this test the day the card is added.
+test("the wire drum renders as the third feedstock card", () => {
+  // The drum had state, scene visibility and assignment logic but no card: it
+  // could be selected as a feed type and never seen or edited. Now wired.
   state.hotspotMaterialAssignments.wiredrum = "316l-stainless";
   state.setSpoolAmountState("wiredrum", 15000);
-  assert.doesNotThrow(() => materials.updateSpoolSelectionCards());
-  for (const id of ["materialsSpoolCardWireDrum", "materialsWireDrumMaterial",
-    "materialsWireDrumAmount", "materialsWireDrumStatus"]) {
-    assert.equal(globalThis.document.getElementById(id), null, `${id} is still absent`);
-  }
+  state.setSelectedPrintJobUsage(120, null);
+  materials.updateSpoolSelectionCards();
+
+  assert.equal(el("materialsWireDrumMaterial").textContent, "316L Stainless Steel");
+  assert.equal(el("materialsWireDrumAmount").textContent, "15000g");
+  assert.ok(el("materialsWireDrumStatus").classList.contains("status-ready"));
+  assert.equal(el("materialsSpoolCardWireDrum").dataset.spoolKey, "wiredrum");
+});
+
+test("the wire drum takes focus like any other feedstock", () => {
+  materials.setHotspotMaterialsFocusSpool("wiredrum");
+  materials.updateSpoolSelectionCards();
+  assert.ok(el("materialsSpoolCardWireDrum").classList.contains("is-active"));
+  assert.equal(el("materialsSpoolCard1").classList.contains("is-active"), false);
+  materials.setHotspotMaterialsFocusSpool("spool1");
+});
+
+test("an unassigned drum reads as unassigned", () => {
+  state.hotspotMaterialAssignments.wiredrum = null;
+  materials.updateSpoolSelectionCards();
+  assert.equal(el("materialsWireDrumMaterial").textContent, "Not assigned");
+  assert.ok(el("materialsWireDrumStatus").classList.contains("status-unassigned"));
 });
 
 test("the focused spool is marked active on every surface, and only it", () => {
