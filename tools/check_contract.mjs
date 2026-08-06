@@ -3,7 +3,7 @@
 // contract.json (repo root), either as a canonical camelCase name or as a
 // legacy alias (the pre-ports SCREAMING vocabulary, e.g. START_PRINT).
 //
-//   node urdf_viewer/projects/avisualizer/tools/check_contract.mjs
+//   node tools/check_contract.mjs
 //
 // Exits 0 when every emitted command is declared, 1 with a report otherwise.
 // This is the step-7 gate "todo comando emitido existe en contract.json",
@@ -13,9 +13,13 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = resolve(HERE, "..", "..", "..", "..");
+const REPO_ROOT = resolve(HERE, "..");
 const CONTRACT_PATH = join(REPO_ROOT, "contract.json");
-const STATIC_DIR = resolve(HERE, "..", "src", "avisualizer", "web", "static");
+const SCAN_DIRS = [
+  join(REPO_ROOT, "hmi"),
+  join(REPO_ROOT, "viewer"),
+  join(REPO_ROOT, "apps", "dev-host", "src", "avisualizer", "web", "static"),
+];
 
 const contract = JSON.parse(readFileSync(CONTRACT_PATH, "utf8"));
 const commands = contract.channels?.shell?.uiToHost?.commands ?? {};
@@ -55,13 +59,15 @@ const EMIT_RES = [/\bsendCommand\(\s*["']([A-Za-z_][A-Za-z0-9_]*)["']/g];
 
 const violations = [];
 let emitted = 0;
-for (const file of collectJsFiles(STATIC_DIR)) {
-  const source = readFileSync(file, "utf8");
-  for (const re of EMIT_RES) {
-    for (const match of source.matchAll(re)) {
-      emitted += 1;
-      if (!declared.has(match[1])) {
-        violations.push({ file, command: match[1] });
+for (const scanDir of SCAN_DIRS) {
+  for (const file of collectJsFiles(scanDir)) {
+    const source = readFileSync(file, "utf8");
+    for (const re of EMIT_RES) {
+      for (const match of source.matchAll(re)) {
+        emitted += 1;
+        if (!declared.has(match[1])) {
+          violations.push({ file, command: match[1] });
+        }
       }
     }
   }

@@ -17,7 +17,7 @@ Run from repository root:
 For the `avisualizer` project only:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest projects/avisualizer/tests
+.\.venv\Scripts\python.exe -m pytest apps/dev-host/tests   # (project moved to apps/dev-host in phase C)
 ```
 
 ## Definition of done

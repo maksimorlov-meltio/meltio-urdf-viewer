@@ -20,10 +20,10 @@ export default [
   // ES-module app code (the bundle graph).
   {
     files: [
-      "src/avisualizer/web/static/urdf_viewer.js",
-      "src/avisualizer/web/static/modules/**/*.js",
-      "src/avisualizer/web/static/hmi/**/*.js",
-      "src/avisualizer/web/static/viewer/**/*.js",
+      "apps/dev-host/src/avisualizer/web/static/urdf_viewer.js",
+      "apps/dev-host/src/avisualizer/web/static/modules/**/*.js",
+      "hmi/**/*.js",
+      "viewer/**/*.js",
     ],
     languageOptions: {
       ecmaVersion: 2022,
@@ -39,8 +39,8 @@ export default [
   // Classic (non-module) global scripts loaded directly in the page.
   {
     files: [
-      "src/avisualizer/web/static/hmi/permissions.js",
-      "src/avisualizer/web/static/hmi/error_codes.js",
+      "hmi/permissions.js",
+      "hmi/error_codes.js",
     ],
     languageOptions: {
       ecmaVersion: 2022,

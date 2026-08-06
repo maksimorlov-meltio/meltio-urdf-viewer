@@ -21,6 +21,7 @@ node_modules/
 
 # --- Local dataset / cache artifacts (large, regenerated locally) ---
 **/projects/avisualizer/database/
+apps/dev-host/database/
 **/*.cache.npz
 Sensors.csv
 

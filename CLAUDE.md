@@ -10,7 +10,7 @@ browser SPA embedding the other in an `<iframe>`:
 
 | App | Package (import name) | Source root | venv | Port |
 |-----|-----------------------|-------------|------|------|
-| **Viewer** (`avisualizer`) | `avisualizer` | `urdf_viewer/projects/avisualizer/src` | `.venv` (Py 3.11) | `8090` |
+| **Viewer** (`avisualizer`) | `avisualizer` | `apps/dev-host/src` (frontend partitions at repo-root `hmi/`, `viewer/`) | `.venv` (Py 3.11) | `8090` |
 | **Slicer** (`meltio-platform`) | `meltio_platform` (import pkg — **not** `platform`, which shadows stdlib) | `_slicer_branch/projects/platform/src` | `venv311` (Py 3.11) | `8765` |
 
 The viewer never imports slicer Python — they talk over **HTTP** (viewer backend
@@ -23,7 +23,7 @@ the viewer animates the robot printing that toolpath.
 Do not rediscover the architecture by reading the two ~16k / ~5k-line frontend files. Two
 existing docs are authoritative and kept current:
 
-- **`urdf_viewer/projects/avisualizer/ARCHITECTURE.md`** — the map of both apps: the
+- **`apps/dev-host/ARCHITECTURE.md`** — the map of both apps: the
   load→slice→print flow, the responsibility-by-line-range table for the giant
   `urdf_viewer.js`, the slicer `core/` pipeline stages (in order), the postMessage bridge,
   and a "gotchas" section. Read it before touching either app.
@@ -47,14 +47,14 @@ Tests use pytest for the backends; the pure frontend `sim/` modules have a small
 
 ```powershell
 # Viewer tests
-.\.venv\Scripts\python.exe -m pytest urdf_viewer/projects/avisualizer/tests
-.\.venv\Scripts\python.exe -m pytest urdf_viewer/projects/avisualizer/tests/web/test_slice_proxy.py::<test_name>   # single test
+.\.venv\Scripts\python.exe -m pytest apps/dev-host/tests
+.\.venv\Scripts\python.exe -m pytest apps/dev-host/tests/web/test_slice_proxy.py::<test_name>   # single test
 
 # Slicer tests (test_slicer_core_contracts.py exercises the real slicing pipeline in memory)
 .\venv311\Scripts\python.exe -m pytest _slicer_branch/projects/platform/tests
 
 # Frontend unit tests (pure sim/ modules only — no Three.js, no DOM)
-node --test "urdf_viewer/projects/avisualizer/tests/js/**/*.test.mjs"
+node --test "tests/js/**/*.test.mjs"
 ```
 
 There is no configured linter/formatter. Validate edited frontend JS with `node --check`
@@ -64,7 +64,7 @@ also run the import-resolution gate — `node --check` does **not** catch an `im
 points at a missing file, which is a load-time-fatal 404 that kills the whole module:
 
 ```powershell
-node urdf_viewer/projects/avisualizer/tools/check_imports.mjs
+node tools/check_imports.mjs
 ```
 
 **`contract.json` (repo root) is the UI↔host message contract** (v2, host-owned). Any new
@@ -72,7 +72,7 @@ machine command the frontend emits must be declared there first (camelCase name,
 as a legacy alias). CI enforces it:
 
 ```powershell
-node urdf_viewer/projects/avisualizer/tools/check_contract.mjs
+node tools/check_contract.mjs
 ```
 
 Sign-in credentials (per-user PBKDF2 `salt`/`passwordHash` fields inside the
@@ -80,7 +80,7 @@ roles/users document `database/permissions.json`, stripped before serving it to
 the browser) are managed out-of-band:
 
 ```powershell
-.\.venv\Scripts\python.exe urdf_viewer/projects/avisualizer/tools/set_password.py --username <user>
+.\.venv\Scripts\python.exe apps/dev-host/tools/set_password.py --username <user>
 ```
 
 ## Non-obvious operational facts
@@ -94,12 +94,12 @@ the browser) are managed out-of-band:
 - **Removing a DOM button:** delete the element **and** its `addEventListener` calls together.
   A leftover listener on a now-missing element throws and kills the whole JS module.
 - **The machine link is off by default** — the scene runs against a mock machine state. Append
-  `?machine=1` to the viewer URL to enable the live transport (`static/hmi/ports/machineLink.js`).
+  `?machine=1` to the viewer URL to enable the live transport (`hmi/ports/machineLink.js`).
   The transport stays disconnected (and every command rejects) until a `base` URL actually
   answers, so the local simulation remains the authority. **Before pointing it at real
   hardware, add server-side/firmware role authorization for motion-bearing commands** — the
   permissions gating below is UI-only.
-- **Pre-print safety gate** (`static/hmi/prePrintCheck.js`): the Start-print flow runs a
+- **Pre-print safety gate** (`hmi/prePrintCheck.js`): the Start-print flow runs a
   material + machine-signal check before `startDockedPrint()`. Material blocks route to the
   guided Materials fix; signal blocks only proceed on an authorised (Support/God) override.
 - **The slicer is optional in the viewer**, gated by env vars `AVIS_SLICER_URL` (API base) and
@@ -109,12 +109,12 @@ the browser) are managed out-of-band:
   motion-bearing controls (the Move jog panel, machine commands) — **UI gating only, not a
   security boundary**. Sign-in is `POST /api/auth/login` (PBKDF2 against per-user fields in
   `database/permissions.json`, managed with `tools/set_password.py`); the roles/users matrix
-  is served by `GET/PUT /api/permissions/config` + `static/permissions.js`. The slicer package
+  is served by `GET/PUT /api/permissions/config` + `hmi/permissions.js`. The slicer package
   has its own `auth.py` / `permissions.py` / `role_config.py` (part of the dormant cloud shell).
 - **Windows-only, PowerShell 5.1.** The launcher expects the exact venv folder names `.venv`
   and `venv311`. Use `py -3.11` — Python 3.11 has prebuilt wheels for the heavy native deps
   (`open3d`, `trimesh`, `scipy`, `shapely`, `rtree`); other versions may not.
-- **Not tracked** (see `.gitignore`): the venvs, `**/projects/avisualizer/database/` datasets,
+- **Not tracked** (see `.gitignore`): the venvs, `apps/dev-host/database/` datasets,
   `Sensors.csv`, `.env`, and raw mesh sources. The URDF loads `.glb`, not the OBJ sources.
 
 ## Layout targets

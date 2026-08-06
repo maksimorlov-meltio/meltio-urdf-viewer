@@ -30,7 +30,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 VIEWER_PY = REPO_ROOT / ".venv" / "Scripts" / "python.exe"
 SLICER_PY = REPO_ROOT / "venv311" / "Scripts" / "python.exe"
-VIEWER_SRC = REPO_ROOT / "urdf_viewer" / "projects" / "avisualizer" / "src"
+VIEWER_SRC = REPO_ROOT / "apps" / "dev-host" / "src"
 SLICER_SRC = REPO_ROOT / "_slicer_branch" / "projects" / "platform" / "src"
 
 # Same PBKDF2 parameters as avisualizer.web.app._hash_password.

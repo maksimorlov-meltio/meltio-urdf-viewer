@@ -34,6 +34,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DATABASE_ROOT = Path(os.environ.get("AVIS_DATABASE_ROOT") or PROJECT_ROOT / "database")
 ASSETS_ROOT = PROJECT_ROOT / "assets"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+# Repo root (phase C layout): the hmi/ and viewer/ frontend partitions live at
+# the repository root and are mounted at /hmi and /viewer below.
+REPO_ROOT = Path(__file__).resolve().parents[5]
+HMI_DIR = REPO_ROOT / "hmi"
+VIEWER_DIR = REPO_ROOT / "viewer"
 DEFAULT_DATASET_NAME = "small-torture-test_1-0-0"
 # Roles/users/permission-matrix document (see /api/permissions/config).
 PERMISSIONS_STORE = DATABASE_ROOT / "permissions.json"
@@ -404,6 +409,8 @@ def create_app() -> FastAPI:
         response.headers.setdefault("Referrer-Policy", "no-referrer")
         return response
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+    app.mount("/hmi", StaticFiles(directory=str(HMI_DIR)), name="hmi")
+    app.mount("/viewer", StaticFiles(directory=str(VIEWER_DIR)), name="viewer")
     app.mount("/assets", StaticFiles(directory=str(ASSETS_ROOT)), name="assets")
 
     @app.get("/")
