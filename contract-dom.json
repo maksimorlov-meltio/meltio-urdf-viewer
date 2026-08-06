@@ -3,17 +3,11 @@
   "contractVersion": 2,
   "totals": {
     "modules": 20,
-    "domIds": 222
+    "domIds": 216
   },
   "domIds": [
     "advancedModeIndicator",
     "advancedModeLockNowButton",
-    "advancedModePinCancel",
-    "advancedModePinError",
-    "advancedModePinHint",
-    "advancedModePinInput",
-    "advancedModePinModal",
-    "advancedModePinUnlock",
     "advancedModeStayActiveButton",
     "advancedModeTimeoutWarningMessage",
     "advancedModeTimeoutWarningModal",
@@ -518,6 +512,7 @@
         "getMaterialStatus",
         "getSignals",
         "isAuthorized",
+        "onDismiss",
         "onMaterialFix",
         "onProceed"
       ],
@@ -530,12 +525,6 @@
       "requiredDomIds": [
         "advancedModeIndicator",
         "advancedModeLockNowButton",
-        "advancedModePinCancel",
-        "advancedModePinError",
-        "advancedModePinHint",
-        "advancedModePinInput",
-        "advancedModePinModal",
-        "advancedModePinUnlock",
         "advancedModeStayActiveButton",
         "advancedModeTimeoutWarningMessage",
         "advancedModeTimeoutWarningModal",

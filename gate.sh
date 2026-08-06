@@ -42,11 +42,15 @@ npm run --silent build:dev
 node tools/check_entry.mjs
 
 echo "=== gate 8/8 — dom contract: contract-dom.json matches what hmi/+viewer/ need"
+# Compare the file against a fresh generation, NOT against git: a developer who
+# has correctly regenerated but not staged yet must pass, while a stale file
+# (committed or not) must fail. CI runs the git-diff form on a clean checkout.
+before=$(cat contract-dom.json 2>/dev/null || true)
 node tools/gen_dom_contract.mjs
-if ! git diff --quiet -- contract-dom.json; then
-  echo "contract-dom.json is stale — the published modules' DOM/deps contract changed."
-  echo "Review the diff and commit it (it is what the C# host embeds against):"
-  git --no-pager diff -- contract-dom.json
+if [ "$before" != "$(cat contract-dom.json)" ]; then
+  echo "contract-dom.json was stale — the published modules' DOM/deps contract changed."
+  echo "It has been regenerated; review and commit it (the C# host embeds against it)."
+  git --no-pager diff --stat -- contract-dom.json
   exit 1
 fi
 

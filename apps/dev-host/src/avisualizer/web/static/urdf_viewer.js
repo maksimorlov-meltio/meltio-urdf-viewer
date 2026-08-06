@@ -5435,16 +5435,36 @@ function getPrePrintCheck() {
       // Authorised = God / Support (advanced role). Only they may override a
       // failed safety check.
       isAuthorized: () => settingsUi.isRoleDriven(),
+      // Operator left the checklist without starting: put the camera back.
+      // runStartPrintAction() returns as soon as the dialog opens, so the
+      // caller's `else if (startPrintPreviewReturnCamera)` branch could never
+      // fire and the operator stayed stranded at the print-preview angle.
+      onDismiss: () => restoreStartPrintPreviewCamera(),
       onProceed: ({ overridden } = {}) => {
         if (overridden) {
           console.warn("[print] pre-print safety check OVERRIDDEN by authorised operator");
         }
+        // startDockedPrint owns the view now — drop the restore target so a
+        // later dismiss cannot yank the camera back mid-print.
+        startPrintPreviewReturnCamera = null;
         startDockedPrint();
       },
       onMaterialFix: (status) => handleBlockedPrintMaterial(status),
     });
   }
   return prePrintCheck;
+}
+
+// Put the camera back where it was before the start-print preview reframed it.
+// No-op when there is nothing to restore (the print started, or the preview was
+// never opened).
+function restoreStartPrintPreviewCamera() {
+  if (!startPrintPreviewReturnCamera) {
+    return;
+  }
+  const target = startPrintPreviewReturnCamera;
+  startPrintPreviewReturnCamera = null;
+  beginCameraTransition(target, FRONT_DOOR_BUTTON_CAMERA_DURATION_MS, { distanceLock: null });
 }
 
 function runStartPrintAction() {
@@ -5539,18 +5559,11 @@ function confirmStartPrintPreview() {
   }
   isStartPrintPreviewActive = false;
   setStartPrintPreviewBarOpen(false);
-  const started = runStartPrintAction();
-  if (started) {
-    // Print is starting; startDockedPrint owns the view from here.
-    startPrintPreviewReturnCamera = null;
-  } else if (startPrintPreviewReturnCamera) {
-    // Gate declined (e.g. no/insufficient material) — the print did NOT start, so
-    // restore the pre-preview view instead of stranding the operator at the
-    // print-preview angle. The material warning banner is already showing.
-    beginCameraTransition(startPrintPreviewReturnCamera, FRONT_DOOR_BUTTON_CAMERA_DURATION_MS, {
-      distanceLock: null,
-    });
-    startPrintPreviewReturnCamera = null;
+  // The checklist owns the outcome from here: it calls onProceed to start (and
+  // startDockedPrint takes the view) or onDismiss to restore the camera. The
+  // return value only reports that the dialog could be opened at all.
+  if (!runStartPrintAction()) {
+    restoreStartPrintPreviewCamera();
   }
 }
 
@@ -10489,6 +10502,16 @@ function restoreControlsPanelState() {
 }
 
 
+// Cached Intl formatters. `date.toLocaleTimeString(...)` builds a new
+// Intl.DateTimeFormat on every call — measured at ~18x the cost of reusing one,
+// and formatPrintFinishClock below runs on the print-stats path at frame rate.
+const CLOCK_TIME_FORMAT = new Intl.DateTimeFormat(undefined, {
+  hour: "2-digit", minute: "2-digit", hour12: false,
+});
+const CLOCK_DATE_FORMAT = new Intl.DateTimeFormat(undefined, {
+  weekday: "short", day: "2-digit", month: "short", year: "numeric",
+});
+
 // Keep the topbar clock in sync with local time without depending on backend data.
 function updateTopbarClock() {
   if (!topbarClockEl) {
@@ -10496,18 +10519,8 @@ function updateTopbarClock() {
   }
 
   const now = new Date();
-  const formattedTime = now.toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-
-  const formattedDate = now.toLocaleDateString([], {
-    weekday: "short",
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
+  const formattedTime = CLOCK_TIME_FORMAT.format(now);
+  const formattedDate = CLOCK_DATE_FORMAT.format(now);
 
   topbarClockEl.textContent = formattedTime;
   topbarClockEl.dateTime = now.toISOString();
@@ -10650,7 +10663,7 @@ function formatPrintFinishClock(remainingSeconds) {
   }
   const now = new Date();
   const finish = new Date(now.getTime() + s * 1000);
-  const time = finish.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+  const time = CLOCK_TIME_FORMAT.format(finish);
   // Whole-calendar-day difference (not a 24h-bucket difference) so an 11pm→1am
   // print reads "tomorrow", not "today".
   const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();

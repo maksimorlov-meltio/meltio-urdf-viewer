@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import hashlib
 import hmac
 import json
+import logging
 import mimetypes
 import os
 from pathlib import Path
@@ -26,6 +27,13 @@ from .services.machine_controlservice import ControlServiceMachine
 from .services.machine_mock import get_machine as _get_mock_machine
 from .services.sensor_pointcloud import load_attribute_series, load_sensor_pointcloud
 
+
+# The three fall-back paths below (unreadable permissions store, unwritable
+# audit log, unreadable error-code catalog) are all deliberately non-fatal — the
+# console must keep running. They were also completely silent, which made a
+# corrupt data dir indistinguishable from an empty one. They log now; uvicorn's
+# handler picks this up with no extra configuration.
+log = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 # Data directory (datasets, permissions.json, error_codes.json, audit log).
@@ -525,25 +533,38 @@ def create_app() -> FastAPI:
                 doc = json.loads(PERMISSIONS_STORE.read_text(encoding="utf-8"))
                 if isinstance(doc, dict) and doc.get("roles"):
                     return doc
-        except (OSError, ValueError):
-            pass
+                log.warning("%s has no roles; serving the built-in ones", PERMISSIONS_STORE)
+        except (OSError, ValueError) as exc:
+            log.warning("could not read %s (%s); serving the built-in roles",
+                        PERMISSIONS_STORE, exc)
         # No store yet (fresh clone) or an unusable one: fall back to the built-in
         # roles so the console has ranks to authorise against. No users, so this
         # grants nobody anything until an operator is provisioned.
         return json.loads(json.dumps(DEFAULT_PERMISSIONS_DOC))
 
-    def _public_permissions_doc(doc: dict) -> dict:
-        """Same doc with per-user auth secrets removed (safe to send to the UI)."""
-        pub = dict(doc)
-        pub_users = []
-        for user in doc.get("users", []) or []:
-            if not isinstance(user, dict):
-                continue
-            pub_users.append({
-                k: v for k, v in user.items() if k not in ("salt", "passwordHash")
-            })
-        pub["users"] = pub_users
-        return pub
+    # Allowlists, not denylists. The previous version copied the document and
+    # stripped two known-secret keys from `users`, so any future secret — in a
+    # user record or in a new top-level key — would have been served to the
+    # browser by default. Now a field has to be named here to leave the server.
+    _PUBLIC_USER_FIELDS = ("id", "name", "username", "roleId", "avatarColor")
+    _PUBLIC_ROLE_FIELDS = ("id", "name", "rank", "builtin", "permissions")
+
+    def _public_permissions_doc(doc: dict, *, include_users: bool) -> dict:
+        """The roles/users document as the browser may see it.
+
+        `include_users` is False for anonymous callers: the roster (every
+        operator's name and role) is not something a signed-out kiosk visitor
+        needs, and only the admin panel — which requires a session — reads it.
+        """
+        roles = [
+            {k: v for k, v in role.items() if k in _PUBLIC_ROLE_FIELDS}
+            for role in doc.get("roles", []) or [] if isinstance(role, dict)
+        ]
+        users = [
+            {k: v for k, v in user.items() if k in _PUBLIC_USER_FIELDS}
+            for user in doc.get("users", []) or [] if isinstance(user, dict)
+        ] if include_users else []
+        return {"roles": roles, "users": users}
 
     def _hash_password(password: str, salt_hex: str) -> str:
         salt = binascii.unhexlify(salt_hex)
@@ -586,7 +607,11 @@ def create_app() -> FastAPI:
         if operator is None:
             raise HTTPException(status_code=401, detail="Sign in to perform this action")
         role = _role_for(_load_permissions_doc(), operator.get("roleId")) or {}
-        if permission not in (role.get("permissions") or []):
+        granted = role.get("permissions") or []
+        # `admin.users` implies everything, matching hmi/permissions.js's isGod().
+        # The client already gated this way; without the same rule here an
+        # administrator would see a control enabled and get a 403 on using it.
+        if permission not in granted and ADMIN_PERMISSION not in granted:
             raise HTTPException(status_code=403, detail="Not authorised to perform this action")
         return operator
 
@@ -615,18 +640,44 @@ def create_app() -> FastAPI:
             audit_path.parent.mkdir(parents=True, exist_ok=True)
             with audit_path.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        except OSError:
-            pass
+        except OSError as exc:
+            # The command already went to the machine; losing the audit line
+            # must not fail it, but it must not vanish quietly either.
+            log.error("machine command '%s' was NOT audited to %s: %s", command, audit_path, exc)
 
     @app.get("/api/permissions/config")
-    def get_permissions_config() -> dict:
-        return _public_permissions_doc(_load_permissions_doc())
+    def get_permissions_config(request: Request) -> dict:
+        # Roles are public: the console needs them to render before anyone signs
+        # in. The user roster is not — it only feeds the admin panel.
+        return _public_permissions_doc(
+            _load_permissions_doc(),
+            include_users=_operator_from_request(request) is not None,
+        )
+
+    # Failed-login throttle, per username. A kiosk has one physical operator, so
+    # this is not a DoS surface — it is there so a shoulder-surfer (or a script
+    # in the browser console) cannot grind through a 4-digit-ish password at
+    # HTTP speed. Successful login clears the counter.
+    _login_failures: dict[str, list[float]] = {}
+    LOGIN_MAX_FAILURES = 5
+    LOGIN_WINDOW_SECONDS = 60.0
+
+    def _login_throttle_check(username: str) -> None:
+        now = datetime.now(timezone.utc).timestamp()
+        recent = [t for t in _login_failures.get(username, []) if now - t < LOGIN_WINDOW_SECONDS]
+        _login_failures[username] = recent
+        if len(recent) >= LOGIN_MAX_FAILURES:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Too many failed attempts. Try again in {LOGIN_WINDOW_SECONDS:.0f}s.",
+            )
 
     @app.post("/api/auth/login")
     def auth_login(response: Response, payload: dict | None = Body(default=None)) -> dict:
         data = payload if isinstance(payload, dict) else {}
         username = str(data.get("username", "")).strip()
         password = str(data.get("password", ""))
+        _login_throttle_check(username.lower())
         doc = _load_permissions_doc()
         match = None
         for user in doc.get("users", []) or []:
@@ -638,7 +689,10 @@ def create_app() -> FastAPI:
         expected = (match or {}).get("passwordHash") or ""
         candidate = _hash_password(password, salt_hex)
         if not match or not expected or not hmac.compare_digest(candidate, expected):
+            _login_failures.setdefault(username.lower(), []).append(
+                datetime.now(timezone.utc).timestamp())
             raise HTTPException(status_code=401, detail="Username or password not recognised")
+        _login_failures.pop(username.lower(), None)
         role = _role_for(doc, match.get("roleId")) or {}
         user = {
             "id": match.get("id"),
@@ -732,8 +786,9 @@ def create_app() -> FastAPI:
         try:
             if ERROR_CODES_STORE.exists():
                 return json.loads(ERROR_CODES_STORE.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            pass
+        except (OSError, ValueError) as exc:
+            log.warning("could not read %s (%s); serving an empty catalog",
+                        ERROR_CODES_STORE, exc)
         return {"version": 0, "codes": []}
 
     @app.get("/api/slicer/status")

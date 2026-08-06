@@ -210,7 +210,9 @@ export function createMachineLink(options = {}) {
     loop();
   }
 
-  function stop() {
+  // Counterpart of start(): tear the transport down. Named `disconnect` and not
+  // `stop` so it cannot be confused with the STOP machine command.
+  function disconnect() {
     enabled = false;
     if (pollTimer) window.clearTimeout(pollTimer);
     pollTimer = null;
@@ -236,9 +238,16 @@ export function createMachineLink(options = {}) {
     return lastTelemetry;
   }
 
+  // `stop` used to mean two things here: the lifecycle halt below and the STOP
+  // machine command in `commands`. The spread came last, so the command won and
+  // the lifecycle halt was unreachable — and both call sites in the host were
+  // written against the command (`link.stop().catch(...)`). Rather than flip
+  // the precedence and break them, the lifecycle half is now `disconnect()`:
+  // `stop()` means exactly one thing, and it is the one everybody calls.
   return {
     MachineState,
-    start, stop,
+    start,
+    disconnect,
     isEnabled, isConnected,
     getState, getTelemetry,
     sendCommand,
