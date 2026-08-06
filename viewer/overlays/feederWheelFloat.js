@@ -66,10 +66,33 @@ export function getFeederFloatingAnchorWorldPoint(side) {
   return sideWheelCenter || centralWheelCenter || feederCenter || null;
 }
 
+// Last values written to the DOM per side, so the per-frame updater can skip
+// writes that change nothing. Everything below runs from animate(): without
+// these guards the panel rewrote `hidden`, `aria-hidden` and a transform string
+// 60 times a second while the operator stared at a motionless panel (the repo
+// rule is that nothing reached from animate() may write the DOM unconditionally
+// — see updateBottomNavState).
+const lastRenderedBySide = {
+  left: { visible: null, transform: null, size: null },
+  right: { visible: null, transform: null, size: null },
+};
+
 export function setFeederWheelFloatingControlsVisible(side, isVisible) {
   const { panelEl } = getFeederWheelFloatingPanelElements(side);
   if (!panelEl) {
     return;
+  }
+  const memo = lastRenderedBySide[side];
+  if (memo && memo.visible === isVisible) {
+    return;
+  }
+  if (memo) {
+    memo.visible = isVisible;
+    if (!isVisible) {
+      // Force a reposition and a re-measure when it comes back.
+      memo.transform = null;
+      memo.size = null;
+    }
   }
 
   panelEl.hidden = !isVisible;
@@ -115,9 +138,17 @@ export function updateSingleFeederWheelFloatingControls(side, shouldShowForCamer
 
   setFeederWheelFloatingControlsVisible(side, true);
 
-  const panelRect = panelEl.getBoundingClientRect();
-  const panelWidth = Math.max(panelRect.width, 48);
-  const panelHeight = Math.max(panelRect.height, 122);
+  // Measure once per visibility transition, not per frame:
+  // getBoundingClientRect forces a layout flush, and this panel's size is fixed
+  // by its three buttons. Ceiling: a CSS change that resizes it mid-visibility
+  // would be picked up only on the next show — invalidate memo.size there too.
+  const sizeMemo = lastRenderedBySide[side];
+  if (sizeMemo && !sizeMemo.size) {
+    const rect = panelEl.getBoundingClientRect();
+    sizeMemo.size = { w: Math.max(rect.width, 48), h: Math.max(rect.height, 122) };
+  }
+  const panelWidth = sizeMemo ? sizeMemo.size.w : 48;
+  const panelHeight = sizeMemo ? sizeMemo.size.h : 122;
   const sideOffset = side === "right"
     ? deps.FEEDER_FLOAT_SIDE_OFFSET_PX
     : -deps.FEEDER_FLOAT_SIDE_OFFSET_PX;
@@ -138,7 +169,12 @@ export function updateSingleFeederWheelFloatingControls(side, shouldShowForCamer
     overlayYBounds.maxY,
   );
 
-  panelEl.style.transform = `translate(${x.toFixed(2)}px, ${y.toFixed(2)}px)`;
+  const transform = `translate(${x.toFixed(2)}px, ${y.toFixed(2)}px)`;
+  const memo = lastRenderedBySide[side];
+  if (!memo || memo.transform !== transform) {
+    panelEl.style.transform = transform;
+    if (memo) memo.transform = transform;
+  }
 
   const isSideDriving = deps.getFeederDriveSide() === side && Boolean(deps.getFeederDriveVertical());
   const upActive = isSideDriving && deps.getFeederDriveVertical() === "up";

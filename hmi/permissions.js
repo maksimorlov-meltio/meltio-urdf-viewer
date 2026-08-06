@@ -375,8 +375,12 @@
   }
 
   // ---- Admin: modes & permission matrix (God only) --------------------------
-  function openAdmin() {
+  async function openAdmin() {
     if (!isGod()) return;
+    // Refetch: the boot-time load happened signed out, and the server only
+    // includes the user roster for an authenticated caller. Without this the
+    // Users tab would show "No accounts found" for a real administrator.
+    await loadConfig();
     ensureRoot();
     let tab = "matrix";
     const render = () => {

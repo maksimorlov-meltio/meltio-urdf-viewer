@@ -31,6 +31,15 @@ jobs:
       # how finding ARQ-1 reached main with all three checks green.
       - name: pytest smoke (viewer-only)
         run: python -m pytest tests/smoke -v
+      # Python dependency CVEs (finding SEG-9). Advisory for now: this scans the
+      # resolved viewer environment, and a new advisory landing upstream must not
+      # turn every unrelated PR red overnight. Read the log; promote to blocking
+      # once the noise level is known.
+      - name: pip-audit (advisory)
+        continue-on-error: true
+        run: |
+          python -m pip install pip-audit==2.7.3
+          python -m pip_audit --progress-spinner off
 
   slicer-python:
     name: slicer pytest
@@ -84,3 +93,11 @@ jobs:
           npm ci
           npm run lint
           npm run build
+      # Dependency CVEs (finding SEG-9): nothing was audited on either side.
+      # `--omit=dev` would leave nothing to scan (every dep here is a dev tool),
+      # so audit the lot and fail on high/critical only. One moderate is knowingly
+      # left standing: esbuild's dev-SERVER request bypass, which needs a
+      # semver-major bump and does not apply — build.mjs calls build()
+      # programmatically and never starts `esbuild serve`.
+      - name: npm audit (high and above)
+        run: npm audit --audit-level=high
