@@ -71,6 +71,12 @@ jobs:
       # rewrites it to the (gitignored) bundle. See finding ARQ-1.
       - name: Entry gate (urdf.html references only tracked files)
         run: node tools/check_entry.mjs
+      # The published artefact's other half: which DOM ids and injected deps the
+      # hmi/ + viewer/ modules require of an embedder (finding ARQ-3).
+      - name: DOM-contract gate (contract-dom.json is regenerated and unchanged)
+        run: |
+          node tools/gen_dom_contract.mjs
+          git diff --exit-code -- contract-dom.json
       - name: Viewer JS unit tests (pure hmi/ + viewer/ modules)
         run: node --test "tests/js/**/*.test.mjs"
       - name: Install, lint & build (frontend, repo root)
