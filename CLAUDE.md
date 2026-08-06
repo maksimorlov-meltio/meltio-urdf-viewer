@@ -73,7 +73,9 @@ boot check is the one that runs it for real, in headless Chrome, and fails on a 
 console error. It is kept out of `gate.sh` because it needs a running server and ~30 s
 of GLB parsing; CI runs it as the last step of the **`viewer pytest`** job — inside an
 already-required check, because making it a required context of its own needs repo-admin
-rights and an advisory gate is not a gate:
+rights that are not available here, and an advisory gate is not a gate. **That job must
+never be renamed or split**: a required context that stops being reported blocks every
+merge until an admin intervenes.
 
 ```powershell
 # with the viewer already up (Start-Viewer.bat)

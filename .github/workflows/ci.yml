@@ -11,15 +11,22 @@ on:
     branches: [main]
 
 jobs:
-  # NOTE: do not rename this job. "viewer pytest" is one of the three required
-  # status checks on `main`; a required context that stops being reported blocks
-  # every merge until an admin edits the branch protection.
+  # DO NOT RENAME OR SPLIT THIS JOB. "viewer pytest" is one of the three
+  # required status checks on `main`. A required context that stops being
+  # reported does not go red — it blocks EVERY merge, permanently, until someone
+  # with repo-admin rights edits the branch protection. Nobody on this side has
+  # those rights, so treat the job name as immutable.
   #
-  # It carries the boot check as well, which is not what the name says. Making
-  # `boot check` a required context of its own needs repo-admin rights, and a
-  # non-blocking gate is a suggestion — this one exists precisely because nine
-  # advisory-in-practice signals let a dead application through. When someone
-  # with admin can add the context, split it back into its own job.
+  # That is also why the boot check lives here instead of in a job of its own,
+  # which is what its name would suggest: adding a new required context needs
+  # the same admin rights, and a non-blocking gate is a suggestion. This one
+  # exists precisely because nine advisory-in-practice signals let a dead
+  # application reach main and stay there for two days.
+  #
+  # The arrangement is permanent, not a stopgap. What it costs: a boot failure
+  # reads as "viewer pytest failed" until you open the log (the step name is
+  # unambiguous), and this job is CI's long pole at ~1m40s instead of ~30s.
+  # What it does NOT cost is coverage — see the !cancelled() note below.
   viewer-python:
     name: viewer pytest
     runs-on: ubuntu-latest
@@ -48,24 +55,36 @@ jobs:
       # runs: everything else in this workflow parses, lints and mounts modules in
       # isolation, which is how 515877b's module-killing TypeError survived two
       # days and nine merges with every check green. See tools/check_boot.mjs.
+      #
+      # Every step below carries `if: ${{ !cancelled() }}`. Without it a single
+      # failing pytest would skip the boot check entirely and that PR would get
+      # no arrival signal at all — the one real cost of living inside another
+      # job instead of being its own required context (which needs repo-admin
+      # rights nobody here has). With it, a red pytest and a red boot are
+      # reported together, and the screenshot artifact is still produced.
       - uses: actions/setup-node@v4
+        if: ${{ !cancelled() }}
         with:
           node-version: "22"
       # The 24 GLB meshes are ~140 MB of LFS. Downloading them on every PR would
       # burn the account's bandwidth quota in a handful of runs, so cache the
       # objects keyed on the pointer list (`ls-files` reads pointers, no fetch).
       - name: LFS pointer digest
+        if: ${{ !cancelled() }}
         id: lfs
         run: echo "key=$(git lfs ls-files -l | sha256sum | cut -c1-40)" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v4
+        if: ${{ !cancelled() }}
         with:
           path: .git/lfs
           key: lfs-${{ steps.lfs.outputs.key }}
       - name: Fetch the meshes
+        if: ${{ !cancelled() }}
         run: git lfs pull
       # No AVIS_SLICER_URL: the slicer is optional (CLAUDE.md) and its proxy
       # answering 503 is the documented, allow-listed exception in check_boot.
       - name: Start the viewer
+        if: ${{ !cancelled() }}
         run: |
           python -m uvicorn avisualizer.web.app:create_app \
             --factory --host 127.0.0.1 --port 8090 &
@@ -75,6 +94,7 @@ jobs:
           done
           echo "the viewer never came up"; exit 1
       - name: Boot check (zero console errors, boot contract satisfied)
+        if: ${{ !cancelled() }}
         run: node tools/check_boot.mjs --screenshot boot.png
       # Uploaded on failure too: a 1080x1920 shot of what the operator would see
       # is usually faster to read than the error list.
