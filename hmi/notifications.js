@@ -1450,6 +1450,10 @@ return {
     }
   },
   normalizeRecord: normalizeNotificationRecord,
+  // Pure signals -> notification records mapping. Exposed alongside
+  // normalizeRecord so the mapping can be unit-tested without a DOM: it decides
+  // what the operator is told about the machine, and it had no coverage.
+  buildSignalRecords: buildSignalDrivenNotificationRecords,
   setCenterOpen: setNotificationCenterOpen,
   setHistoryOpen: setNotificationHistoryScreenOpen,
   renderCenter: renderNotificationCenter,
