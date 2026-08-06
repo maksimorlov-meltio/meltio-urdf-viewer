@@ -46,9 +46,13 @@ runs on every PR and `main` is protected behind its three required checks
 are how you get the same answer locally, before pushing — not a substitute.
 
 ```powershell
-# The seven frontend gates in one shot — exactly what CI and the release
-# workflow run (syntax, imports, contract, boundaries, lint, tests+build, entry)
+# The nine frontend gates in one shot — exactly what CI and the release workflow
+# run (syntax, imports, contract, boundaries, lint, tests+build, entry,
+# dom-contract, dead-lookups). None of them starts the app; see the boot check.
 bash gate.sh
+
+# The boot check — the only thing that runs the application. Needs the viewer up.
+node tools/check_boot.mjs
 
 # Python — per venv (run the suite whose app you touched; both if in doubt)
 .\.venv\Scripts\python.exe -m pytest apps/dev-host/tests tests/smoke
@@ -66,6 +70,13 @@ The gates exist because each catches a defect the others miss:
 - **smoke** (`tests/smoke`) — boots the real servers over HTTP and walks the
   operator journeys. Locally, with both venvs, all 8 run; CI runs it viewer-only
   and the two slicer journeys skip themselves.
+- **boot** (`tools/check_boot.mjs`) — loads `/urdf` in headless Chrome and fails
+  on one uncaught exception, one `console.error`, one unexpected failed request,
+  or a missing `window.Meltio*` bridge. The smoke tests prove the *server*
+  answers; only this proves the *page* runs. `515877b` left a TypeError in a
+  boot-time dep thunk that killed the module before the URDF loader — blank
+  scene, no models — and it survived two days and nine merges because every
+  other check passes on an application that never starts.
 
 If a venv doesn't exist yet, create it (setup above) — don't report a suite as
 passing when it was never run.
