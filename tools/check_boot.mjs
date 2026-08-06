@@ -78,6 +78,35 @@ try {
   process.exit(2);
 }
 
+// --- How many meshes is a complete load? -------------------------------------
+// Learn it from the server instead of guessing, because "the network went quiet"
+// is NOT the same as "the model finished". The first CI run proved it: the 73 MB
+// Chassis.glb lands, swiftshader spends seconds parsing it with zero requests in
+// flight, quiet-network fires, and the check reports a clean boot after ONE
+// mesh. A floor of "at least one" is a gate that passes on a broken load.
+async function expectedMeshNames(pageUrl) {
+  const origin = new URL(pageUrl).origin;
+  const listing = await (await fetch(`${origin}/api/urdf/models`)).json();
+  const modelUrl = listing.defaultModelUrl || listing.models?.[0]?.url;
+  if (!modelUrl) return null;
+  const urdf = await (await fetch(`${origin}${modelUrl}`)).text();
+  const names = [...urdf.matchAll(/filename="([^"]+\.glb)"/gi)].map((match) => match[1]);
+  return names.length ? new Set(names) : null;
+}
+
+let expectedMeshes = null;
+try {
+  expectedMeshes = await expectedMeshNames(URL_UNDER_TEST);
+} catch (error) {
+  console.error(`boot: could not read the model manifest (${error.message}).`);
+  process.exit(2);
+}
+if (!expectedMeshes) {
+  console.error("boot: the server lists no URDF model — nothing to verify.");
+  console.error("On a fresh clone this usually means `git lfs pull` was never run.");
+  process.exit(2);
+}
+
 // --- Launch ------------------------------------------------------------------
 const profileDir = mkdtempSync(join(tmpdir(), "meltio-boot-"));
 const browser = spawn(chromePath, [
@@ -194,7 +223,9 @@ socket.addEventListener("message", (event) => {
     if (status >= 400 && !EXPECTED_FAILURES.some((pattern) => pattern.test(url))) {
       badResponses.push(`${status} ${url}`);
     }
-    if (status === 200 && /\.glb(\?|$)/i.test(url)) glbLoaded.add(url.split("?")[0]);
+    if (status === 200 && /\.glb(\?|$)/i.test(url)) {
+      glbLoaded.add(decodeURIComponent(url.split("?")[0].split("/").pop()));
+    }
     if (status === 200 && /\.urdf(\?|$)/i.test(url)) urdfFetched = true;
   }
 });
@@ -206,16 +237,19 @@ await call("Emulation.setDeviceMetricsOverride", {
   width: 1080, height: 1920, deviceScaleFactor: 1, mobile: false,
 });
 
-console.log(`boot: loading ${URL_UNDER_TEST}`);
+console.log(`boot: loading ${URL_UNDER_TEST} (${expectedMeshes.size} meshes expected)`);
 const startedMs = Date.now();
 await call("Page.navigate", { url: URL_UNDER_TEST });
 
-// Settle on a quiet network rather than a fixed sleep.
+// Settle on the model being complete. Quiet-network alone is not a readiness
+// signal here (see expectedMeshNames above); it is only the fallback that lets
+// an incomplete load reach the verdict instead of hanging until the timeout.
 let timedOut = false;
 for (;;) {
   await new Promise((resolve) => setTimeout(resolve, 500));
   const elapsed = Date.now() - startedMs;
-  if (inFlight === 0 && Date.now() - lastActivityMs > QUIET_MS && elapsed > QUIET_MS) break;
+  const quiet = inFlight === 0 && Date.now() - lastActivityMs > QUIET_MS && elapsed > QUIET_MS;
+  if (glbLoaded.size >= expectedMeshes.size && quiet) break;
   if (elapsed > HARD_TIMEOUT_MS) { timedOut = true; break; }
 }
 
@@ -248,13 +282,16 @@ if (!state.topbar) missing.push("no #topbarSettingsToggle — the page shell is 
 if (state.advancedBridge !== "object") missing.push("window.MeltioAdvanced missing (hmi/settings.js)");
 if (state.notificationsBridge !== "object") missing.push("window.MeltioNotifications missing (hmi/notifications.js)");
 if (state.permissionsBridge !== "object") missing.push("window.MeltioPermissions missing (hmi/permissions.js)");
-// A boot that dies early requests no assets at all, so "every GLB we asked for
-// came back 200" would be vacuously true. Require that loading actually began.
 if (!urdfFetched) missing.push("the .urdf was never fetched — boot died before the loader");
-if (glbLoaded.size === 0) missing.push("no .glb loaded — the model never started loading");
+// Every mesh the URDF declares, not "at least one".
+const missingMeshes = [...expectedMeshes].filter((name) => !glbLoaded.has(name));
+if (missingMeshes.length) {
+  missing.push(`${missingMeshes.length}/${expectedMeshes.size} meshes never loaded: `
+    + `${missingMeshes.slice(0, 6).join(", ")}${missingMeshes.length > 6 ? ", …" : ""}`);
+}
 
 const seconds = ((Date.now() - startedMs) / 1000).toFixed(1);
-console.log(`boot: settled in ${seconds}s — ${glbLoaded.size} meshes, `
+console.log(`boot: settled in ${seconds}s — ${glbLoaded.size}/${expectedMeshes.size} meshes, `
   + `${errors.length} console errors, ${badResponses.length} failed requests`);
 
 let failed = false;
