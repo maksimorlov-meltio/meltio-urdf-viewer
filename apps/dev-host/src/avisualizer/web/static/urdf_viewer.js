@@ -36,6 +36,7 @@ import { createCalendarUi, formatCalendarDateTime } from "/hmi/calendar.js";
 import { createNotificationsUi } from "/hmi/notifications.js";
 import { createSettingsUi } from "/hmi/settings.js";
 import { createMovePanelUi, canOperateMotion } from "/hmi/movePanel.js";
+import { createSlicerPaneUi } from "/hmi/slicerPane.js";
 // Print-flow state. The READS below are ES live bindings — `printSim`,
 // `bridgedSliceData` etc. are used exactly as when they were locals here; only
 // assignment goes through the setters.
@@ -131,6 +132,23 @@ applyDomTranslations();
 // reachable from any listener the moment the page is interactive. The closure
 // defers reading `inertPhase` (declared much further down) until call time.
 initPrintFlowState({ isInertPurging: () => inertPhase === "purging" });
+
+// Embedded-slicer pane domain (hmi/slicerPane.js) — owns the iframe embed, the
+// flyout, the fullscreen slice view and the docked-print variant, plus its own
+// elements and listeners. Instantiated here, before anything can call into it:
+// positionMenu() is reachable from the Files-menu layout code far above.
+// Every dep is a thunk, so the host functions it reaches (declared later) are
+// resolved at call time, not now.
+const slicerPaneUi = createSlicerPaneUi({
+  markUserActivity: () => markUserActivity(),
+  updateBottomNavState: () => updateBottomNavState(),
+  isCloudModelMenuOpen: () => isCloudModelMenuOpen,
+  getCloudModelPopupEl: () => cloudModelPopupEl,
+  getSelectedFileName: () => selectedCloudLibraryFileName || cloudStlFileSelectEl?.value || "",
+  setSelectedCloudLibraryFile: (file, opts) => setSelectedCloudLibraryFile(file, opts),
+  setCloudFileRowSliceStatus: (file, status) => setCloudFileRowSliceStatus(file, status),
+  loadCloudOverlayFromSelectedFile: () => loadCloudOverlayFromSelectedFile(),
+});
 
 
 // Machine transport link (sim/machineLink.js). Null until enabled at boot. When
@@ -246,9 +264,6 @@ const cloudModelMenuToggleEl = document.getElementById("cloudModelMenuToggle");
 const cloudModelMenuOpenEl = document.getElementById("cloudModelMenuOpen");
 const cloudModelPopupEl = document.getElementById("cloudModelPopup");
 const cloudModelMenuCloseEl = document.getElementById("cloudModelMenuClose");
-const slicerPaneEl = document.getElementById("slicerPane");
-const slicerFrameEl = document.getElementById("slicerFrame");
-const slicerFallbackEl = document.getElementById("slicerFallback");
 
 // --- postMessage trust boundary -------------------------------------------
 // The browser delivers `message` events from ANY origin (any other tab the
@@ -264,24 +279,14 @@ const slicerFallbackEl = document.getElementById("slicerFallback");
 //   * the M600 sensor bridge is trusted only when it is strictly same-origin
 //     (an external bridge origin must be added to the allowlist deliberately).
 function isTrustedSlicerMessage(event) {
-  return Boolean(
-    event
-    && slicerFrameEl
-    && slicerFrameEl.contentWindow
-    && event.source === slicerFrameEl.contentWindow,
-  );
+  const frameWindow = slicerPaneUi.getFrameWindow();
+  return Boolean(event && frameWindow && event.source === frameWindow);
 }
 function isSameOriginMessage(event) {
   // Rejects foreign origins and the opaque "null" origin (sandboxed frames).
   return Boolean(event) && event.origin === window.location.origin;
 }
-const slicerReloadButtonEl = document.getElementById("slicerReloadButton");
-const slicerEmbedToggleEl = document.getElementById("slicerEmbedToggle");
-const slicerEmbedWrapEl = document.getElementById("slicerEmbedWrap");
-const slicerMenuToggleEl = document.getElementById("slicerMenuToggle");
-const slicerMenuCloseEl = document.getElementById("slicerMenuClose");
 const slicerLoadToViewerEl = document.getElementById("slicerLoadToViewer");
-const slicerChosenFileEl = document.getElementById("slicerChosenFile");
 const cloudAdvancedDetailsEl = document.getElementById("cloudAdvancedDetails");
 const cloudViewModeEl = document.getElementById("cloudViewMode");
 const cloudStlFileRowEl = document.getElementById("cloudStlFileRow");
@@ -4068,7 +4073,7 @@ function syncCloudModelPopupVerticalGap() {
   cloudModelPopupEl.style.bottom = `${Math.round(window.innerHeight - bottomNavTop + gap)}px`;
 
   // Keep the slicer flyout pinned to the (possibly moved) Files-menu corner.
-  positionSlicerMenu();
+  slicerPaneUi.positionMenu();
 }
 
 // Match the Files menu exactly: position the Controls panel with the same even
@@ -4371,134 +4376,10 @@ function initializeNumericKeypad() {
 }
 
 
-// --- Embedded slicer (Files-menu right pane) -------------------------------
-// Lazily loads the slicer web UI into the Files menu when it first opens.
-// Talks to the backend `/api/slicer/status`; if a slicer is configured it
-// iframes the same-origin `/slicer` entry, otherwise it shows a graceful
-// placeholder so the Files menu stays usable with no slicer running.
-let slicerEmbedState = "idle"; // idle | loading | ready | unavailable
-let slicerEmbedUrl = null;
-let slicerEmbedInFlight = false;
-
-function showSlicerFallback(message) {
-  if (slicerFrameEl) {
-    slicerFrameEl.hidden = true;
-    slicerFrameEl.src = "about:blank";
-  }
-  if (slicerFallbackEl) {
-    slicerFallbackEl.hidden = false;
-    slicerFallbackEl.textContent = message;
-  }
-}
-
-function showSlicerFrame(url) {
-  if (!slicerFrameEl) {
-    return;
-  }
-  if (slicerFrameEl.src !== url && !(slicerFrameEl.src.endsWith(url) && url.startsWith("/"))) {
-    slicerFrameEl.src = url;
-  }
-  slicerFrameEl.hidden = false;
-  if (slicerFallbackEl) {
-    slicerFallbackEl.hidden = true;
-  }
-}
-
-async function refreshSlicerEmbed(options = {}) {
-  if (!slicerFrameEl && !slicerFallbackEl) {
-    return;
-  }
-  const { force = false } = options;
-  if (slicerEmbedInFlight) {
-    return;
-  }
-  if (slicerEmbedState === "ready" && !force) {
-    return;
-  }
-
-  slicerEmbedInFlight = true;
-  slicerEmbedState = "loading";
-  if (slicerEmbedUrl === null) {
-    showSlicerFallback("Loading slicer...");
-  }
-
-  try {
-    const response = await fetch("/api/slicer/status", { cache: "no-store" });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-    const status = await response.json();
-    if (status && status.configured && typeof status.url === "string") {
-      slicerEmbedUrl = status.url;
-      slicerEmbedState = "ready";
-      // dock=1 → embedded bottom-bar slicer layout (forwarded by the /slicer route).
-      const base = `${status.url}?dock=1`;
-      const target = force ? `${base}&t=${Date.now()}` : base;
-      showSlicerFrame(target);
-    } else {
-      slicerEmbedUrl = null;
-      slicerEmbedState = "unavailable";
-      showSlicerFallback(
-        "Slicer not connected. Set AVIS_SLICER_URL to embed the slicer here.",
-      );
-    }
-  } catch (error) {
-    slicerEmbedState = "unavailable";
-    showSlicerFallback(`Could not reach slicer status (${error?.message || "error"}).`);
-  } finally {
-    slicerEmbedInFlight = false;
-  }
-}
-
-if (slicerReloadButtonEl) {
-  slicerReloadButtonEl.addEventListener("click", () => {
-    // Reload the slicer with the currently chosen file still selected.
-    const name = String(selectedCloudLibraryFileName || cloudStlFileSelectEl?.value || "").trim();
-    if (name) {
-      loadSlicerIframeForFile(name);
-    } else {
-      refreshSlicerEmbed({ force: true }).catch(() => {});
-    }
-  });
-}
-
-// Toggle the embedded full-slicer pane inside the flyout. The full slicer app
-// is large, so it stays collapsed by default and expands the flyout on demand.
-function setSlicerEmbedOpen(open) {
-  const willOpen = Boolean(open);
-  if (slicerEmbedWrapEl) {
-    slicerEmbedWrapEl.hidden = !willOpen;
-  }
-  if (slicerEmbedToggleEl) {
-    slicerEmbedToggleEl.setAttribute("aria-expanded", willOpen ? "true" : "false");
-    slicerEmbedToggleEl.textContent = willOpen ? "Hide full slicer" : "Open full slicer";
-  }
-  if (slicerPaneEl) {
-    slicerPaneEl.classList.toggle("slicer-embed-open", willOpen);
-  }
-  if (willOpen) {
-    refreshSlicerEmbed().catch(() => {});
-  }
-  positionSlicerMenu();
-}
-
-if (slicerEmbedToggleEl) {
-  slicerEmbedToggleEl.addEventListener("click", () => {
-    markUserActivity();
-    const willOpen = slicerEmbedWrapEl ? slicerEmbedWrapEl.hidden : true;
-    setSlicerEmbedOpen(willOpen);
-  });
-}
 
 // --- Slicer menu (toggleable flyout off the Files-menu top-right corner) -----
 // The slicer is no longer shown permanently in the viewer. It is a flyout panel
 // anchored to the top-right corner of the Files menu, opened/closed on demand.
-let isSlicerMenuOpen = false;
-// When true, the slicer takes the whole view (full slice UI) and the robot model
-// + Files menu are hidden via the `slicer-fullscreen` body class. This is the
-// "prepare a slice" phase; "Load to viewer" leaves it and drops the part into
-// the 3D scene.
-let isSlicerFullscreen = false;
 
 // Set when the embedded slicer pushes a fresh slice; forces the next Start-print
 // to re-prepare (consume this toolpath) instead of reusing a stale ready slice —
@@ -4622,185 +4503,12 @@ function getSlicerPlacementWorldOffset() {
   return new THREE.Vector3(offsetMm.x / 1000, offsetMm.y / 1000, 0);
 }
 
-function updateSlicerChosenFileLabel() {
-  if (!slicerChosenFileEl) {
-    return;
-  }
-  const name = String(selectedCloudLibraryFileName || cloudStlFileSelectEl?.value || "").trim();
-  slicerChosenFileEl.textContent = name ? `File: ${name}` : "No file selected";
-}
 
-function setSlicerFullscreen(open, options = {}) {
-  // preserveIframe: leave the (already-loaded, possibly-sliced) slicer iframe
-  // intact instead of blanking it. Used for the material-block detour to
-  // Materials so "Return to slicer" restores the same sliced, print-ready view
-  // WITHOUT a reload — a reload re-slices from scratch and the fresh slicer
-  // emits a mesh-only update that clears the row's "ready" status (the reported
-  // "lost slice" bug). The .slicer-fullscreen class removal hides the iframe via
-  // CSS while Materials is open, so the preserved frame simply stays parked.
-  const { preserveIframe = false } = options;
-  isSlicerFullscreen = Boolean(open);
-  document.body.classList.toggle("slicer-fullscreen", isSlicerFullscreen);
-  if (isSlicerFullscreen) {
-    // Drop the anchored inline geometry so the fullscreen CSS (inset:0) wins;
-    // positionSlicerMenu() would otherwise re-anchor to the (now hidden) Files
-    // popup and leave a tiny sliver.
-    if (slicerPaneEl) {
-      slicerPaneEl.style.left = "";
-      slicerPaneEl.style.top = "";
-      slicerPaneEl.style.maxHeight = "";
-    }
-    updateSlicerChosenFileLabel();
-    // Reveal the embedded full slicer area (the iframe src is set per-file by
-    // loadSlicerIframeForFile).
-    if (slicerEmbedWrapEl) {
-      slicerEmbedWrapEl.hidden = false;
-    }
-  } else if (slicerFrameEl) {
-    if (preserveIframe) {
-      // Keep the loaded slicer alive and its wrap visible; the CSS-hidden
-      // embed section keeps it off-screen until we reopen full view.
-      if (slicerEmbedWrapEl) {
-        slicerEmbedWrapEl.hidden = false;
-      }
-    } else {
-      // Leaving full view: stop the slicer iframe so it isn't polling in the
-      // background, and hide its area.
-      slicerFrameEl.src = "about:blank";
-      slicerFrameEl.hidden = true;
-      if (slicerEmbedWrapEl) {
-        slicerEmbedWrapEl.hidden = true;
-      }
-    }
-  }
-}
 
-// Point the embedded slicer at one of our STL files so it auto-loads that model
-// (the slicer reads ?stl=<url> and fetches it; /slicer forwards the param, and
-// CORS lets the slicer's origin fetch /api/stl/file). All slicer tools stay
-// available on the loaded model.
-function loadSlicerIframeForFile(fileName) {
-  if (!slicerFrameEl) {
-    return;
-  }
-  const name = String(fileName || "").trim();
-  const stlUrl = `${window.location.origin}/api/stl/file?name=${encodeURIComponent(name)}`;
-  // dock=1 → the slicer renders its embedded bottom-bar layout (see /slicer route,
-  // which forwards these params on to the configured slicer origin).
-  slicerFrameEl.src = `/slicer?dock=1&stl=${encodeURIComponent(stlUrl)}`;
-  slicerFrameEl.hidden = false;
-  if (slicerFallbackEl) {
-    slicerFallbackEl.hidden = true;
-  }
-  if (slicerEmbedWrapEl) {
-    slicerEmbedWrapEl.hidden = false;
-  }
-}
 
-// "Load to slicer" from a Files-list row: open the full slicer (all its tools)
-// with the chosen file auto-loaded, and warm the viewer-side slice in the
-// background so the later "Load to viewer" 3D print sim is ready.
-function loadFileToSlicer(fileName) {
-  setAutoSliceFlowActive(true);
-  setSelectedCloudLibraryFile(fileName, { updateSelect: true, syncDataset: true });
-  setCloudFileRowSliceStatus(fileName, "slicing");
-  updateSlicerChosenFileLabel();
 
-  // Open the full-view slicer now, then point its iframe at the chosen STL.
-  if (isCloudModelMenuOpen) {
-    setSlicerMenuOpen(true);
-  }
-  loadSlicerIframeForFile(fileName);
 
-  // Warm the viewer-side slice (used by "Load to viewer") behind the slicer.
-  loadCloudOverlayFromSelectedFile()
-    .then(() => updateSlicerChosenFileLabel())
-    .catch((error) => {
-      console.warn("[slicer] load-to-slicer failed:", error?.message || error);
-    });
-}
 
-// Docked-print flyout: sit the pane just ABOVE the bottom nav, centred, opening
-// upward. Measured off the nav so it clears it whatever its height.
-function positionSlicerMenuDocked() {
-  if (!slicerPaneEl || slicerPaneEl.hidden) {
-    return;
-  }
-  const navEl = document.querySelector(".bottom-nav");
-  if (!navEl) {
-    return;
-  }
-  const navRect = navEl.getBoundingClientRect();
-  const gap = 12;
-  slicerPaneEl.style.top = "";
-  slicerPaneEl.style.left = "50%";
-  slicerPaneEl.style.right = "auto";
-  slicerPaneEl.style.transform = "translateX(-50%)";
-  slicerPaneEl.style.bottom = `${Math.round(window.innerHeight - navRect.top + gap)}px`;
-  slicerPaneEl.style.maxHeight = `${Math.max(180, Math.round(navRect.top - gap - 24))}px`;
-}
-
-function positionSlicerMenu() {
-  if (!slicerPaneEl || !cloudModelPopupEl || slicerPaneEl.hidden) {
-    return;
-  }
-  // Clear any docked-flyout inline styles so the Files-anchored position wins.
-  slicerPaneEl.style.bottom = "";
-  slicerPaneEl.style.transform = "";
-  if (isSlicerFullscreen) {
-    // Fullscreen geometry is owned entirely by CSS; the Files popup is hidden so
-    // its rect is unusable for anchoring.
-    return;
-  }
-  if (filesListCollapsedForPrint) {
-    // Detached (fixed) position is handled by CSS while the list is collapsed.
-    return;
-  }
-  const rect = cloudModelPopupEl.getBoundingClientRect();
-  const gap = 12;
-  const menuWidth = slicerPaneEl.offsetWidth || 360;
-  let left = rect.right + gap;
-  const maxLeft = window.innerWidth - menuWidth - 12;
-  if (left > maxLeft) {
-    left = Math.max(12, maxLeft);
-  }
-  slicerPaneEl.style.left = `${Math.round(left)}px`;
-  slicerPaneEl.style.top = `${Math.round(rect.top)}px`;
-  slicerPaneEl.style.maxHeight = `${Math.round(rect.height)}px`;
-}
-
-function setSlicerMenuOpen(isOpen) {
-  // The slicer flyout makes sense while the Files menu is open OR while a print
-  // is docked (where it's the upward Slicer-button flyout of print controls).
-  isSlicerMenuOpen = Boolean(isOpen) && (isCloudModelMenuOpen || filesListCollapsedForPrint);
-  if (slicerPaneEl) {
-    slicerPaneEl.hidden = !isSlicerMenuOpen;
-    slicerPaneEl.setAttribute("aria-hidden", isSlicerMenuOpen ? "false" : "true");
-  }
-  if (isSlicerMenuOpen) {
-    // A fresh open from the Files menu takes the whole view for slicing. While a
-    // print is docked it stays compact (the upward flyout of print controls).
-    if (!filesListCollapsedForPrint) {
-      setSlicerFullscreen(true);
-    }
-  } else {
-    // Closing the flyout leaves full view and collapses the embed so it reopens
-    // compact next time.
-    setSlicerFullscreen(false);
-  }
-  if (slicerMenuToggleEl) {
-    slicerMenuToggleEl.setAttribute("aria-expanded", isSlicerMenuOpen ? "true" : "false");
-  }
-  if (isSlicerMenuOpen && !filesListCollapsedForPrint) {
-    positionSlicerMenu();
-  } else if (isSlicerMenuOpen && filesListCollapsedForPrint) {
-    positionSlicerMenuDocked();
-  }
-  // NOTE: while a print is docked, closing the flyout must NOT expand the Files
-  // list — the docked print bar (Stop/Pause/Slicer) stays put. The list only
-  // comes back on Stop.
-  updateBottomNavState();
-}
 
 // Collapse the Files list panel to reveal the printed part once a slice is
 // ready. The cloud menu stays "open" (STL stays, camera is NOT reset — closing
@@ -4813,12 +4521,8 @@ function collapseFilesForPrint() {
   }
   setFilesListCollapsedForPrint(true);
   document.body.classList.add("files-collapsed-for-print");
-  if (slicerPaneEl) {
-    // Clear anchored inline styles so the detached CSS position takes over.
-    slicerPaneEl.style.left = "";
-    slicerPaneEl.style.top = "";
-    slicerPaneEl.style.maxHeight = "";
-  }
+  // Clear anchored inline styles so the detached CSS position takes over.
+  slicerPaneUi.clearAnchoredGeometry();
 }
 
 // True while a print is genuinely underway (homing/probe, playing, or paused) —
@@ -4844,24 +4548,11 @@ function expandFilesListForPrint() {
   }
   setFilesListCollapsedForPrint(false);
   document.body.classList.remove("files-collapsed-for-print");
-  if (isSlicerMenuOpen) {
-    positionSlicerMenu();
+  if (slicerPaneUi.isMenuOpen()) {
+    slicerPaneUi.positionMenu();
   }
 }
 
-if (slicerMenuToggleEl) {
-  slicerMenuToggleEl.addEventListener("click", () => {
-    markUserActivity();
-    setSlicerMenuOpen(!isSlicerMenuOpen);
-  });
-}
-
-if (slicerMenuCloseEl) {
-  slicerMenuCloseEl.addEventListener("click", () => {
-    markUserActivity();
-    setSlicerMenuOpen(false);
-  });
-}
 
 // "Start print": prepare the sliced model (preferring the exact toolpath pushed
 // up from the slicer), substitute it for the STL in the scene, leave the full
@@ -5378,9 +5069,9 @@ async function startDockedPrint() {
       printSim.setSolidPreview(false);
     }
     printSim.reset();              // begin empty, at progress 0
-    setSlicerFullscreen(false);    // leave full view for the 3D scene
+    slicerPaneUi.setFullscreen(false);    // leave full view for the 3D scene
     collapseFilesForPrint();       // hide the Files list; dock the controls
-    setSlicerMenuOpen(false);      // docked bar starts as just Stop/Pause/Slicer
+    slicerPaneUi.setMenuOpen(false);      // docked bar starts as just Stop/Pause/Slicer
     updateBottomNavState();        // homing: Play hidden, door = Stop (to cancel)
     updatePrintViewModeButtons();  // enable STL/Thermal per what the slice provided
     updatePrintStyleButtons();     // Lines/Tubes availability for this slice
@@ -5604,8 +5295,8 @@ window.addEventListener("message", (event) => {
 });
 
 window.addEventListener("resize", () => {
-  if (isSlicerMenuOpen) {
-    positionSlicerMenu();
+  if (slicerPaneUi.isMenuOpen()) {
+    slicerPaneUi.positionMenu();
   }
 });
 
@@ -5615,7 +5306,7 @@ function setCloudModelMenuOpen(isOpen, options = {}) {
   isCloudModelMenuOpen = Boolean(isOpen);
 
   if (!isCloudModelMenuOpen) {
-    setSlicerMenuOpen(false);
+    slicerPaneUi.setMenuOpen(false);
     // Closing the menu ends any docked-print collapse. Reset it so a later fresh
     // open shows the normal file browser (three base bottom-nav buttons, no
     // Play) instead of inheriting the collapsed-for-print state.
@@ -10769,7 +10460,7 @@ function confirmPrintComplete() {
   // Print finished: if the chamber still has argon in it, hold it there
   // (door locked) until the operator runs the fan to purge it out.
   endChamberInertForPrint();
-  setSlicerMenuOpen(false);
+  slicerPaneUi.setMenuOpen(false);
   // Fully drop the sim source (see confirmStopPrint) so the next print re-prepares
   // and re-places from a clean baseline rather than reusing this job's placement.
   if (printSim && printSim.getState() !== "idle") {
@@ -10879,7 +10570,7 @@ function closePrintPauseNotice() {
 function confirmStopPrint() {
   closePrintStopConfirm();
   closePrintPauseNotice();
-  setSlicerMenuOpen(false);  // close the Slicer flyout so it can't linger
+  slicerPaneUi.setMenuOpen(false);  // close the Slicer flyout so it can't linger
   cancelPrePrintSequence(); // stop the homing routine if it's still running
   setFeederDriveStop(); // don't leave a manually-jogged feeder wheel spinning
   // Print cancelled — possibly mid-purge. Cancel any purge still gating a
@@ -11013,7 +10704,7 @@ function updateBottomNavState() {
     navSimState,
     isPrePrintSequenceActive,
     isMaterialsMenuOpen,
-    isSlicerMenuOpen,
+    slicerPaneUi.isMenuOpen(),
     isFrontDoorOpen(),
     getLocale(),
   ].join("|");
@@ -11116,8 +10807,8 @@ function updateBottomNavState() {
     navSlicerToggleEl.hidden = !dockedPrint;
     navSlicerToggleEl.disabled = !dockedPrint;
     navSlicerToggleEl.setAttribute("aria-hidden", dockedPrint ? "false" : "true");
-    navSlicerToggleEl.setAttribute("aria-pressed", isSlicerMenuOpen ? "true" : "false");
-    navSlicerToggleEl.classList.toggle("is-active", isSlicerMenuOpen);
+    navSlicerToggleEl.setAttribute("aria-pressed", slicerPaneUi.isMenuOpen() ? "true" : "false");
+    navSlicerToggleEl.classList.toggle("is-active", slicerPaneUi.isMenuOpen());
   }
 
   if (navDoorToggleEl) {
@@ -12182,7 +11873,7 @@ if (navSlicerToggleEl) {
     markUserActivity();
     // In the docked-print bar the Slicer button toggles the print-sim panel as an
     // upward flyout (Speed / View / Play / Reset). Reuses the slicer pane.
-    setSlicerMenuOpen(!isSlicerMenuOpen);
+    slicerPaneUi.setMenuOpen(!slicerPaneUi.isMenuOpen());
     updateBottomNavState();
   });
 }
@@ -12452,11 +12143,11 @@ initMaterialsUi({
   setModelLift: (isRaised) => { materialsModelLiftTargetM = isRaised ? MATERIALS_MENU_MODEL_LIFT_M : 0; },
   setCloudModelMenuOpen: (open, opts) => setCloudModelMenuOpen(open, opts),
   isCloudModelMenuOpen: () => isCloudModelMenuOpen,
-  setSlicerFullscreen: (open, opts) => setSlicerFullscreen(open, opts),
-  isSlicerFullscreen: () => isSlicerFullscreen,
+  setSlicerFullscreen: (open, opts) => slicerPaneUi.setFullscreen(open, opts),
+  isSlicerFullscreen: () => slicerPaneUi.isFullscreen(),
   getSelectedCloudLibraryFileName: () => selectedCloudLibraryFileName,
   setSelectedCloudLibraryFile: (file, opts) => setSelectedCloudLibraryFile(file, opts),
-  loadSlicerIframeForFile: (file) => loadSlicerIframeForFile(file),
+  loadSlicerIframeForFile: (file) => slicerPaneUi.loadIframeForFile(file),
   startDockedPrint: () => startDockedPrint(),
   updateBottomNavState: () => updateBottomNavState(),
   updateCloudPrintSimulationControls: () => updateCloudPrintSimulationControls(),
@@ -12644,7 +12335,7 @@ initFileLibrary({
   clearCloudOverlays: () => clearCloudOverlays(),
   clearCloudStlObject: () => clearCloudStlObject(),
   loadCloudOverlayFromSelectedFile: () => loadCloudOverlayFromSelectedFile(),
-  loadFileToSlicer: (name) => loadFileToSlicer(name),
+  loadFileToSlicer: (name) => slicerPaneUi.loadFileToSlicer(name),
   openStartPrintPreview: (name) => openStartPrintPreview(name),
   syncCloudDatasetFromSelectedStl: (opts) => syncCloudDatasetFromSelectedStl(opts),
   applyCloudThumbStyle: (thumbEl, entry) => applyCloudThumbStyle(thumbEl, entry),
