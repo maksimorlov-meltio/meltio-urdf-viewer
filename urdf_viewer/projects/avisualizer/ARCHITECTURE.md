@@ -137,6 +137,10 @@ the repo root when the FastAPI backend moves to `apps/dev-host/`.
   listeners. Named exports under the old god-file identifiers (live bindings);
   scene edges (spool highlight, wire drum, model lift) injected via
   `initMaterialsUi(deps)`.
+- **`fileLibrary.js`** — the Files-menu file library: source filters
+  (USB/cloud/local), search, favorites, entry normalization, row rendering with
+  slice-status badges, selection and the backend fetch. Scene loads and the
+  THREE-rendered thumbnails stay host-side via `initFileLibrary(deps)`.
 - **`calendar.js`**, **`notifications.js`**, **`settings.js`** — the
   maintenance calendar, the notification center/toasts/bell, and the settings
   menu + Advanced mode (factories `createXxxUi(deps)` instantiated at boot).
