@@ -79,7 +79,11 @@ The gates exist because each catches a defect the others miss:
   other check passes on an application that never starts. It runs as a step of
   the `viewer pytest` job rather than a job of its own: a required status check
   is matched by job name, and adding a new required context needs repo-admin
-  rights nobody on this side has. Do not rename that job.
+  rights nobody on this side has. Permanently, therefore:
+  **never rename or split `viewer-python`** — a required context that stops
+  being reported blocks every merge until an admin intervenes, which is exactly
+  the intervention that is unavailable. Its boot steps carry
+  `if: ${{ !cancelled() }}` so a failing pytest cannot silently skip them.
 
 If a venv doesn't exist yet, create it (setup above) — don't report a suite as
 passing when it was never run.
