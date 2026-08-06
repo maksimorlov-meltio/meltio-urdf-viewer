@@ -64,9 +64,14 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           WT=$(mktemp -d)
+          # Resolve FETCH_HEAD to a SHA *here*: a linked worktree has its own
+          # git dir and cannot see this repo's FETCH_HEAD, so the previous
+          # `git -C "$WT" checkout -B release FETCH_HEAD` died with "not a
+          # commit". It never showed up because the first publish took the
+          # orphan branch below — the update path had never run.
           if git fetch origin release 2>/dev/null; then
-            git worktree add "$WT" FETCH_HEAD
-            git -C "$WT" checkout -B release FETCH_HEAD
+            RELEASE_TIP=$(git rev-parse FETCH_HEAD)
+            git worktree add -B release "$WT" "$RELEASE_TIP"
           else
             git worktree add --detach "$WT"
             git -C "$WT" checkout --orphan release
