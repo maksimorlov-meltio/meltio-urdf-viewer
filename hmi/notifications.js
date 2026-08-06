@@ -41,7 +41,6 @@ const notificationHistoryReturnEl = document.getElementById("notificationHistory
 const notificationDetailsModalEl = document.getElementById("notificationDetailsModal");
 const notificationDetailsBodyEl = document.getElementById("notificationDetailsBody");
 const notificationDetailsCloseEl = document.getElementById("notificationDetailsClose");
-const notificationDetailsGoToIssueEl = document.getElementById("notificationDetailsGoToIssue");
 const notificationDetailsAcknowledgeEl = document.getElementById("notificationDetailsAcknowledge");
 const notificationDetailsResolveEl = document.getElementById("notificationDetailsResolve");
 const NOTIFICATION_FILTER_VALUES = Object.freeze(["all", "critical", "warning", "info"]);
@@ -221,6 +220,10 @@ const NOTIFICATION_TYPE_DEFINITIONS = Object.freeze({
 });
 let isNotificationCenterOpen = false;
 let notificationActiveFilter = "all";
+// Coolant over-temperature threshold, in Celsius. One definition: it decides
+// both whether the warning fires and whether it is critical.
+const COOLANT_WARNING_C = 60;
+
 const notificationsById = new Map();
 const mockNotificationSignals = {
   emergencyStopActive: false,
@@ -894,17 +897,21 @@ function getNotificationSignalsSnapshot() {
     ? window.PRINTER_NOTIFICATION_SIGNALS
     : null;
 
-  const topbarConnectionEl = document.getElementById("topbarConnection");
-  const statusText = String(topbarConnectionEl?.textContent || "").toLowerCase();
-  const internetConnectedFromUi = statusText.includes("connected") && !statusText.includes("not");
-
   const snapshot = {
     ...mockNotificationSignals,
     ...(globalSignals || {}),
   };
 
   if (globalSignals == null) {
-    snapshot.internetConnected = internetConnectedFromUi;
+    // Connectivity used to be scraped out of the topbar label's text:
+    //   statusText.includes("connected") && !statusText.includes("not")
+    // #topbarConnection is not in urdf.html, so statusText was always "",
+    // internetConnected was always false, and the console showed a permanent
+    // "internet connection unavailable" that was not true. Reading machine
+    // state back out of a DOM label is the wrong direction anyway — telemetry
+    // flows in through window.PRINTER_NOTIFICATION_SIGNALS (machineLink), and
+    // with no machine linked the mock value is the honest answer.
+    //
     // No live machine telemetry — reflect the real door state from the scene
     // instead of the hardcoded mock value, so the pre-print checklist actually
     // fails when a door is left open.
@@ -915,7 +922,7 @@ function getNotificationSignalsSnapshot() {
     snapshot.machineArmedRequired = !snapshot.machineArmedState;
   }
 
-  if (Number.isFinite(Number(snapshot.coolantTemperature)) && Number(snapshot.coolantTemperature) > 60) {
+  if (Number(snapshot.coolantTemperature) > COOLANT_WARNING_C) {
     snapshot.coolantFlowLow = true;
   }
 
@@ -946,7 +953,7 @@ function buildSignalDrivenNotificationRecords(signals) {
   const isProcessRunning = Boolean(signals.processRunning);
   const armSeverity = isProcessRunning ? "warning" : "info";
   const inertSeverity = isProcessRunning ? "warning" : "info";
-  const coolantSeverity = Number(signals.coolantTemperature) > 60 ? "critical" : "warning";
+  const coolantSeverity = Number(signals.coolantTemperature) > COOLANT_WARNING_C ? "critical" : "warning";
 
   const candidates = [
     {
@@ -982,7 +989,13 @@ function buildSignalDrivenNotificationRecords(signals) {
     },
     {
       type: "coolant_warning",
-      active: Boolean(signals.coolantFlowLow) || Number.isFinite(Number(signals.coolantTemperature)),
+      // A REPORTED temperature is not a fault. This read
+      // `|| Number.isFinite(Number(signals.coolantTemperature))`, so any numeric
+      // reading raised the warning — permanently, on any machine that reports
+      // coolant telemetry at all. Only a low-flow flag or an over-temperature
+      // reading is a fault.
+      active: signals.coolantFlowLow === true
+        || Number(signals.coolantTemperature) > COOLANT_WARNING_C,
       severity: coolantSeverity,
       sensorValue: Number.isFinite(Number(signals.coolantTemperature)) ? `${Number(signals.coolantTemperature).toFixed(1)} C` : null,
     },
@@ -1166,25 +1179,6 @@ function acknowledgeNotification(notificationId) {
   return true;
 }
 
-function resolveNotification(notificationId) {
-  const current = notificationsById.get(notificationId);
-  if (!current || !current.canResolveManually) {
-    return false;
-  }
-
-  if (current.persistWhileSignalActive && current.status !== "resolved") {
-    return false;
-  }
-
-  notificationsById.set(notificationId, {
-    ...current,
-    status: "resolved",
-    timestamp: new Date().toISOString(),
-  });
-  renderNotificationCenter();
-  return true;
-}
-
 function goToNotificationIssue(notificationId) {
   const notification = notificationsById.get(notificationId);
   if (!notification) {
@@ -1362,16 +1356,6 @@ if (notificationDetailsCloseEl) {
   });
 }
 
-if (notificationDetailsGoToIssueEl) {
-  notificationDetailsGoToIssueEl.addEventListener("click", () => {
-    if (!selectedNotificationDetailId) {
-      return;
-    }
-    markUserActivity();
-    goToNotificationIssue(selectedNotificationDetailId);
-    closeNotificationDetailsModal();
-  });
-}
 
 if (notificationDetailsAcknowledgeEl) {
   notificationDetailsAcknowledgeEl.addEventListener("click", () => {
