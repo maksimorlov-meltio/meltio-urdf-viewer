@@ -71,7 +71,9 @@ isolation; a module that throws at boot passes all nine and takes the whole HMI 
 it (that is exactly what `515877b` did — two days of green merges on a dead app). The
 boot check is the one that runs it for real, in headless Chrome, and fails on a single
 console error. It is kept out of `gate.sh` because it needs a running server and ~30 s
-of GLB parsing; CI runs it as its own `boot check` job:
+of GLB parsing; CI runs it as the last step of the **`viewer pytest`** job — inside an
+already-required check, because making it a required context of its own needs repo-admin
+rights and an advisory gate is not a gate:
 
 ```powershell
 # with the viewer already up (Start-Viewer.bat)

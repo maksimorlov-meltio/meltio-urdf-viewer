@@ -42,7 +42,7 @@ optional (`avisualizer[pointcloud]`). Never rely on global Python packages.
 
 **CI is the contract.** [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
 runs on every PR and `main` is protected behind its three required checks
-(viewer pytest + smoke, slicer pytest, frontend js checks). The commands below
+(viewer pytest + smoke + boot, slicer pytest, frontend js checks). The commands below
 are how you get the same answer locally, before pushing — not a substitute.
 
 ```powershell
@@ -76,7 +76,10 @@ The gates exist because each catches a defect the others miss:
   answers; only this proves the *page* runs. `515877b` left a TypeError in a
   boot-time dep thunk that killed the module before the URDF loader — blank
   scene, no models — and it survived two days and nine merges because every
-  other check passes on an application that never starts.
+  other check passes on an application that never starts. It runs as a step of
+  the `viewer pytest` job rather than a job of its own: a required status check
+  is matched by job name, and adding a new required context needs repo-admin
+  rights nobody on this side has. Do not rename that job.
 
 If a venv doesn't exist yet, create it (setup above) — don't report a suite as
 passing when it was never run.

@@ -11,11 +11,22 @@ on:
     branches: [main]
 
 jobs:
+  # NOTE: do not rename this job. "viewer pytest" is one of the three required
+  # status checks on `main`; a required context that stops being reported blocks
+  # every merge until an admin edits the branch protection.
+  #
+  # It carries the boot check as well, which is not what the name says. Making
+  # `boot check` a required context of its own needs repo-admin rights, and a
+  # non-blocking gate is a suggestion — this one exists precisely because nine
+  # advisory-in-practice signals let a dead application through. When someone
+  # with admin can add the context, split it back into its own job.
   viewer-python:
     name: viewer pytest
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -31,6 +42,48 @@ jobs:
       # how finding ARQ-1 reached main with all three checks green.
       - name: pytest smoke (viewer-only)
         run: python -m pytest tests/smoke -v
+
+      # --- Boot check ---------------------------------------------------------
+      # The smoke tests above prove the SERVER answers. Only this proves the PAGE
+      # runs: everything else in this workflow parses, lints and mounts modules in
+      # isolation, which is how 515877b's module-killing TypeError survived two
+      # days and nine merges with every check green. See tools/check_boot.mjs.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      # The 24 GLB meshes are ~140 MB of LFS. Downloading them on every PR would
+      # burn the account's bandwidth quota in a handful of runs, so cache the
+      # objects keyed on the pointer list (`ls-files` reads pointers, no fetch).
+      - name: LFS pointer digest
+        id: lfs
+        run: echo "key=$(git lfs ls-files -l | sha256sum | cut -c1-40)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: .git/lfs
+          key: lfs-${{ steps.lfs.outputs.key }}
+      - name: Fetch the meshes
+        run: git lfs pull
+      # No AVIS_SLICER_URL: the slicer is optional (CLAUDE.md) and its proxy
+      # answering 503 is the documented, allow-listed exception in check_boot.
+      - name: Start the viewer
+        run: |
+          python -m uvicorn avisualizer.web.app:create_app \
+            --factory --host 127.0.0.1 --port 8090 &
+          for _ in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8090/urdf >/dev/null && exit 0
+            sleep 1
+          done
+          echo "the viewer never came up"; exit 1
+      - name: Boot check (zero console errors, boot contract satisfied)
+        run: node tools/check_boot.mjs --screenshot boot.png
+      # Uploaded on failure too: a 1080x1920 shot of what the operator would see
+      # is usually faster to read than the error list.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: boot-screenshot
+          path: boot.png
+          if-no-files-found: ignore
       # Python dependency CVEs (finding SEG-9). Advisory for now: this scans the
       # resolved viewer environment, and a new advisory landing upstream must not
       # turn every unrelated PR red overnight. Read the log; promote to blocking
@@ -111,61 +164,3 @@ jobs:
       - name: npm audit (high and above)
         run: npm audit --audit-level=high
 
-  # The one check that actually starts the application. Everything above parses,
-  # lints and mounts modules in isolation; none of it executes the boot
-  # sequence, which is how 515877b shipped a module-killing TypeError and
-  # survived two days and nine merges with every check green.
-  #
-  # Its own job, not a step in `frontend js checks`: it needs a Python server,
-  # the LFS meshes and ~30 s of software-rendered GLB parsing, and none of that
-  # belongs in the fast lane.
-  boot:
-    name: boot check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          lfs: false
-      # The 24 GLB meshes are ~140 MB of LFS. Downloading them on every PR would
-      # burn the account's LFS bandwidth quota in a handful of runs, so cache the
-      # objects keyed on the pointer list (`ls-files` reads pointers, no fetch).
-      - name: LFS pointer digest
-        id: lfs
-        run: echo "key=$(git lfs ls-files -l | sha256sum | cut -c1-40)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
-        with:
-          path: .git/lfs
-          key: lfs-${{ steps.lfs.outputs.key }}
-      - name: Fetch the meshes
-        run: git lfs pull
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-      - name: Install viewer deps (without the heavy open3d 'pointcloud' extra)
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ./apps/dev-host
-      # No AVIS_SLICER_URL: the slicer is optional (CLAUDE.md) and its proxy
-      # answering 503 is the documented, allow-listed exception in check_boot.
-      - name: Start the viewer
-        run: |
-          python -m uvicorn avisualizer.web.app:create_app \
-            --factory --host 127.0.0.1 --port 8090 &
-          for _ in $(seq 1 60); do
-            curl -sf http://127.0.0.1:8090/urdf >/dev/null && exit 0
-            sleep 1
-          done
-          echo "the viewer never came up"; exit 1
-      - name: Boot check (zero console errors, boot contract satisfied)
-        run: node tools/check_boot.mjs --screenshot boot.png
-      # Uploaded on failure too: a 1080x1920 shot of what the operator would see
-      # is usually faster to read than the error list.
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: boot-screenshot
-          path: boot.png
-          if-no-files-found: ignore
