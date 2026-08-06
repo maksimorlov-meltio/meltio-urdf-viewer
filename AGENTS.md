@@ -18,6 +18,7 @@ and component classes; never invent new hex colors or one-off button styles).
 | `tests/js/`, `tests/smoke/` | unit tests and full-stack smoke | extend when you add a module. `support/domStub.mjs` = import an `hmi/` module with no DOM (pure logic); `support/domFixture.mjs` = the real `urdf.html` under jsdom (rendering, listeners) |
 | `contract.json` | the UI↔host message contract, v2, **host-owned** | see below |
 | `contract-dom.json` | generated: the DOM ids + injected deps the published modules require of an embedder | never hand-edit — `node tools/gen_dom_contract.mjs` |
+| `contract-http.json` | generated: the HTTP routes an embedder must provide, which published module calls each, and which enforce authorisation server-side | never hand-edit — `.\.venv\Scripts\python.exe apps/dev-host/tools/gen_http_contract.py` |
 | `release` branch | auto-published `hmi/` + `viewer/` + both contracts | **never commit to it** — the `release` workflow owns it |
 
 The dev server mounts `/hmi` and `/viewer` from the repo root; the app entry
