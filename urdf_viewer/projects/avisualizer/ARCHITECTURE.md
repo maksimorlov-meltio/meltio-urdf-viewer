@@ -137,6 +137,11 @@ the repo root when the FastAPI backend moves to `apps/dev-host/`.
   listeners. Named exports under the old god-file identifiers (live bindings);
   scene edges (spool highlight, wire drum, model lift) injected via
   `initMaterialsUi(deps)`.
+- **`utilities.js`** — the topbar Fan/Chiller domain: on/off + settings
+  popovers, the shared on-screen numpad, persistence, and the fan/chiller
+  fault records pushed into the notification center. Scene effects (dust
+  exhaust, chiller visibility, inert-chamber purge) react through injected
+  hooks; `fanState` is a live export read by the chamber-inert simulation.
 - **`fileLibrary.js`** — the Files-menu file library: source filters
   (USB/cloud/local), search, favorites, entry normalization, row rendering with
   slice-status badges, selection and the backend fetch. Scene loads and the
