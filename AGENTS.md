@@ -17,7 +17,8 @@ and component classes; never invent new hex colors or one-off button styles).
 | `tools/` | the JS gates (`check_imports`, `check_contract`, `check_boundaries`) | keep them green |
 | `tests/js/`, `tests/smoke/` | unit tests (pure modules) and full-stack smoke | extend when you add pure modules |
 | `contract.json` | the UI↔host message contract, v2, **host-owned** | see below |
-| `release` branch | auto-published `hmi/` + `viewer/` + `contract.json` | **never commit to it** — the `release` workflow owns it |
+| `contract-dom.json` | generated: the DOM ids + injected deps the published modules require of an embedder | never hand-edit — `node tools/gen_dom_contract.mjs` |
+| `release` branch | auto-published `hmi/` + `viewer/` + both contracts | **never commit to it** — the `release` workflow owns it |
 
 The dev server mounts `/hmi` and `/viewer` from the repo root; the app entry
 imports them with root-absolute specifiers (`"/hmi/x.js"`), which `build.mjs`
@@ -25,9 +26,12 @@ resolves via its esbuild plugin. Intra-partition imports stay relative.
 
 ## Non-negotiable rules
 
-1. **The gate must pass before any PR**: `bash gate.sh` (six checks: syntax,
-   imports, contract, boundaries, lint, tests+build). CI enforces the same;
-   `main` is protected — all changes go through PRs with 3 required checks.
+1. **The gate must pass before any PR**: `bash gate.sh` (eight checks: syntax,
+   imports, contract, boundaries, lint, tests+build, entry, dom-contract). CI
+   enforces the same; `main` is protected — all changes go through PRs with 3
+   required checks. Adding a `getElementById` or a `deps` key to `hmi/` or
+   `viewer/` changes the published artefact's contract: regenerate
+   `contract-dom.json` and commit it in the same change.
 2. **`contract.json` is host-owned and now ENFORCED.** Any new machine command
    the frontend emits must be declared there first (camelCase, or a legacy
    alias) — an undeclared command is a 400. Its `permission` level is compared
@@ -63,7 +67,7 @@ resolves via its esbuild plugin. Intra-partition imports stay relative.
 ## Commands (from the repo root)
 
 ```bash
-bash gate.sh                                   # the six gates (frontend)
+bash gate.sh                                   # the eight gates (frontend)
 node --test "tests/js/**/*.test.mjs"           # JS unit tests only
 npm run build                                  # hashed bundle + html rewrite
 npm run build:dev                              # point urdf.html at raw source

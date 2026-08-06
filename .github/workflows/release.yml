@@ -1,8 +1,9 @@
 name: release
 
 # Step-8 release channel: publishes the consumable frontend — the root hmi/
-# and viewer/ partitions plus contract.json — to the `release` branch, ONLY
-# when the step-7 gate (gate.sh, six checks) is green. Downstream consumers
+# and viewer/ partitions plus contract.json + contract-dom.json — to the
+# `release` branch, ONLY
+# when the step-7 gate (gate.sh, eight checks) is green. Downstream consumers
 # (the C# WPF host) track `release` as a read-only submodule; commits are
 # appended (fast-forward friendly), one per published main commit, and nothing
 # is published when the release content is unchanged.
@@ -32,7 +33,7 @@ jobs:
           node-version: "22"
       - name: Install frontend tooling
         run: npm ci
-      - name: Gate (six checks — publish is refused if any fails)
+      - name: Gate (eight checks — publish is refused if any fails)
         run: bash gate.sh
       - name: Assemble and publish
         run: |
@@ -41,7 +42,7 @@ jobs:
           SHORT=$(git rev-parse --short HEAD)
 
           STAGE=$(mktemp -d)
-          cp -r hmi viewer contract.json "$STAGE"/
+          cp -r hmi viewer contract.json contract-dom.json "$STAGE"/
           cat > "$STAGE/README.md" <<EOF
           # Meltio HMI — release channel
 
@@ -54,10 +55,15 @@ jobs:
             \`overlays/\`). \`three\` / \`three/addons/*\` are bare imports:
             the embedder provides them via an import map or bundler alias.
           - \`contract.json\` — the UI↔host message contract (v2, host-owned).
+          - \`contract-dom.json\` — what these modules need FROM the embedder:
+            the element ids each looks up, and the dependency keys each
+            \`initXxx\`/\`createXxx\` entry point reads. Every DOM lookup is
+            guarded, so an embedder that supplies none of it gets a tree that
+            loads cleanly and does nothing, in silence. Read this one first.
 
           Source: \`$SHA\` on \`main\` — do not edit this branch; changes land
           on \`main\` and are re-published by the \`release\` workflow after
-          the six-gate check (\`gate.sh\`).
+          the eight-gate check (\`gate.sh\`).
           EOF
 
           git config user.name "github-actions[bot]"

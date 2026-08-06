@@ -194,98 +194,64 @@ export function setSpoolCardState(cardEl, spoolKey, isActive) {
   }
 }
 
+// Every spool card the console renders, as data.
+//
+// The same card appears on three surfaces — the in-scene hotspot panel, the
+// Files pane and the Materials popup — over the same two feeders plus the wire
+// drum, with each surface showing a subset of the fields. This used to be 24
+// near-identical `if (el) el.textContent = …` blocks, so adding one field meant
+// six or seven synchronised edits and a missed surface was invisible (there is
+// no DOM test to catch it). A null slot means that surface does not show the
+// field; renderSpoolCard skips it.
+const SPOOL_CARDS = [
+  { key: "spool1", card: hotspotSpoolCard1El, material: hotspotSpool1MaterialEl,
+    initial: hotspotSpool1InitialAmountEl, used: hotspotSpool1UsedAmountEl,
+    amount: hotspotSpool1AmountEl, status: hotspotSpool1StatusEl },
+  { key: "spool2", card: hotspotSpoolCard2El, material: hotspotSpool2MaterialEl,
+    initial: hotspotSpool2InitialAmountEl, used: hotspotSpool2UsedAmountEl,
+    amount: hotspotSpool2AmountEl, status: hotspotSpool2StatusEl },
+  // The Files pane is the compact variant: no initial/used breakdown.
+  { key: "spool1", card: filesSpoolCard1El, material: filesSpool1MaterialEl,
+    initial: null, used: null, amount: filesSpool1AmountEl, status: filesSpool1StatusEl },
+  { key: "spool2", card: filesSpoolCard2El, material: filesSpool2MaterialEl,
+    initial: null, used: null, amount: filesSpool2AmountEl, status: filesSpool2StatusEl },
+  { key: "spool1", card: materialsSpoolCard1El, material: materialsSpool1MaterialEl,
+    initial: materialsSpool1InitialAmountEl, used: materialsSpool1UsedAmountEl,
+    amount: materialsSpool1AmountEl, status: materialsSpool1StatusEl },
+  { key: "spool2", card: materialsSpoolCard2El, material: materialsSpool2MaterialEl,
+    initial: materialsSpool2InitialAmountEl, used: materialsSpool2UsedAmountEl,
+    amount: materialsSpool2AmountEl, status: materialsSpool2StatusEl },
+  { key: "wiredrum", card: materialsSpoolCardWireDrumEl, material: materialsWireDrumMaterialEl,
+    initial: materialsWireDrumInitialAmountEl, used: materialsWireDrumUsedAmountEl,
+    amount: materialsWireDrumAmountEl, status: materialsWireDrumStatusEl },
+];
+
+function setText(el, text) {
+  if (el) el.textContent = text;
+}
+
+// One wording for the insufficient-material block, shown on up to three
+// surfaces at once. It was written out verbatim in three places.
+function notEnoughMaterialText(spoolLabel, leftGrams, requiredGrams) {
+  return `${spoolLabel}: Not enough material `
+    + `(${formatGramsText(leftGrams)} left, ${formatGramsText(requiredGrams)} required).`;
+}
+
+// The single definition of what a spool card shows. Add a field here and in
+// SPOOL_CARDS and every surface that has it picks it up.
+function renderSpoolCard(entry, focusedSpoolKey) {
+  setSpoolCardState(entry.card, entry.key, focusedSpoolKey === entry.key);
+  setText(entry.material, getMaterialLabelById(hotspotMaterialAssignments[entry.key]));
+  setText(entry.initial, getSpoolInitialAmountText(entry.key));
+  setText(entry.used, getSpoolUsedAmountText(entry.key));
+  setText(entry.amount, getSpoolRemainingAmountText(entry.key));
+  setSpoolStatusElement(entry.status, entry.key);
+}
+
 export function updateSpoolSelectionCards() {
   const focusedSpoolKey = normalizeSpoolKey(hotspotMaterialsFocusSpoolKey) || "spool1";
 
-  setSpoolCardState(hotspotSpoolCard1El, "spool1", focusedSpoolKey === "spool1");
-  setSpoolCardState(hotspotSpoolCard2El, "spool2", focusedSpoolKey === "spool2");
-  setSpoolCardState(filesSpoolCard1El, "spool1", focusedSpoolKey === "spool1");
-  setSpoolCardState(filesSpoolCard2El, "spool2", focusedSpoolKey === "spool2");
-  setSpoolCardState(materialsSpoolCard1El, "spool1", focusedSpoolKey === "spool1");
-  setSpoolCardState(materialsSpoolCard2El, "spool2", focusedSpoolKey === "spool2");
-  setSpoolCardState(materialsSpoolCardWireDrumEl, "wiredrum", focusedSpoolKey === "wiredrum");
-
-  if (hotspotSpool1MaterialEl) {
-    hotspotSpool1MaterialEl.textContent = getMaterialLabelById(hotspotMaterialAssignments.spool1);
-  }
-  if (hotspotSpool2MaterialEl) {
-    hotspotSpool2MaterialEl.textContent = getMaterialLabelById(hotspotMaterialAssignments.spool2);
-  }
-  if (filesSpool1MaterialEl) {
-    filesSpool1MaterialEl.textContent = getMaterialLabelById(hotspotMaterialAssignments.spool1);
-  }
-  if (filesSpool2MaterialEl) {
-    filesSpool2MaterialEl.textContent = getMaterialLabelById(hotspotMaterialAssignments.spool2);
-  }
-  if (materialsSpool1MaterialEl) {
-    materialsSpool1MaterialEl.textContent = getMaterialLabelById(hotspotMaterialAssignments.spool1);
-  }
-  if (materialsSpool2MaterialEl) {
-    materialsSpool2MaterialEl.textContent = getMaterialLabelById(hotspotMaterialAssignments.spool2);
-  }
-  if (materialsWireDrumMaterialEl) {
-    materialsWireDrumMaterialEl.textContent = getMaterialLabelById(hotspotMaterialAssignments.wiredrum);
-  }
-
-  if (hotspotSpool1AmountEl) {
-    hotspotSpool1AmountEl.textContent = getSpoolRemainingAmountText("spool1");
-  }
-  if (hotspotSpool2AmountEl) {
-    hotspotSpool2AmountEl.textContent = getSpoolRemainingAmountText("spool2");
-  }
-  if (hotspotSpool1InitialAmountEl) {
-    hotspotSpool1InitialAmountEl.textContent = getSpoolInitialAmountText("spool1");
-  }
-  if (hotspotSpool2InitialAmountEl) {
-    hotspotSpool2InitialAmountEl.textContent = getSpoolInitialAmountText("spool2");
-  }
-  if (hotspotSpool1UsedAmountEl) {
-    hotspotSpool1UsedAmountEl.textContent = getSpoolUsedAmountText("spool1");
-  }
-  if (hotspotSpool2UsedAmountEl) {
-    hotspotSpool2UsedAmountEl.textContent = getSpoolUsedAmountText("spool2");
-  }
-  if (materialsSpool1InitialAmountEl) {
-    materialsSpool1InitialAmountEl.textContent = getSpoolInitialAmountText("spool1");
-  }
-  if (materialsSpool2InitialAmountEl) {
-    materialsSpool2InitialAmountEl.textContent = getSpoolInitialAmountText("spool2");
-  }
-  if (materialsSpool1UsedAmountEl) {
-    materialsSpool1UsedAmountEl.textContent = getSpoolUsedAmountText("spool1");
-  }
-  if (materialsSpool2UsedAmountEl) {
-    materialsSpool2UsedAmountEl.textContent = getSpoolUsedAmountText("spool2");
-  }
-  if (materialsSpool1AmountEl) {
-    materialsSpool1AmountEl.textContent = getSpoolRemainingAmountText("spool1");
-  }
-  if (materialsSpool2AmountEl) {
-    materialsSpool2AmountEl.textContent = getSpoolRemainingAmountText("spool2");
-  }
-  if (materialsWireDrumInitialAmountEl) {
-    materialsWireDrumInitialAmountEl.textContent = getSpoolInitialAmountText("wiredrum");
-  }
-  if (materialsWireDrumUsedAmountEl) {
-    materialsWireDrumUsedAmountEl.textContent = getSpoolUsedAmountText("wiredrum");
-  }
-  if (materialsWireDrumAmountEl) {
-    materialsWireDrumAmountEl.textContent = getSpoolRemainingAmountText("wiredrum");
-  }
-  if (filesSpool1AmountEl) {
-    filesSpool1AmountEl.textContent = getSpoolRemainingAmountText("spool1");
-  }
-  if (filesSpool2AmountEl) {
-    filesSpool2AmountEl.textContent = getSpoolRemainingAmountText("spool2");
-  }
-
-  setSpoolStatusElement(hotspotSpool1StatusEl, "spool1");
-  setSpoolStatusElement(hotspotSpool2StatusEl, "spool2");
-  setSpoolStatusElement(filesSpool1StatusEl, "spool1");
-  setSpoolStatusElement(filesSpool2StatusEl, "spool2");
-  setSpoolStatusElement(materialsSpool1StatusEl, "spool1");
-  setSpoolStatusElement(materialsSpool2StatusEl, "spool2");
-  setSpoolStatusElement(materialsWireDrumStatusEl, "wiredrum");
+  for (const entry of SPOOL_CARDS) renderSpoolCard(entry, focusedSpoolKey);
 
   updateMaterialInfoPanel();
   updateMaterialsFeederTypeUI();
@@ -523,7 +489,7 @@ export function isFocusedSpoolReadyForPrint(options = {}) {
   if (leftGrams < requiredGrams) {
     if (showWarning) {
       setHotspotMaterialPrintWarning(
-        `${focusedSpoolLabel}: Not enough material (${formatGramsText(leftGrams)} left, ${formatGramsText(requiredGrams)} required).`,
+        notEnoughMaterialText(focusedSpoolLabel, leftGrams, requiredGrams),
       );
     }
     return false;
@@ -848,12 +814,11 @@ export function updateHotspotMaterialAssignmentStatus() {
   }
 
   if (hasNotEnoughMaterial) {
-    setHotspotMaterialPrintWarning(
-      `${focusedSpoolLabel}: Not enough material (${formatGramsText(leftGrams)} left, ${formatGramsText(requiredGrams)} required).`,
-    );
+    const warning = notEnoughMaterialText(focusedSpoolLabel, leftGrams, requiredGrams);
+    setHotspotMaterialPrintWarning(warning);
     if (materialsMenuPrintWarningEl) {
       materialsMenuPrintWarningEl.hidden = false;
-      materialsMenuPrintWarningEl.textContent = `${focusedSpoolLabel}: Not enough material (${formatGramsText(leftGrams)} left, ${formatGramsText(requiredGrams)} required).`;
+      materialsMenuPrintWarningEl.textContent = warning;
     }
   } else {
     setHotspotMaterialPrintWarning("");
