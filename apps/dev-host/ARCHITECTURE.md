@@ -153,6 +153,12 @@ its root-absolute esbuild plugin.
   maintenance calendar, the notification center/toasts/bell, and the settings
   menu + Advanced mode (factories `createXxxUi(deps)` instantiated at boot).
 - **`prePrintCheck.js`** — the pre-print material/signal gate dialog.
+- **`movePanel.js`** — the Move panel: X/Y/Z jog, jog step, homing and the live
+  mm readout (`createMovePanelUi(deps)`). **Motion-bearing**: axis commands go
+  out through the injected `moveJointToValue`, and the exported
+  `canOperateMotion()` is the in-handler `machine.motion` re-check that the
+  palpador sweep button reuses — the `data-requires-permission` gate on the
+  markup is a convenience, this is the refusal.
 - **`permissions.js`**, **`error_codes.js`**, **`i18n/`** — sign-in/roles UI,
   fault-code catalog, translations (classic scripts / DOM hydration).
 
