@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import {
   buildLineSegmentBuffers,
   segmentsVisibleForProgress,
-} from "../../src/avisualizer/web/static/viewer/toolpath/toolpathModel.js";
+} from "../../viewer/toolpath/toolpathModel.js";
 
 // Two layer-0 moves (1 segment each) + one layer-1 move (2 segments): 4 total.
 function syntheticPayload() {

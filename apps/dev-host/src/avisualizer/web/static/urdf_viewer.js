@@ -22,18 +22,18 @@ import {
   DYNAMIC_QUALITY_UP_STEP,
   DYNAMIC_QUALITY_DOWN_COOLDOWN_MS,
   DYNAMIC_QUALITY_UP_COOLDOWN_MS,
-} from "./viewer/core/sceneCore.js";
-import { parseUrdfDocument, buildRobotTree } from "./viewer/robot/urdfRobot.js";
-import { createPrintSimulation } from "./viewer/sim/printSimulation.js";
-import { createSlicerClient } from "./hmi/ports/slicerClient.js";
-import { createMachineLink } from "./hmi/ports/machineLink.js";
-import { createPrePrintCheck } from "./hmi/prePrintCheck.js";
-import { createDustExhaust } from "./viewer/effects/dustExhaust.js";
-import { createChamberInert } from "./viewer/effects/chamberInert.js";
-import { t, applyDomTranslations, getLocale } from "./hmi/i18n/index.js";
-import { createCalendarUi, formatCalendarDateTime } from "./hmi/calendar.js";
-import { createNotificationsUi } from "./hmi/notifications.js";
-import { createSettingsUi } from "./hmi/settings.js";
+} from "/viewer/core/sceneCore.js";
+import { parseUrdfDocument, buildRobotTree } from "/viewer/robot/urdfRobot.js";
+import { createPrintSimulation } from "/viewer/sim/printSimulation.js";
+import { createSlicerClient } from "/hmi/ports/slicerClient.js";
+import { createMachineLink } from "/hmi/ports/machineLink.js";
+import { createPrePrintCheck } from "/hmi/prePrintCheck.js";
+import { createDustExhaust } from "/viewer/effects/dustExhaust.js";
+import { createChamberInert } from "/viewer/effects/chamberInert.js";
+import { t, applyDomTranslations, getLocale } from "/hmi/i18n/index.js";
+import { createCalendarUi, formatCalendarDateTime } from "/hmi/calendar.js";
+import { createNotificationsUi } from "/hmi/notifications.js";
+import { createSettingsUi } from "/hmi/settings.js";
 import {
   initMaterialsUi,
   setMaterialsMenuOpen,
@@ -57,7 +57,7 @@ import {
   isFocusedSpoolReadyForPrint,
   clampMaterialsMenuPopupIntoViewport,
   isTargetInsideMaterialsPopup,
-} from "./hmi/materials.js";
+} from "/hmi/materials.js";
 import {
   initFileLibrary,
   cloudFileSourceFilter,
@@ -70,13 +70,13 @@ import {
   setCloudFileSourceFilter,
   refreshGlobalStlFiles,
   updateCloudFavoritesFilterButton,
-} from "./hmi/fileLibrary.js";
-import { initUtilities, fanState } from "./hmi/utilities.js";
-import { createAssemblyAnnotationManager } from "./viewer/overlays/assemblyAnnotations.js";
+} from "/hmi/fileLibrary.js";
+import { initUtilities, fanState } from "/hmi/utilities.js";
+import { createAssemblyAnnotationManager } from "/viewer/overlays/assemblyAnnotations.js";
 import {
   initFeederWheelFloatOverlay,
   updateFeederWheelFloatingControls,
-} from "./viewer/overlays/feederWheelFloat.js";
+} from "/viewer/overlays/feederWheelFloat.js";
 import {
   MELTIO_MATERIAL_LIBRARY,
   DEFAULT_PRINT_JOB_USAGE_GRAMS,
@@ -91,7 +91,7 @@ import {
   selectedPrintJobEstimatedGrams,
   selectedPrintJobActualGrams,
   recordMaterialUsage,
-} from "./hmi/state/materialsState.js";
+} from "/hmi/state/materialsState.js";
 
 // Assigned at the boot section below (their inits read scene/DOM state);
 // every earlier reference lives inside listeners/arrows that run post-boot.

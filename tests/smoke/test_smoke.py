@@ -60,6 +60,15 @@ def test_viewer_serves_the_app_shell(stack):
     assert status == 200 and len(bundle) > 100_000
 
 
+def test_hoisted_partitions_are_mounted(stack):
+    # Phase C layout: hmi/ and viewer/ live at the repo root and are served by
+    # dedicated mounts (dev mode + classic scripts load them raw as /hmi/…).
+    client = Http(stack["viewer"])
+    for url in ("/hmi/materials.js", "/hmi/permissions.js", "/viewer/core/sceneCore.js"):
+        status, body = client.request(url)
+        assert status == 200 and len(body) > 500, f"{url} not served"
+
+
 def test_urdf_model_catalog_resolves_and_assets_serve(stack):
     client = Http(stack["viewer"])
     status, catalog = client.request("/api/urdf/models")

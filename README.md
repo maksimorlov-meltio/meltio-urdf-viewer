@@ -18,7 +18,7 @@ The app is **two local services** that run together:
 
 | Service | Package | Port | Runtime |
 |---------|---------|------|---------|
-| **Viewer** (`avisualizer`) | `urdf_viewer/projects/avisualizer` | `8090` | Python ≥ 3.10 |
+| **Viewer** (`avisualizer`) | `apps/dev-host` (frontend at repo-root `hmi/`, `viewer/`) | `8090` | Python ≥ 3.10 |
 | **Slicer** (`meltio-platform`) | `_slicer_branch/projects/platform` | `8765` | Python 3.11 |
 
 The viewer embeds the slicer (via the `AVIS_SLICER_URL` environment variable) so
@@ -63,7 +63,7 @@ constant-velocity glide (no snapping), **Home XY** and **Home Z**, and a smooth
 **Accounts & permissions** — credential sign-in (username + password) via
 `POST /api/auth/login`, validated against per-user PBKDF2 credentials stored
 inside the roles/users document (`database/permissions.json`, passwords managed
-with `urdf_viewer/projects/avisualizer/tools/set_password.py`). Sign-in resolves a
+with `apps/dev-host/tools/set_password.py`). Sign-in resolves a
 permission level (Operator, Operator+, Support, God); motion-bearing controls
 (the Move panel, machine commands) are gated to the appropriate level, and the
 session auto-signs-out when idle. The gating is a UI convenience, not a security
@@ -112,8 +112,8 @@ Pop-Location
 ```powershell
 py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
-Push-Location urdf_viewer
-..\.venv\Scripts\python.exe -m pip install -r requirements.txt
+Push-Location apps\dev-host
+..\..\.venv\Scripts\python.exe -m pip install -r requirements.txt
 Pop-Location
 ```
 
@@ -138,7 +138,7 @@ $env:PYTHONPATH = "$PWD\_slicer_branch\projects\platform\src"
 .\venv311\Scripts\python.exe -m uvicorn meltio_platform.slicer.web.app:create_app --factory --host 127.0.0.1 --port 8765
 
 # Terminal 2 — viewer
-$env:PYTHONPATH       = "$PWD\urdf_viewer\projects\avisualizer\src"
+$env:PYTHONPATH       = "$PWD\apps\dev-host\src"
 $env:AVIS_SLICER_URL  = "http://127.0.0.1:8765"
 $env:AVIS_SLICER_UI_URL = "http://127.0.0.1:8765"
 .\.venv\Scripts\python.exe -m uvicorn avisualizer.web.app:create_app --factory --host 127.0.0.1 --port 8090
@@ -173,10 +173,12 @@ slicer dock bar are tuned for that.
 ├─ Stop-Viewer.bat         # stops both services
 ├─ launch-viewer.ps1       # launcher logic (starts servers, opens browser)
 ├─ docs/                   # README assets (ui-overview.svg, screenshot-viewer.png)
-├─ urdf_viewer/            # the viewer app (avisualizer)
-│   └─ projects/avisualizer/
-│       ├─ src/            # FastAPI backend + web/ (static JS/CSS: the UI)
-│       └─ assets/         # M600-PRO URDF + meshes (.glb/.obj)
+├─ hmi/                    # UI-side frontend partition (DOM, host state) — repo root
+├─ viewer/                 # scene-side frontend partition (Three.js) — repo root
+├─ apps/dev-host/          # the viewer app (avisualizer): FastAPI backend,
+│   ├─ src/                #   remaining static shell (urdf_viewer.js, html, css)
+│   └─ assets/             #   M600-PRO URDF + meshes (.glb)
+├─ urdf_viewer/            # legacy docs & scripts (project moved to apps/dev-host)
 └─ _slicer_branch/         # the slicer backend (meltio-platform)
     └─ projects/platform/
         └─ src/meltio_platform/

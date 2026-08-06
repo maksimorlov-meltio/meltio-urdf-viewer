@@ -15,8 +15,12 @@
 import { build } from "esbuild";
 import { readFile, writeFile, rm, mkdir } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const STATIC = "src/avisualizer/web/static";
+// Phase C layout: build.mjs lives at the repo root; the dev-host static tree
+// holds the entry, and /hmi + /viewer resolve to the root partitions.
+const REPO_ROOT = path.dirname(fileURLToPath(import.meta.url));
+const STATIC = "apps/dev-host/src/avisualizer/web/static";
 const ENTRY = path.join(STATIC, "urdf_viewer.js");
 const OUTDIR = path.join(STATIC, "dist");
 const HTML = path.join(STATIC, "urdf.html");
@@ -44,6 +48,17 @@ if (DEV) {
 
 // Strip ?query suffixes from relative imports (e.g. ./sim/printSimulation.js?v=11)
 // so esbuild can resolve them to the real file. Leaves the `three` externals alone.
+// Resolve the root-absolute specifiers the browser resolves via the /hmi and
+// /viewer FastAPI mounts (see app.py): "/hmi/x.js" -> <repo>/hmi/x.js.
+const rootAbsolute = {
+  name: "root-absolute",
+  setup(b) {
+    b.onResolve({ filter: /^\/(hmi|viewer)\// }, (args) => ({
+      path: path.join(REPO_ROOT, args.path.replace(/\?.*$/, "")),
+    }));
+  },
+};
+
 const stripQuery = {
   name: "strip-query",
   setup(b) {
@@ -68,7 +83,7 @@ const result = await build({
   charset: "utf8",
   legalComments: "none",
   external: ["three", "three/addons/*"],
-  plugins: [stripQuery],
+  plugins: [rootAbsolute, stripQuery],
   entryNames: "[name]-[hash]",
   outdir: OUTDIR,
   metafile: true,

@@ -14,7 +14,7 @@ There are **two separate web applications** here, living in two separate folders
 
 | App | What it is | Lives in | Dev port |
 |-----|------------|----------|----------|
-| **Viewer** ("avisualizer") | The 3D machine viewer. Shows the Meltio robot (URDF model), sensor point-clouds, menus, and the **in-scene print simulation**. This is the "host" the operator actually looks at. | `urdf_viewer/projects/avisualizer/` | `8090` |
+| **Viewer** ("avisualizer") | The 3D machine viewer. Shows the Meltio robot (URDF model), sensor point-clouds, menus, and the **in-scene print simulation**. This is the "host" the operator actually looks at. | `apps/dev-host/` | `8090` |
 | **Slicer** | A standalone Python **slicing engine** with its own small 3D web UI. Takes an STL, orients it, slices it into layers, builds a toolpath, and produces G-code. | `_slicer_branch/projects/platform/src/meltio_platform/slicer/` | `8765` |
 
 They are **glued together at runtime**: the viewer embeds the slicer's web UI in
@@ -79,7 +79,7 @@ reveal). Real toolpath animation only happens when the slicer is wired in.
 
 ## 3. The Viewer app (avisualizer)
 
-Root: `urdf_viewer/projects/avisualizer/src/avisualizer/web/`
+Root: `apps/dev-host/src/avisualizer/web/`
 
 ### 3.1 Backend — `app.py`
 FastAPI server. Serves pages and acts as a **same-origin proxy** to the slicer so
@@ -116,15 +116,18 @@ here is the responsibility map by area (approximate line ranges):
 | **Stop-print summary** | 13,941+ | Stop confirmation + the summary modal: `confirmStopPrint()`, `buildPrintStopSummary()`, `openPrintStopSummary()`. |
 | **postMessage bridge** | 7,161+, 7,304+, 16,171+ | Receives `slice-data` (stored in `bridgedSliceData`, sets `bridgedToolpathFresh`), `start-print`, and `dock-ready` from the slicer iframe. |
 
-### 3.3 The `hmi/` vs `viewer/` partition — `static/hmi/`, `static/viewer/`
+### 3.3 The `hmi/` vs `viewer/` partition — repo-root `hmi/`, `viewer/`
 The modular (non-god-file) frontend code is split into two packages with
 CI-enforced boundaries (`tools/check_boundaries.mjs`): **`hmi/` never imports
 `three`**, **`viewer/` never touches the DOM** (except the sanctioned
 `viewer/overlays/` island for 3D→screen projections). As `urdf_viewer.js` is
-carved up, code lands on one side or the other. These directories will hoist to
-the repo root when the FastAPI backend moves to `apps/dev-host/`.
+carved up, code lands on one side or the other. Phase C hoisted both to the
+repo root together with the FastAPI move to `apps/dev-host/`: the dev server
+mounts them at `/hmi` and `/viewer`, the app entry imports them with
+root-absolute specifiers ("/hmi/…"), and `build.mjs` resolves those through
+its root-absolute esbuild plugin.
 
-`static/hmi/` — UI-side (DOM, host state, transports):
+`hmi/` (repo root) — UI-side (DOM, host state, transports):
 - **`ports/machineLink.js`** — the live-machine HTTP transport (`?machine=1`);
   polls `/api/machine/state`, sends commands, falls back to the local mock.
 - **`ports/slicerClient.js`** — HTTP client to the slicer backend
@@ -153,7 +156,7 @@ the repo root when the FastAPI backend moves to `apps/dev-host/`.
 - **`permissions.js`**, **`error_codes.js`**, **`i18n/`** — sign-in/roles UI,
   fault-code catalog, translations (classic scripts / DOM hydration).
 
-`static/viewer/` — scene-side (Three.js, no DOM):
+`viewer/` (repo root) — scene-side (Three.js, no DOM):
 - **`sim/printSimulation.js`** — the print-animation controller.
   `createPrintSimulation(context)` returns `{prepare, play, pause, reset,
   setProgress, …}`. Handles the two reveal modes (real toolpath vs. clip-plane
@@ -303,7 +306,7 @@ Two servers, wired by env vars. From memory of the working setup:
 
 ```bash
 # Viewer — port 8090 (uses .venv)
-#   run from urdf_viewer/projects/avisualizer, with AVIS_SLICER_URL / AVIS_SLICER_UI_URL
+#   run from apps/dev-host, with AVIS_SLICER_URL / AVIS_SLICER_UI_URL
 #   pointing at the slicer below. Open http://localhost:8090/urdf
 
 # Slicer — port 8765 (uses venv311, from _slicer_branch)

@@ -16,7 +16,7 @@ $Root = $PSScriptRoot
 
 # --- Paths (all relative to this repo folder, so the launcher is portable) ---
 $SlicerSrc = Join-Path $Root "_slicer_branch\projects\platform\src"
-$AvisSrc   = Join-Path $Root "urdf_viewer\projects\avisualizer\src"
+$AvisSrc   = Join-Path $Root "apps\dev-host\src"
 $PyViewer  = Join-Path $Root ".venv\Scripts\python.exe"      # viewer venv
 $PySlicer  = Join-Path $Root "venv311\Scripts\python.exe"    # slicer venv (Py 3.11)
 

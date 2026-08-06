@@ -14,7 +14,7 @@ import {
   hotspotMaterialAssignments,
   setSelectedPrintJobUsage,
   formatGramsText,
-} from "../../src/avisualizer/web/static/hmi/state/materialsState.js";
+} from "../../hmi/state/materialsState.js";
 
 test("setSpoolAmountState sets manual amount and resets usage", () => {
   setSpoolAmountState("spool1", 1200);

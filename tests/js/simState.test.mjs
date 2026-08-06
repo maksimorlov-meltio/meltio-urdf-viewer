@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import {
   SimState,
   createSimStateMachine,
-} from "../../src/avisualizer/web/static/viewer/sim/simState.js";
+} from "../../viewer/sim/simState.js";
 
 test("starts idle and is not active", () => {
   const sim = createSimStateMachine();
