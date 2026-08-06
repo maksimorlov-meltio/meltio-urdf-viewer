@@ -28,6 +28,7 @@ import { createPrintSimulation } from "/viewer/sim/printSimulation.js";
 import { createSlicerClient } from "/hmi/ports/slicerClient.js";
 import { createMachineLink } from "/hmi/ports/machineLink.js";
 import { createPrePrintCheck } from "/hmi/prePrintCheck.js";
+import { createBoundedQueue } from "/hmi/boundedQueue.js";
 import { createDustExhaust } from "/viewer/effects/dustExhaust.js";
 import { createChamberInert } from "/viewer/effects/chamberInert.js";
 import { t, applyDomTranslations, getLocale } from "/hmi/i18n/index.js";
@@ -845,7 +846,6 @@ let numericKeypadInputEl = null;
 // reopens where they left it. Null → the default center-slightly-right spot (CSS).
 let numericKeypadPos = null;
 const cloudFileThumbPreviewCache = new Map();
-const cloudFileThumbPreviewPending = new Map();
 let cloudFileThumbPreviewRenderer = null;
 let cloudFileThumbPreviewScene = null;
 let cloudFileThumbPreviewCamera = null;
@@ -6884,27 +6884,42 @@ async function renderCloudThumbPreviewForEntry(entry) {
   return dataUrl;
 }
 
+// Thumbnail generation is bounded on both axes (finding REN-2). Rendering the
+// list used to schedule one immediately per cache miss, so N files meant N
+// concurrent STL downloads + WebGL renders, and each completion called
+// renderCloudFileLibrary() — N full re-renders of the list, O(N^2) work for a
+// result the operator sees once.
+const cloudThumbQueue = createBoundedQueue(3);
+let cloudThumbRerenderQueued = false;
+
+// Coalesce: many thumbnails landing in the same frame produce ONE re-render.
+function requestCloudFileLibraryRerender() {
+  if (cloudThumbRerenderQueued) {
+    return;
+  }
+  cloudThumbRerenderQueued = true;
+  window.requestAnimationFrame(() => {
+    cloudThumbRerenderQueued = false;
+    renderCloudFileLibrary();
+  });
+}
+
 function scheduleCloudThumbPreview(entry) {
   const key = getCloudThumbPreviewKey(entry);
-  if (!key || cloudFileThumbPreviewCache.has(key) || cloudFileThumbPreviewPending.has(key)) {
+  if (!key || cloudFileThumbPreviewCache.has(key)) {
     return;
   }
 
-  const pendingPromise = (async () => {
-    try {
-      const imageDataUrl = await renderCloudThumbPreviewForEntry(entry);
-      if (imageDataUrl) {
-        cloudFileThumbPreviewCache.set(key, imageDataUrl);
-      }
-    } catch (_error) {
-      // Keep fallback icon if preview generation fails for a file.
-    } finally {
-      cloudFileThumbPreviewPending.delete(key);
-      renderCloudFileLibrary();
+  cloudThumbQueue.push(key, async () => {
+    const imageDataUrl = await renderCloudThumbPreviewForEntry(entry);
+    if (imageDataUrl) {
+      cloudFileThumbPreviewCache.set(key, imageDataUrl);
     }
-  })();
-
-  cloudFileThumbPreviewPending.set(key, pendingPromise);
+  }, {
+    // Rendering the list again while this one waited may have resolved it.
+    skipIf: () => cloudFileThumbPreviewCache.has(key),
+    onSettled: requestCloudFileLibraryRerender,
+  });
 }
 
 function applyCloudThumbStyle(thumbEl, entry) {
