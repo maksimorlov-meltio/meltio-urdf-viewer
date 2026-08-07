@@ -188,9 +188,7 @@ const lightModeToggleEl = document.getElementById("lightModeToggle");
 const controlsPanelEl = document.getElementById("controlsPanel");
 const controlsPanelCloseEl = document.getElementById("controlsPanelClose");
 const controlsSidebarToggleEl = document.getElementById("controlsSidebarToggle");
-const navControlsToggleEl = document.getElementById("navControlsToggle");
 const navDoorToggleEl = document.getElementById("navDoorToggle");
-const navLightToggleEl = document.getElementById("navLightToggle");
 const navMaterialsToggleEl = document.getElementById("navMaterialsToggle");
 const navFilesToggleEl = document.getElementById("navFilesToggle");
 const navPlayToggleEl = document.getElementById("navPlayToggle");
@@ -225,7 +223,6 @@ const feederDriveRightEl = document.getElementById("feederDriveRight");
 const feederDriveUpEl = document.getElementById("feederDriveUp");
 const feederDriveDownEl = document.getElementById("feederDriveDown");
 const feederCameraAnchorLeftEl = document.getElementById("feederCameraAnchorLeft");
-const feederCameraAnchorRightEl = document.getElementById("feederCameraAnchorRight");
 // Controls ▸ Feeder panel per-wheel jog (replaces the old wheel-switch + single
 // Up/Stop/Down "Feeder Drive"). Each button is a TOGGLE: click drives that
 // wheel, clicking the active one again stops it (see the click wiring below).
@@ -1295,7 +1292,6 @@ function updateFeederCameraAnchorButtons() {
   );
   const buttonConfigs = [
     [feederCameraAnchorLeftEl, "left"],
-    [feederCameraAnchorRightEl, "right"],
   ];
 
   for (const [buttonEl, side] of buttonConfigs) {
@@ -10122,11 +10118,6 @@ function updateBottomNavState() {
   // Materials + Files are hidden and the Slicer button is shown instead.
   const dockedPrint = filesListCollapsedForPrint;
 
-  if (navControlsToggleEl) {
-    navControlsToggleEl.setAttribute("aria-pressed", isControlsPanelOpen ? "true" : "false");
-    navControlsToggleEl.classList.toggle("is-active", isControlsPanelOpen);
-  }
-
   if (navFilesToggleEl) {
     const navFilesIconEl = navFilesToggleEl.querySelector("svg");
     const navFilesLabelEl = navFilesToggleEl.querySelector("span");
@@ -10806,13 +10797,6 @@ if (window.MeltioPermissions && typeof window.MeltioPermissions.onChange === "fu
   window.MeltioPermissions.onChange(() => updateFeederCameraAnchorButtons());
 }
 
-if (feederCameraAnchorRightEl) {
-  feederCameraAnchorRightEl.addEventListener("click", () => {
-    markUserActivity();
-    focusFeederCameraAnchor("right");
-  });
-}
-
 if (wireDrumAppearButtonEl) {
   wireDrumAppearButtonEl.addEventListener("click", () => {
     triggerWireDrumAppearance();
@@ -11150,21 +11134,6 @@ document.addEventListener("click", (event) => {
     notificationsUi.clearToasts();
   }
 }, true);
-
-if (navControlsToggleEl) {
-  navControlsToggleEl.addEventListener("click", () => {
-    markUserActivity();
-    const nextIsOpen = !isControlsPanelOpen;
-    // While a print is docked, the "cloud menu" hosts the print controls — closing
-    // it would un-dock the print and strand the operator (no Slicer/Stop bar). So
-    // only clear the Files/Materials menus when opening Controls outside a print.
-    if (nextIsOpen && !filesListCollapsedForPrint) {
-      setCloudModelMenuOpen(false, { skipResetOnClose: true });
-      setMaterialsMenuOpen(false, { skipBottomNavUpdate: true });
-    }
-    setControlsPanelOpen(nextIsOpen);
-  });
-}
 
 if (navFilesToggleEl) {
   navFilesToggleEl.addEventListener("click", () => {
