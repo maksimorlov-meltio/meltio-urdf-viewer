@@ -147,6 +147,24 @@ def _load_command_levels() -> dict[str, str]:
 
 COMMAND_LEVELS = _load_command_levels()
 
+# Hard-wired floor for the two commands that STOP a machine, used ONLY when the
+# contract could not be read at all (ARQ-1(b)).
+#
+# _load_command_levels() returns {} on an unreadable contract.json and every
+# command is then refused with a 400 — correct for `arm` or `jog`, and exactly
+# wrong for the two that make a running machine stop. One stray comma in a JSON
+# file and the app still boots, the UI still loads, and STOP answers 400: alive
+# and rejecting the safety action, which is the failure mode the watchdog does
+# not cover because the software never died.
+#
+# The levels match contract.json's own, so this changes NOTHING while the
+# contract is readable — verified by a test that compares the two.
+SAFETY_FLOOR_LEVELS = {
+    "emergencyStop": "none", "ESTOP": "none",
+    "stopPrint": "operator", "STOP": "operator",
+    "pausePrint": "operator", "PAUSE": "operator",
+}
+
 # Optional external slicer (aslicer) integration. Disabled unless AVIS_SLICER_URL
 # is set, so the viewer runs fully standalone by default. See docs/PRINT_SIM.md.
 SLICER_MULTIPART_BOUNDARY = "----avisualizerSlicerBoundary"
@@ -662,8 +680,15 @@ def create_app() -> FastAPI:
 
     def _command_level(command: str) -> str | None:
         """The sign-in level contract.json requires for this command (by canonical
-        name or legacy alias), or None when the command is not declared."""
-        return COMMAND_LEVELS.get(command)
+        name or legacy alias), or None when the command is not declared.
+
+        Falls back to SAFETY_FLOOR_LEVELS when the contract could not be read at
+        all — see the comment on that constant. Everything else stays undeclared
+        and is refused, which is the fail-closed half."""
+        level = COMMAND_LEVELS.get(command)
+        if level is None and not COMMAND_LEVELS:
+            return SAFETY_FLOOR_LEVELS.get(command)
+        return level
 
     def _rotate_command_audit_if_needed(audit_path: Path) -> None:
         """Keep the trail to two files of at most COMMAND_AUDIT_MAX_BYTES each.
