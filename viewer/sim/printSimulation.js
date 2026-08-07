@@ -519,6 +519,12 @@ export function createPrintSimulation(context) {
     toolpathTubeObject = null;
     toolpathBuffers = null;
     toolpathTubeBuffers = null;
+    // The 1x duration belonged to THAT toolpath. Leaving it behind meant the
+    // next print inherited the previous part's pacing: setupToolpathSource only
+    // assigns it when the slicer supplies a speed, so a clip-plane preview after
+    // a real toolpath ran at the old part's seconds-per-print. It is also half
+    // of getStats()'s answer, so a stale value survived into the summary.
+    printSecondsAt1x = null;
   }
 
   // ---- Progress application -----------------------------------------------
@@ -801,7 +807,45 @@ export function createPrintSimulation(context) {
   // time, path length, deposited height, and a simulated thermal summary
   // (peak / average relative heat 0..1 + the hottest layer). Best-effort; any
   // field is null when the underlying data is absent.
+  //
+  // MEMOIZED (finding REN-1), because this is not the once-per-print call its
+  // name suggests: updateTopbarPrintProgress reaches it from animate(), so it
+  // ran every frame while a print was on screen. It walks the whole position
+  // array for the height AND every thermal segment for the heat summary —
+  // measured at 3.4 ms median for a 100k-segment part, on a 16 ms budget.
+  //
+  // Turning the Thermal view off does not avoid the cost: the walk reads the
+  // raw payload through getSlicerThermal(), not the rendered buffers. And the
+  // payload is always there after a cut, because the slicer's only cut button
+  // is "Slice + Simulate" (its `simulateButton` ships disabled + hidden).
+  //
+  // The cache key is the four inputs by IDENTITY, not a dirty flag: buffers and
+  // thermal payload are replaced wholesale by setupToolpathSource, so a stale
+  // read is impossible without a new object to notice. No invalidation to
+  // forget — the same argument as printFlowState's derived predicate.
+  let statsCache = null;
+
   function getStats() {
+    const thermalPayloadForKey = typeof getSlicerThermal === "function" ? getSlicerThermal() : null;
+    if (statsCache
+        && statsCache.buffers === toolpathBuffers
+        && statsCache.thermalPayload === thermalPayloadForKey
+        && statsCache.source === source
+        && statsCache.printSeconds === printSecondsAt1x) {
+      return statsCache.value;
+    }
+    const value = computeStats(thermalPayloadForKey);
+    statsCache = {
+      buffers: toolpathBuffers,
+      thermalPayload: thermalPayloadForKey,
+      source,
+      printSeconds: printSecondsAt1x,
+      value,
+    };
+    return value;
+  }
+
+  function computeStats(thermalPayload) {
     const tp = toolpathBuffers || null;
     const layerCount = tp && Number.isFinite(tp.layerCount) ? tp.layerCount : null;
     const pathLengthMm = tp && Number.isFinite(tp.pathLengthMm) ? tp.pathLengthMm : null;
@@ -820,7 +864,6 @@ export function createPrintSimulation(context) {
     }
 
     let thermal = null;
-    const thermalPayload = typeof getSlicerThermal === "function" ? getSlicerThermal() : null;
     const segs = Array.isArray(thermalPayload?.segments) ? thermalPayload.segments : [];
     if (segs.length) {
       let peak = 0, sum = 0, n = 0;
