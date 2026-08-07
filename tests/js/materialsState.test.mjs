@@ -19,6 +19,7 @@ import {
   MATERIAL_FEEDSTOCK_KEYS,
   DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY,
   lastPrintUsedGramsBySpool,
+  materialUsageLog,
   buildPersistedMaterialsState,
   restorePersistedMaterialsState,
 } from "../../hmi/state/materialsState.js";
@@ -167,8 +168,18 @@ test("persist -> wipe -> restore round-trips every feedstock", () => {
   };
   try {
     seedDistinctPerFeedstock();
+    materialUsageLog.length = 0;
+    materialUsageLog.push({ ts: 1, spoolKey: "spool1", materialId: "ti64", grams: 11, kind: "print" });
     const before = buildPersistedMaterialsState();
     window.localStorage.setItem("avisualizer.materials.state.v1", JSON.stringify(before));
+
+    // The log is wiped to something LONGER and different, so a restore that
+    // appends instead of replacing shows up as the wrong length. That is the
+    // one hazard in turning this from `export let` into an in-place const:
+    // hmi/materials.js renders it by reference and would never see a reassign.
+    materialUsageLog.length = 0;
+    materialUsageLog.push({ ts: 7, spoolKey: "spool2", materialId: "ti64", grams: 70, kind: "stopped" },
+                          { ts: 8, spoolKey: "spool2", materialId: "ti64", grams: 80, kind: "print" });
 
     for (const key of MATERIAL_FEEDSTOCK_KEYS) {
       hotspotMaterialAssignments[key] = null;
@@ -180,6 +191,8 @@ test("persist -> wipe -> restore round-trips every feedstock", () => {
 
     assert.equal(restorePersistedMaterialsState(), true);
     assert.deepEqual(buildPersistedMaterialsState().manualAmounts, before.manualAmounts);
+    assert.deepEqual(materialUsageLog, [{ ts: 1, spoolKey: "spool1", materialId: "ti64", grams: 11, kind: "print" }],
+      "the usage log was appended to, not replaced");
     MATERIAL_FEEDSTOCK_KEYS.forEach((key, i) => {
       assert.equal(hotspotMaterialAssignments[key], MARKERS[i % MARKERS.length], key);
       assert.equal(spoolManualAmountGramsByKey[key], 1000 + i, key);
