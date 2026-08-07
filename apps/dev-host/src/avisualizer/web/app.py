@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import threading
 from typing import Literal
 import urllib.error
 import urllib.request
@@ -23,6 +24,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from .services.atomic_file import write_text_atomic
 from .services.machine_controlservice import ControlServiceMachine
 from .services.machine_mock import get_machine as _get_mock_machine
 from .services.sensor_pointcloud import load_attribute_series, load_sensor_pointcloud
@@ -69,6 +71,10 @@ LEVEL_RANK = {"none": 0, "operator": 1, "operatorPlus": 2, "support": 3, "god": 
 # Append-only JSON-lines audit trail of accepted machine commands (who/when/what),
 # written under DATABASE_ROOT so it moves with the data dir (and tests redirect it).
 COMMAND_AUDIT_LOG_NAME = "command_audit.log"
+# Serialises the read-modify-write in PUT /api/permissions/config. In-process
+# only: the second writer, tools/set_password.py, is a separate process and is
+# made safe by the atomic write instead.
+_PERMISSIONS_WRITE_LOCK = threading.Lock()
 
 # Roles served when no permissions.json exists yet (a fresh clone: the data dir
 # is gitignored). Without this the console has no roles to show, no rank to
@@ -527,20 +533,43 @@ def create_app() -> FastAPI:
     # to the browser is stripped of auth secrets (salt/passwordHash). UI gating
     # by the returned mode level remains a client-side convenience, but login now
     # actually validates server-side.
-    def _load_permissions_doc() -> dict:
+    # Absent and unreadable used to share a `return` (finding SEG-4), and they
+    # are not the same event at all:
+    #
+    #   ABSENT   — a fresh clone. The built-in roles are the right answer: the
+    #              console needs ranks to authorise against, there are no users,
+    #              so it grants nobody anything until set_password.py --create.
+    #   CORRUPT  — a document exists and cannot be trusted. Substituting the
+    #              built-ins here FAILS OPEN: an administrator who lowered a
+    #              built-in role's rank has that restriction silently undone by
+    #              a truncated write. The safe answer is a store with no roles
+    #              and no users, so every rank lookup misses and every
+    #              capability check denies. `emergencyStop` is declared at level
+    #              `none` in contract.json and stays allowed, which is exactly
+    #              the right thing to keep working when authorisation is broken.
+    #
+    # `_permissions_store_readable` lets callers that MUTATE the document refuse
+    # rather than merge onto an empty one — see put_permissions_config.
+    _EMPTY_PERMISSIONS_DOC = {"roles": [], "users": []}
+
+    def _read_permissions_store() -> tuple[dict, bool]:
+        """Returns (document, is_trustworthy)."""
+        if not PERMISSIONS_STORE.exists():
+            return json.loads(json.dumps(DEFAULT_PERMISSIONS_DOC)), True
         try:
-            if PERMISSIONS_STORE.exists():
-                doc = json.loads(PERMISSIONS_STORE.read_text(encoding="utf-8"))
-                if isinstance(doc, dict) and doc.get("roles"):
-                    return doc
-                log.warning("%s has no roles; serving the built-in ones", PERMISSIONS_STORE)
+            doc = json.loads(PERMISSIONS_STORE.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
-            log.warning("could not read %s (%s); serving the built-in roles",
-                        PERMISSIONS_STORE, exc)
-        # No store yet (fresh clone) or an unusable one: fall back to the built-in
-        # roles so the console has ranks to authorise against. No users, so this
-        # grants nobody anything until an operator is provisioned.
-        return json.loads(json.dumps(DEFAULT_PERMISSIONS_DOC))
+            log.error("%s is unreadable (%s); refusing every authorisation until "
+                      "it is repaired or removed", PERMISSIONS_STORE, exc)
+            return json.loads(json.dumps(_EMPTY_PERMISSIONS_DOC)), False
+        if not isinstance(doc, dict) or not isinstance(doc.get("roles"), list) or not doc.get("roles"):
+            log.error("%s has no usable roles; refusing every authorisation until "
+                      "it is repaired or removed", PERMISSIONS_STORE)
+            return json.loads(json.dumps(_EMPTY_PERMISSIONS_DOC)), False
+        return doc, True
+
+    def _load_permissions_doc() -> dict:
+        return _read_permissions_store()[0]
 
     # Allowlists, not denylists. The previous version copied the document and
     # stripped two known-secret keys from `users`, so any future secret — in a
@@ -749,30 +778,56 @@ def create_app() -> FastAPI:
                 status_code=400,
                 detail="Body must carry 'roles' and/or 'users'; refusing to empty the store",
             )
-        # The client never holds password hashes, so merge incoming users onto the
-        # stored ones to PRESERVE each user's salt/passwordHash (a naive overwrite
-        # would wipe every credential). Roles/matrix are replaced as sent.
-        existing = _load_permissions_doc()
-        existing_users = {u.get("id"): u for u in existing.get("users", []) or [] if isinstance(u, dict)}
-        merged_users = []
-        for user in data.get("users", []) or []:
-            if not isinstance(user, dict):
-                continue
-            prev = existing_users.get(user.get("id"), {})
-            merged = dict(prev)
-            merged.update({k: v for k, v in user.items() if k not in ("salt", "passwordHash")})
-            merged_users.append(merged)
-        if merged_users or "users" in data:
-            data = dict(data)
-            data["users"] = merged_users
-        serialized = json.dumps(data, indent=2)
-        if len(serialized.encode("utf-8")) > 512 * 1024:
-            raise HTTPException(status_code=413, detail="Permissions document too large")
-        try:
-            PERMISSIONS_STORE.parent.mkdir(parents=True, exist_ok=True)
-            PERMISSIONS_STORE.write_text(serialized, encoding="utf-8")
-        except OSError as exc:
-            raise HTTPException(status_code=500, detail=f"Could not save permissions: {exc}") from exc
+        # One writer at a time. This is a read-modify-write over a file that two
+        # processes already share (this route and tools/set_password.py), so two
+        # concurrent admins would each merge onto the document the other had not
+        # written yet and the later save would silently drop the earlier one.
+        # The lock only covers this process; the atomic write below is what
+        # makes the set_password.py case safe.
+        with _PERMISSIONS_WRITE_LOCK:
+            existing, trustworthy = _read_permissions_store()
+            # A TOCTOU backstop, and worth saying plainly that it is one: with a
+            # corrupt store _require_permission above already denies (no roles
+            # resolve, so no caller has admin.users), so on the nominal path
+            # this never fires. What it covers is the store going bad BETWEEN
+            # that check's read and this one — a set_password.py run, or the
+            # power cut that motivated the atomic write.
+            #
+            # It earns its place because of what the merge below does: it
+            # preserves each user's salt/passwordHash by reading them from
+            # `existing`. If `existing` came back empty the merge would write a
+            # document with EVERY CREDENTIAL GONE, turning a recoverable corrupt
+            # file into a permanently locked-out machine on the first save.
+            if not trustworthy:
+                raise HTTPException(
+                    status_code=409,
+                    detail=("The permissions store is unreadable; refusing to overwrite it. "
+                            "Repair or delete it and re-create the first account with "
+                            "tools/set_password.py --create."),
+                )
+            # The client never holds password hashes, so merge incoming users onto
+            # the stored ones to PRESERVE each user's salt/passwordHash (a naive
+            # overwrite would wipe every credential). Roles/matrix are replaced as
+            # sent.
+            existing_users = {u.get("id"): u for u in existing.get("users", []) or [] if isinstance(u, dict)}
+            merged_users = []
+            for user in data.get("users", []) or []:
+                if not isinstance(user, dict):
+                    continue
+                prev = existing_users.get(user.get("id"), {})
+                merged = dict(prev)
+                merged.update({k: v for k, v in user.items() if k not in ("salt", "passwordHash")})
+                merged_users.append(merged)
+            if merged_users or "users" in data:
+                data = dict(data)
+                data["users"] = merged_users
+            serialized = json.dumps(data, indent=2)
+            if len(serialized.encode("utf-8")) > 512 * 1024:
+                raise HTTPException(status_code=413, detail="Permissions document too large")
+            try:
+                write_text_atomic(PERMISSIONS_STORE, serialized)
+            except OSError as exc:
+                raise HTTPException(status_code=500, detail=f"Could not save permissions: {exc}") from exc
         return {"ok": True}
 
     # --- Machine error/warning code catalog -----------------------------------

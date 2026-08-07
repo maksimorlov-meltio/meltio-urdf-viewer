@@ -148,6 +148,16 @@ the browser) are managed out-of-band:
 .\.venv\Scripts\python.exe apps/dev-host/tools/set_password.py --username <user>
 ```
 
+**If `permissions.json` is unreadable, this CLI is the only way back in.** The
+backend distinguishes *absent* (fresh clone → built-in roles, no users) from
+*corrupt* (→ **no roles and no users**, so every rank lookup misses and every
+capability check denies; `emergencyStop` is level `none` and keeps working).
+That means nobody can sign in, so the admin UI cannot be opened to repair it,
+and the save route refuses to overwrite a corrupt document rather than merge
+onto nothing and wipe every credential. Recovery is: look at the file, then
+either restore it or delete it and re-run `--create`. The server logs
+`is unreadable` at ERROR when this happens — that line is the diagnosis.
+
 ## Non-obvious operational facts
 
 - **Static assets are cache-busted with a `?v=` query in the HTML.** Edit CSS/JS and forget

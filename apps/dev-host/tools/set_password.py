@@ -40,6 +40,7 @@ import secrets
 from pathlib import Path
 
 from avisualizer.web.app import DEFAULT_PERMISSIONS_DOC, PERMISSIONS_STORE
+from avisualizer.web.services.atomic_file import write_text_atomic
 
 
 # app.py's _hash_password is nested inside create_app(); replicate the exact
@@ -117,8 +118,11 @@ def main() -> int:
         match["salt"] = salt_hex
         match["passwordHash"] = _hash_password(password, salt_hex)
 
-    store.parent.mkdir(parents=True, exist_ok=True)
-    store.write_text(json.dumps(doc, indent=2, ensure_ascii=False), encoding="utf-8")
+    # Atomic, same as the server's own writer (SEG-4). This is the SECOND,
+    # uncoordinated writer of the authorization store: it can run while the
+    # console is up, so a plain write_text would let the running server read a
+    # half-written document and authorise against it.
+    write_text_atomic(store, json.dumps(doc, indent=2, ensure_ascii=False))
     action = "Removed" if args.delete else "Saved"
     print(f"{action} credential for '{args.username}' in {store}")
     return 0
