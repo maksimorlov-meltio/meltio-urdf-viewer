@@ -628,6 +628,15 @@ def create_app() -> FastAPI:
             return None
         return session["operator"]
 
+    def _rank_of(operator: dict | None) -> int:
+        """The sign-in level an operator's role carries, as machine_command reads
+        it. Signed out, or a role that no longer resolves, is rank 0."""
+        role = _role_for(_load_permissions_doc(), (operator or {}).get("roleId")) or {}
+        try:
+            return int(role.get("rank") or 0)
+        except (TypeError, ValueError):
+            return 0
+
     def _require_permission(request: Request, permission: str) -> dict:
         """Authenticate + authorise by capability key, or raise. This is the one
         place privileged non-command endpoints go through — before it existed,
@@ -769,8 +778,32 @@ def create_app() -> FastAPI:
         # and capability keys, and the credentials of every operator. It was
         # writable anonymously — `PUT {}` left it as `{}` and locked everyone
         # out, and adding a permission to a role escalated at will (SEG-1).
-        _require_permission(request, ADMIN_PERMISSION)
+        operator = _require_permission(request, ADMIN_PERMISSION)
         data = payload if isinstance(payload, dict) else {}
+        # `rank` decides machine authority server-side, and as of this release
+        # the admin UI can edit it (SEG-1 — it used to be invisible AND wired to
+        # a constant, so the matrix an administrator read did not describe what
+        # the machine would accept). An editable field that authorises has to be
+        # validated where it is enforced, not where it is typed.
+        caller_rank = _rank_of(operator)
+        for role in data.get("roles", []) or []:
+            if not isinstance(role, dict) or "rank" not in role:
+                continue
+            rank = role.get("rank")
+            # bool is an int in Python, and `True` would sail through as rank 1.
+            if isinstance(rank, bool) or not isinstance(rank, int) or not 1 <= rank <= 4:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Role '{role.get('id') or role.get('name')}': rank must be an integer 1-4",
+                )
+            # No minting a level above your own. Without this an Administrator
+            # is the ceiling only by convention, and any future rank above 4
+            # becomes reachable from a rank-4 session.
+            if rank > caller_rank:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Cannot grant level {rank}: it is above your own ({caller_rank})",
+                )
         # A body carrying neither roles nor users is a no-op, not "replace the
         # document with nothing". Refuse it rather than wiping the store.
         if not isinstance(data.get("roles"), list) and not isinstance(data.get("users"), list):

@@ -507,12 +507,46 @@
     wrap.appendChild(table);
     return wrap;
   }
+  // The four sign-in levels a role's `rank` can hold, in the same order and with
+  // the same numbers as the backend's LEVEL_RANK and contract.json's
+  // permissionLevels. Machine commands are authorised against THIS, not against
+  // the capability matrix.
+  const RANK_LEVELS = [
+    { rank: 1, label: "1 — Operator" },
+    { rank: 2, label: "2 — Operator+" },
+    { rank: 3, label: "3 — Meltio Support" },
+    { rank: 4, label: "4 — Administrator" },
+  ];
+
   function renderRoles(rerender) {
     const wrap = h("div", { class: "perm-list" });
+    // SEG-1: the matrix below this list gates UI capabilities, but every MACHINE
+    // command is authorised server-side against a role's `rank` — a number the
+    // administrator could not see and could not set. A role with no capability
+    // ticked could still start a print, and its own screen said otherwise.
+    wrap.appendChild(h("p", { class: "perm-modal-note" },
+      "A mode's LEVEL is what authorises machine commands (arm, home, jog, start "
+      + "print) on the machine itself. The capability matrix below controls which "
+      + "buttons this console shows. They are separate: raising the level grants "
+      + "machine authority even with no capability ticked."));
     for (const role of config.roles) {
+      const rankSelect = h("select", {
+        class: "perm-inline-input perm-rank-select",
+        "aria-label": `Level for ${role.name}`,
+        // Built-in ranks are fixed for the same reason built-in names are: they
+        // are what contract.json's permission levels are written against.
+        disabled: role.builtin ? true : false,
+        onchange: (e) => { role.rank = Number(e.target.value); },
+      });
+      for (const level of RANK_LEVELS) {
+        const option = h("option", { value: String(level.rank) }, level.label);
+        if (Number(role.rank) === level.rank) option.selected = true;
+        rankSelect.appendChild(option);
+      }
       wrap.appendChild(h("div", { class: "perm-list-row" },
         h("input", { class: "perm-inline-input", type: "text", value: role.name, disabled: role.builtin ? true : false,
           onchange: (e) => { role.name = e.target.value.trim() || role.name; } }),
+        rankSelect,
         h("span", { class: "perm-badge" }, role.builtin ? "built-in" : "custom"),
         role.builtin ? null : h("button", { class: "perm-btn-danger", type: "button",
           onclick: () => { config.roles = config.roles.filter((r) => r.id !== role.id); rerender(); } }, "Delete")));
