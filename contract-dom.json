@@ -767,6 +767,7 @@
       ],
       "requiredDomIds": [],
       "injectedDeps": [
+        "applyUiSelection",
         "getUiSelection",
         "onUsageChanged",
         "resetUsage"
@@ -777,7 +778,10 @@
         "initPrintFlowState"
       ],
       "requiredDomIds": [],
-      "injectedDeps": []
+      "injectedDeps": [
+        "getMachineLink",
+        "isInertPurging"
+      ]
     },
     "hmi/utilities.js": {
       "entryPoints": [
