@@ -189,7 +189,15 @@ export function createMachineLink(options = {}) {
         body: JSON.stringify({ id, command, args, ts: undefined }),
         signal: controller.signal,
       });
-      if (!res.ok) throw new Error(`command HTTP ${res.status}`);
+      if (!res.ok) {
+        // Carry the status as a field, not only inside the message. Call sites
+        // need to tell "you are not signed in" from "the machine refused"
+        // before they put anything in front of an operator, and sniffing a
+        // substring out of an error message is not a way to decide that.
+        const httpError = new Error(`command HTTP ${res.status}`);
+        httpError.status = res.status;
+        throw httpError;
+      }
       const ack = await res.json();
       if (!ack || ack.accepted !== true) {
         throw new Error(ack && ack.reason ? ack.reason : "command rejected");
