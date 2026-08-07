@@ -564,7 +564,7 @@ Las tablas del Apéndice A y de §5 están actualizadas con este resultado. **Ni
 
 ### 8.3 Estado de ejecución
 
-Existe un plan de mejora por fases derivado de este informe (7 fases, ~21 PRs, más una puerta con criterio de entrada a hardware que agrupa las precondiciones de §7.1). Lo ejecutado hasta ahora, una rama por PR:
+Existe un plan de mejora por fases derivado de este informe (7 fases, más una puerta con criterio de entrada a hardware que agrupa las precondiciones de §7.1). **Ejecutado: 23 PRs**, de `319406e` a `33a9263`, una rama por PR:
 
 | PR | Cierra | Estado |
 |---|---|---|
@@ -576,7 +576,17 @@ Existe un plan de mejora por fases derivado de este informe (7 fases, ~21 PRs, m
 | Fase 1.3 — documentación | ARQ-5 | §3.3.1 de `ARCHITECTURE.md` para el bus de globales. ARQ-5 no necesitaba arreglo: ver corrección 5 |
 | Fase 1.4 — puerta 3 inversa | N-C6 | La puerta contrasta ahora el contrato contra el código, no solo el código contra el contrato: **todo alias declarado debe emitirse**. Verde sin sembrar excepciones. La formulación que pedía el plan (*todo `permission:"none"` debe emitirse*) se descartó al llegar en rojo con once excepciones que sembrar |
 
-Cada PR se verificó con las nueve puertas, `pytest apps/dev-host/tests` y el boot check; los que tocan módulos publicados, además contra el artefacto generado.
+| Fase 3 — reconciliación de estado | **N-C3**, puerta H nº 1 | El predicado derivado (`isPrintSessionActive`) y sus cuatro puntos de aplicación. Corrección 1 confirmada al hacerlo: reconciliar el flag no habría bastado. Verificado con un escenario CDP contra la página real — 7 aciertos aquí, 5 fallos contra `main`, incluido «al pulsar el botón abre la confirmación, no la puerta» |
+| Fases 2.2-2.6 — arreglos baratos | REN-1, COD-2, REN-3, N-B2, COD-1, N-B1, N-B4, residuo de N-C4 | `getStats()` memoizado (3,4 ms por frame → una lectura por payload); poda de toasts y corte del re-render de 5 s; **213 → 0** registros de mutación en el chip de cuenta, medido por CDP; 25 líneas inalcanzables borradas; el Stop rechazado deja de enseñar `HTTP 401` |
+| Fase 4 — código muerto y su puerta | N-B3 y el residuo de COD-3 | **623 líneas que no podían ejecutarse** (ViewCube, wire drum de Materials, once ids `hotspot*`, tres búsquedas más), y el ratchet de búsquedas muertas pasa de vigilar 215 ids a 331: por fin ve el fichero con el 52 % del JS propio |
+| Fases 6.1-6.4 — backend | **SEG-4, SEG-1, N-A1, ARQ-1(b)**; puerta H nº 4, 5 y 6 | Escritura atómica y «corrupto ≠ ausente» en el almacén de autorización; el `rank` visible, editable y validado en servidor; la auditoría acotada (1 MB de petición → 203 bytes) con rotación; suelo cableado para que `STOP`/`ESTOP` sobrevivan a un `contract.json` ilegible |
+| Fase 5.0 — huella de arranque | — | Instrumento, no hallazgo. `check_boot --footprint` / `--expect-footprint` sobre las 331 ids de los contratos. **Sustituye a la comparación por captura que pedía el plan, que no funciona**: dos capturas del mismo código ya difieren |
+
+**La puerta de hardware de §7.1 queda tachada entera.** Las nueve casillas: nº 1 (fase 3), nº 2 retirada por la corrección 4, nº 3 (fase 2.1), nº 4 (6.1), nº 5 (6.2), nº 6 (6.4), nº 7 y nº 8 (1.1), nº 9 (N-C1).
+
+Cada PR se verificó con las nueve puertas, `pytest apps/dev-host/tests` y el boot check; los que tocan módulos publicados, además contra el artefacto generado; los de backend, además con `pytest tests/smoke`.
+
+**Lo que NO se hizo, y por qué no es una omisión de tiempo.** El faseado de `boot()` (fases 5.1-5.4) no se puede ejecutar en el orden que el plan describe. El plan quiere cuatro fases nombradas y una secuencia *listeners → start → módulos → estado*, dejando la arriesgada la tercera. Medido sobre el fichero: **los listeners no son una región contigua** — son tres fragmentos (567, 350 y 108 líneas) separados por tres instanciaciones de módulo que la propia regla de corte del plan prohíbe reordenar. Hacer la fase de listeners primero exige mover antes los módulos, que es justo lo que el plan quería posponer. **La secuencia hay que rediseñarla, no solo ejecutarla.**
 
 ---
 
