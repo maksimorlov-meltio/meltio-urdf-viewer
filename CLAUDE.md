@@ -83,6 +83,23 @@ node tools/check_boot.mjs
 node tools/check_boot.mjs --screenshot boot.png   # 1080x1920, what the operator sees
 ```
 
+**For a refactor that must change nothing** — moving code out of `boot()`, deleting
+something you believe is dead — capture the **DOM footprint** first and assert against
+it after. It is a digest of every id the two contracts enumerate: hidden, display,
+disabled, aria-pressed and the first 40 characters of text, with digits normalised to
+`#` so the clock and the calendar do not make it flap.
+
+```powershell
+node tools/check_boot.mjs --footprint before.txt
+# ...move the code...
+node tools/check_boot.mjs --expect-footprint before.txt
+```
+
+Do **not** try to do this by comparing screenshots: two captures of the same code do
+not match (the topbar clock ticks, swiftshader is not bit-stable). The footprint is
+deterministic — verified — but it cannot see a *number* change value, only a label
+appear, vanish or change wording.
+
 The linter is eslint (`npm run lint`), enforced in CI; there is no formatter. `node --check`
 catches syntax errors but **not** a `getElementById(null).addEventListener` that only
 throws in the browser (see gotchas). After adding/renaming/removing any static JS module,
