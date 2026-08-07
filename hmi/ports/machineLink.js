@@ -8,28 +8,19 @@
 // endpoint (or upgrading the transport to a WebSocket) WITHOUT touching the UI:
 // the contract below is what the M600 adapter must satisfy.
 //
-// ── Protocol contract ──────────────────────────────────────────────────────
-// GET  {base}/api/machine/state  → telemetry snapshot (source of truth):
-//   {
-//     connected: true,
-//     state: "idle|homing|armed|printing|paused|completed|fault|estop",
-//     progress: 0..1, layer: int, layerCount: int,
-//     elapsedSeconds: number, remainingSeconds: number,
-//     position: { x, y, z } | null,        // mm, machine frame
-//     jobId: string|null, program: string|null,
-//     signals: { ...PRINTER_NOTIFICATION_SIGNALS schema... },
-//     activeCodes: [ { class: "error"|"warning", code: "106.1.3" }, ... ],
-//     ts: epoch-ms
-//   }
-// POST {base}/api/machine/command  body: { id, command, args, ts }
-//   → { id, accepted: bool, reason?: string, state: <telemetry.state> }
+// ── Protocol ───────────────────────────────────────────────────────────────
+// HTTP envelope (this file's own business — contract.json is transport-agnostic):
+//   GET  {base}/api/machine/state    → the telemetry snapshot, source of truth
+//   POST {base}/api/machine/command  body { id, command, args, ts }
+//                                    → { id, accepted, reason?, state }
 //
-// Commands (args in parens):
-//   ARM · DISARM · HOME · START_PRINT({jobId, program, estimatedSeconds})
-//   PAUSE · RESUME · STOP · CLEAR_FAULT
-//   ESTOP  — highest priority, must be honored out-of-band even mid-command
-//   JOG({axis:"x|y|z", direction:+1|-1, distanceMm})
-//   FEEDER({action:"side|vertical|stop", side:"left|right"})
+// PAYLOAD SHAPES LIVE IN contract.json, NOT HERE. The snapshot is
+// `channels.shell.hostToUi.messages.machineState.payload`; the command
+// vocabulary this file emits is the SCREAMING `aliases` under
+// `channels.shell.uiToHost.commands`. This used to be a second, hand-kept copy
+// of both, and the copies diverged: the contract said activeCodes was a string
+// array while this file said objects, and only one of the two matched the code
+// twenty lines below. One description or none.
 //
 // SAFETY: the console is an operator aid, NOT a safety controller. A software
 // ESTOP here is a request; the machine's hardware E-stop and interlocks are the
@@ -109,7 +100,18 @@ export function createMachineLink(options = {}) {
     if (!errs || typeof errs.raise !== "function") return;
     const nextKeys = new Set();
     for (const item of active) {
-      if (!item || !item.code) continue;
+      // A mute `continue` here is how ARQ-3 stayed invisible: contract.json used
+      // to declare activeCodes as `string[]`, so a host that read the contract
+      // sent strings, every entry fell through this guard, and the console
+      // showed zero faults for a machine reporting them. Nothing logged, nothing
+      // raised. The contract now declares the object form — this warns about the
+      // discrepancy instead of swallowing it. Deliberately NOT accepting a bare
+      // string "defensively": two accepted shapes is two shapes for ever.
+      // console.warn, not error: check_boot.mjs fails only on console.error.
+      if (!item || typeof item !== "object" || !item.code) {
+        console.warn(`[machineLink] ignoring malformed activeCodes entry (expected {class, code}): ${JSON.stringify(item)}`);
+        continue;
+      }
       const cls = item.class === "error" ? "error" : "warning";
       const key = `${cls}:${item.code}`;
       nextKeys.add(key);
@@ -203,10 +205,9 @@ export function createMachineLink(options = {}) {
     }
   }
 
-  // Convenience wrappers (self-documenting; keep call sites readable). These
-  // mirror the protocol contract in this file's header, so the table stays
-  // complete even where this console emits nothing: `emergencyStop` has NO UI
-  // caller on purpose — emergency stop is a hardware function on the M600 (see
+  // Convenience wrappers (self-documenting; keep call sites readable). One per
+  // command alias in contract.json, so the transport stays complete even where
+  // this console emits nothing: `emergencyStop` has NO UI caller on purpose — emergency stop is a hardware function on the M600 (see
   // the note above `window.MeltioMachine` in the assembly) — but it stays here
   // because `contract.json` declares the command host-owned at `permission:
   // "none"` and the real adapter forwards `ESTOP`, so a host that wants to issue
