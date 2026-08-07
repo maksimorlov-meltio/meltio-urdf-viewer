@@ -1,6 +1,6 @@
 # Evaluación de calidad de software
 
-> Fecha: **2026-08-07** · Proyecto: Meltio WebUI (HMI operador M600-PRO — `avisualizer` + `meltio-platform`) · Modo: **profunda** · HEAD evaluado: **`319406e`** (rama `main`), rama `release`: `f383a77` · Evaluación anterior: **2026-08-06 (tarde)**, global **67/100**
+> Fecha: **2026-08-07** · Proyecto: Meltio WebUI (HMI operador M600-PRO — `avisualizer` + `meltio-platform`) · Modo: **profunda** · HEAD evaluado: **`319406e`** (rama `main`), rama `release`: `f383a77` · Evaluación anterior: [**2026-08-06 (tarde)**](evaluacion-calidad-software.2026-08-06-tarde.md), global **67/100**
 >
 > Pipeline: detección tecnológica → 4 revisores especializados en paralelo → 3 verificadores adversariales en lotes → 2 verificaciones puntuales adicionales.
 
