@@ -4,7 +4,9 @@
   "scripts": {
     "build": "node build.mjs",
     "build:dev": "node build.mjs --dev",
-    "lint": "eslint hmi viewer apps/dev-host/src/avisualizer/web/static"
+    "lint": "eslint hmi viewer apps/dev-host/src/avisualizer/web/static",
+    "test": "node --test \"tests/js/**/*.test.mjs\"",
+    "gate": "bash gate.sh"
   },
   "devDependencies": {
     "esbuild": "^0.24.0",

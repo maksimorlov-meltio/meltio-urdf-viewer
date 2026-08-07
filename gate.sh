@@ -30,7 +30,7 @@ echo "=== gate 5/9 — lint: eslint (errors fail; warnings tolerated)"
 npm run --silent lint
 
 echo "=== gate 6/9 — unit tests + build proof (esbuild resolves the whole graph)"
-node --test "tests/js/**/*.test.mjs"
+npm run --silent test
 npm run --silent build
 
 # Gate 6 leaves urdf.html pointing at the freshly built (gitignored) bundle, so
