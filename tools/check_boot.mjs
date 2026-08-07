@@ -4,6 +4,13 @@
 //   node tools/check_boot.mjs                      # needs the viewer on :8090
 //   node tools/check_boot.mjs --url http://.../urdf --screenshot boot.png
 //
+// For a refactor that must change nothing, capture the DOM footprint first and
+// assert against it after (see "Boot footprint" below):
+//
+//   node tools/check_boot.mjs --footprint before.txt
+//   ...move the code...
+//   node tools/check_boot.mjs --expect-footprint before.txt
+//
 // Why this exists, and why it is not part of gate.sh:
 //
 // On 2026-08-04 commit 515877b left `notificationsUi.setCenterOpen(false)` in a
@@ -23,9 +30,12 @@
 // software-rendered GLB loading; gate.sh must stay fast and offline. CI runs it
 // as its own job.
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 // --- Options -----------------------------------------------------------------
 function optionValue(flag, fallback) {
@@ -35,6 +45,9 @@ function optionValue(flag, fallback) {
 
 const URL_UNDER_TEST = optionValue("--url", "http://127.0.0.1:8090/urdf");
 const SCREENSHOT = optionValue("--screenshot", null);
+// Capture the post-settle DOM footprint, or assert against a captured one.
+const FOOTPRINT_OUT = optionValue("--footprint", null);
+const FOOTPRINT_EXPECT = optionValue("--expect-footprint", null);
 const HARD_TIMEOUT_MS = Number(optionValue("--timeout", "180000"));
 const DEBUG_PORT = Number(optionValue("--port", "9422"));
 // The page is considered settled once no request has been in flight for this
@@ -272,6 +285,74 @@ if (SCREENSHOT) {
   console.log(`boot: screenshot -> ${SCREENSHOT}`);
 }
 
+// --- Boot footprint ----------------------------------------------------------
+// A digest of what the operator can SEE and PRESS once the page has settled,
+// over every id the two contracts enumerate. Its purpose is refactors that must
+// change nothing: capture before, move code, assert after.
+//
+//   node tools/check_boot.mjs --footprint before.txt      # capture
+//   node tools/check_boot.mjs --expect-footprint before.txt   # assert
+//
+// Why not the screenshot this replaces: two captures of the SAME code do not
+// match. The topbar clock ticks and swiftshader is not bit-stable, so a pixel
+// hash is a coin flip and cannot gate anything.
+//
+// Digits are normalised to `#`. That is what makes it deterministic — the
+// clock, the calendar dates, the notification timestamps — and it is also the
+// hole: this can see a label appear, vanish or change WORDING, and cannot see
+// a number change value. It answers "did moving this code change anything",
+// never "is this value right".
+let footprintRows = null;
+if (FOOTPRINT_OUT || FOOTPRINT_EXPECT) {
+  const contract = JSON.parse(readFileSync(join(REPO_ROOT, "contract-dom.json"), "utf8"));
+  const ids = [...new Set([...contract.domIds, ...(contract.assemblyDomIds || [])])].sort();
+  const captured = await call("Runtime.evaluate", {
+    returnByValue: true,
+    expression: `(${((idList) => {
+      const norm = (value) => String(value == null ? "" : value)
+        .replace(/\s+/g, " ").trim().slice(0, 40).replace(/\d/g, "#");
+      return idList.map((id) => {
+        const el = document.getElementById(id);
+        if (!el) return `${id}\tABSENT`;
+        const style = window.getComputedStyle(el);
+        return [
+          id,
+          el.hidden ? "hidden" : "shown",
+          style.display === "none" ? "display:none" : "displayed",
+          el.disabled ? "disabled" : "enabled",
+          el.getAttribute("aria-pressed") || "-",
+          norm(el.textContent),
+        ].join("\t");
+      });
+    }).toString()})(${JSON.stringify(ids)})`,
+  });
+  footprintRows = captured?.result?.value;
+  if (!Array.isArray(footprintRows)) {
+    bail(2, "boot: the footprint probe returned nothing.");
+  }
+}
+
+if (FOOTPRINT_OUT) {
+  writeFileSync(FOOTPRINT_OUT, footprintRows.join("\n") + "\n", "utf8");
+  console.log(`boot: footprint (${footprintRows.length} ids) -> ${FOOTPRINT_OUT}`);
+}
+
+const footprintDrift = [];
+if (FOOTPRINT_EXPECT) {
+  const expected = readFileSync(FOOTPRINT_EXPECT, "utf8").split("\n").filter(Boolean);
+  const byId = (rows) => new Map(rows.map((row) => [row.split("\t")[0], row]));
+  const before = byId(expected);
+  const after = byId(footprintRows);
+  for (const [id, row] of before) {
+    const now = after.get(id);
+    if (now === undefined) footprintDrift.push(`${id}: no longer probed`);
+    else if (now !== row) footprintDrift.push(`${id}\n      was: ${row}\n      now: ${now}`);
+  }
+  for (const id of after.keys()) {
+    if (!before.has(id)) footprintDrift.push(`${id}: newly probed`);
+  }
+}
+
 // --- Verdict -----------------------------------------------------------------
 // The bridges are the load-bearing assertion: each is installed at the tail of
 // a different domain module, so a module that dies mid-boot takes its bridge
@@ -313,6 +394,13 @@ if (missing.length) {
   failed = true;
   console.error("\nboot: the boot contract is not satisfied:");
   for (const item of missing) console.error(`  - ${item}`);
+}
+if (footprintDrift.length) {
+  failed = true;
+  console.error(`\nboot: ${footprintDrift.length} id(s) drifted from ${FOOTPRINT_EXPECT}:`);
+  for (const item of footprintDrift) console.error(`  - ${item}`);
+  console.error("\nA refactor that was supposed to change nothing changed something"
+    + " the operator can see.");
 }
 
 socket.close();
