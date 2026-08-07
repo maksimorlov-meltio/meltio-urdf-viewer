@@ -52,6 +52,30 @@ export function formatPrintDuration(seconds) {
   return totalMin > 0 ? `${totalMin}m ${sec}s` : `${sec}s`;
 }
 
+/** What to put in front of a plant operator when a machine command is refused.
+ *
+ *  Residue of N-C4. `stopPrint` requires an operator, and that is correct — it
+ *  is a RECOVERABLE process halt, not an emergency stop, so knowing who
+ *  ordered it matters (emergency stop is a hardware function; see
+ *  ARCHITECTURE.md §1.1). What was wrong is what the refusal looked like: a
+ *  signed-out operator pressing Stop got
+ *  `Stop command failed: command HTTP 401`.
+ *
+ *  Deliberately a MESSAGE and not a permission gate on the button. Hiding or
+ *  disabling Stop hides it exactly when someone is looking for it, and a
+ *  control that is present and explains itself beats one that vanishes.
+ *
+ *  Only 401 is translated. Every other failure keeps its own text, because the
+ *  operator's next move differs and a generic "something went wrong" would cost
+ *  them the difference. */
+export function describeCommandFailure(error, action = "control the machine") {
+  if (error && error.status === 401) {
+    return `Sign in to ${action}.`;
+  }
+  const detail = error && error.message ? error.message : "unknown error";
+  return `Could not ${action}: ${detail}`;
+}
+
 /** Snapshot of what was laid down when a print is stopped part-way.
  *
  *  Pure, and exported on its own: this is what gets charged to the spool, so it

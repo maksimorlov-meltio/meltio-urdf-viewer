@@ -41,6 +41,7 @@ import {
   createPrintDialogsUi,
   formatPrintDuration,
   buildPrintStopSummary,
+  describeCommandFailure,
 } from "./hmi/printDialogs.js";
 // Print-flow state. The READS below are ES live bindings — `printSim`,
 // `bridgedSliceData` etc. are used exactly as when they were locals here; only
@@ -10465,7 +10466,7 @@ function confirmStopPrint() {
   // stop must be surfaced (never silently swallowed for a metal machine).
   if (machineConnected()) {
     machineLink.stop().catch((err) => {
-      showPrintNotice(`Stop command failed: ${err && err.message ? err.message : "unknown error"}`);
+      showPrintNotice(describeCommandFailure(err, "stop the print"));
     });
   }
 
