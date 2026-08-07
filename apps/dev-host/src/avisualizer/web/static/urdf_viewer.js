@@ -255,11 +255,7 @@ const filesFeederDriveStopEl = document.getElementById("filesFeederDriveStop");
 const filesFeederDriveDownEl = document.getElementById("filesFeederDriveDown");
 const filesFeederWheelLeftEl = document.getElementById("filesFeederWheelLeft");
 const filesFeederWheelRightEl = document.getElementById("filesFeederWheelRight");
-const viewCubeOverlayEl = document.getElementById("viewCubeOverlay");
-const viewCubeCanvasEl = document.getElementById("viewCubeCanvas");
-const viewCubeHomeButtonEl = document.getElementById("viewCubeHomeButton");
 const wireDrumAppearButtonEl = document.getElementById("wireDrumAppearButton");
-const materialsWireDrumToggleEl = document.getElementById("materialsWireDrumToggle");
 const cloudStlDatasetEl = document.getElementById("cloudStlDataset");
 const cloudStlLoadDatasetEl = document.getElementById("cloudStlLoadDataset");
 const cloudFileSearchInputEl = document.getElementById("cloudFileSearchInput");
@@ -1071,7 +1067,6 @@ initFeederWheelFloatOverlay({
   FEEDER_LINK,
   FEEDER_FLOAT_SIDE_OFFSET_PX,
 });
-const viewCubeController = createViewCubeController();
 const feederPreviewController = createFeederPreviewController();
 
 function createAxisLabelSprite(text, color) {
@@ -1471,333 +1466,6 @@ function getRobotBoundsSphere() {
   return {
     center: sphere.center.clone(),
     radius: sphere.radius,
-  };
-}
-
-function buildViewCubeCameraState(directionVector) {
-  const direction = directionVector.clone();
-  if (!Number.isFinite(direction.x) || !Number.isFinite(direction.y) || !Number.isFinite(direction.z) || direction.lengthSq() <= 1e-8) {
-    direction.set(1, 1, 1);
-  }
-  direction.normalize();
-
-  const boundsSphere = getRobotBoundsSphere();
-  const baseState = fitCameraToRobot();
-  const target = boundsSphere?.center?.clone()
-    || baseState?.target?.clone()
-    || controls.target.clone();
-
-  const baseDistance = baseState
-    ? baseState.position.distanceTo(baseState.target)
-    : (boundsSphere ? Math.max(boundsSphere.radius * 2.4, 0.8) : camera.position.distanceTo(controls.target));
-  const currentDistance = camera.position.distanceTo(controls.target);
-  const minDistance = boundsSphere ? Math.max(boundsSphere.radius * 1.05, 0.6) : 0.6;
-  const maxDistance = boundsSphere ? Math.max(boundsSphere.radius * 7.5, baseDistance * 2.2) : Math.max(baseDistance * 2.2, 9);
-  const desiredDistance = clamp(
-    Number.isFinite(currentDistance) && currentDistance > 1e-5 ? currentDistance : baseDistance,
-    minDistance,
-    maxDistance,
-  );
-
-  const up = new THREE.Vector3(0, 0, 1);
-  if (Math.abs(direction.dot(up)) > 0.985) {
-    up.set(0, direction.z >= 0 ? 1 : -1, 0);
-  }
-
-  return {
-    position: target.clone().addScaledVector(direction, desiredDistance),
-    target,
-    up,
-    near: baseState?.near ?? camera.near,
-    far: baseState?.far ?? camera.far,
-  };
-}
-
-function createViewCubeLabelTexture(label) {
-  const labelCanvas = document.createElement("canvas");
-  labelCanvas.width = 256;
-  labelCanvas.height = 96;
-  const ctx = labelCanvas.getContext("2d");
-  if (!ctx) {
-    return null;
-  }
-
-  const radius = 14;
-  const width = labelCanvas.width;
-  const height = labelCanvas.height;
-
-  ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = "rgba(16, 31, 52, 0.9)";
-  ctx.strokeStyle = "rgba(160, 209, 255, 0.92)";
-  ctx.lineWidth = 4;
-  ctx.beginPath();
-  ctx.moveTo(radius, 2);
-  ctx.lineTo(width - radius, 2);
-  ctx.quadraticCurveTo(width - 2, 2, width - 2, radius);
-  ctx.lineTo(width - 2, height - radius);
-  ctx.quadraticCurveTo(width - 2, height - 2, width - radius, height - 2);
-  ctx.lineTo(radius, height - 2);
-  ctx.quadraticCurveTo(2, height - 2, 2, height - radius);
-  ctx.lineTo(2, radius);
-  ctx.quadraticCurveTo(2, 2, radius, 2);
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.font = "600 36px Segoe UI";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillStyle = "#ecf7ff";
-  ctx.fillText(label, width * 0.5, height * 0.5);
-
-  const texture = new THREE.CanvasTexture(labelCanvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.needsUpdate = true;
-  return texture;
-}
-
-function createViewCubeController() {
-  if (!viewCubeOverlayEl || !viewCubeCanvasEl) {
-    return null;
-  }
-
-  const cubeRenderer = new THREE.WebGLRenderer({
-    canvas: viewCubeCanvasEl,
-    antialias: true,
-    alpha: true,
-    powerPreference: "low-power",
-  });
-  cubeRenderer.setClearColor(0x000000, 0);
-  cubeRenderer.outputColorSpace = THREE.SRGBColorSpace;
-  cubeRenderer.setPixelRatio(Math.min(window.devicePixelRatio, VIEW_CUBE_RENDER_PIXEL_RATIO));
-
-  const cubeScene = new THREE.Scene();
-  const cubeCamera = new THREE.OrthographicCamera(-2, 2, 2, -2, 0.1, 20);
-  cubeCamera.position.set(0, 0, 6);
-  cubeCamera.lookAt(0, 0, 0);
-
-  const ambient = new THREE.AmbientLight(0xffffff, 0.85);
-  cubeScene.add(ambient);
-
-  const keyLight = new THREE.DirectionalLight(0xffffff, 0.9);
-  keyLight.position.set(2.1, 1.5, 3.1);
-  cubeScene.add(keyLight);
-
-  const cubeRoot = new THREE.Group();
-  cubeScene.add(cubeRoot);
-
-  const cubeMesh = new THREE.Mesh(
-    new THREE.BoxGeometry(1.3, 1.3, 1.3),
-    new THREE.MeshStandardMaterial({
-      color: 0x5878a0,
-      roughness: 0.36,
-      metalness: 0.12,
-      transparent: true,
-      opacity: 0.92,
-    }),
-  );
-  cubeRoot.add(cubeMesh);
-
-  const cubeEdges = new THREE.LineSegments(
-    new THREE.EdgesGeometry(cubeMesh.geometry),
-    new THREE.LineBasicMaterial({ color: 0xe4f4ff, transparent: true, opacity: 0.94 }),
-  );
-  cubeRoot.add(cubeEdges);
-
-  const faceDefinitions = [
-    { label: "Front", direction: new THREE.Vector3(0, 1, 0) },
-    { label: "Back", direction: new THREE.Vector3(0, -1, 0) },
-    { label: "Left", direction: new THREE.Vector3(-1, 0, 0) },
-    { label: "Right", direction: new THREE.Vector3(1, 0, 0) },
-    { label: "Top", direction: new THREE.Vector3(0, 0, 1) },
-    { label: "Bottom", direction: new THREE.Vector3(0, 0, -1) },
-  ];
-
-  const pickableObjects = [];
-
-  const facePickMaterial = new THREE.MeshBasicMaterial({
-    transparent: true,
-    opacity: 0.01,
-    side: THREE.DoubleSide,
-    depthWrite: false,
-  });
-
-  const edgePickMaterial = new THREE.MeshBasicMaterial({
-    color: 0x9ec4eb,
-    transparent: true,
-    opacity: 0.16,
-    depthWrite: false,
-  });
-
-  const cornerPickMaterial = new THREE.MeshBasicMaterial({
-    color: 0xc7e2ff,
-    transparent: true,
-    opacity: 0.23,
-    depthWrite: false,
-  });
-
-  const zAxis = new THREE.Vector3(0, 0, 1);
-  for (const face of faceDefinitions) {
-    const labelTexture = createViewCubeLabelTexture(face.label);
-    if (labelTexture) {
-      const labelMesh = new THREE.Mesh(
-        new THREE.PlaneGeometry(0.76, 0.28),
-        new THREE.MeshBasicMaterial({
-          map: labelTexture,
-          transparent: true,
-          depthWrite: false,
-        }),
-      );
-      labelMesh.position.copy(face.direction).multiplyScalar(0.78);
-      labelMesh.quaternion.setFromUnitVectors(zAxis, face.direction);
-      cubeRoot.add(labelMesh);
-    }
-
-    const facePick = new THREE.Mesh(new THREE.PlaneGeometry(1.16, 1.16), facePickMaterial.clone());
-    facePick.position.copy(face.direction).multiplyScalar(0.68);
-    facePick.quaternion.setFromUnitVectors(zAxis, face.direction);
-    facePick.userData.direction = face.direction.clone();
-    facePick.userData.type = "face";
-    cubeRoot.add(facePick);
-    pickableObjects.push(facePick);
-  }
-
-  const edgeCenters = [
-    new THREE.Vector3(1, 1, 0),
-    new THREE.Vector3(1, -1, 0),
-    new THREE.Vector3(-1, 1, 0),
-    new THREE.Vector3(-1, -1, 0),
-    new THREE.Vector3(1, 0, 1),
-    new THREE.Vector3(1, 0, -1),
-    new THREE.Vector3(-1, 0, 1),
-    new THREE.Vector3(-1, 0, -1),
-    new THREE.Vector3(0, 1, 1),
-    new THREE.Vector3(0, 1, -1),
-    new THREE.Vector3(0, -1, 1),
-    new THREE.Vector3(0, -1, -1),
-  ];
-
-  for (const edgeCenter of edgeCenters) {
-    const edgePick = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 12), edgePickMaterial.clone());
-    edgePick.position.copy(edgeCenter).multiplyScalar(0.7);
-    edgePick.userData.direction = edgeCenter.clone().normalize();
-    edgePick.userData.type = "edge";
-    cubeRoot.add(edgePick);
-    pickableObjects.push(edgePick);
-  }
-
-  for (const xSign of [-1, 1]) {
-    for (const ySign of [-1, 1]) {
-      for (const zSign of [-1, 1]) {
-        const corner = new THREE.Vector3(xSign, ySign, zSign);
-        const cornerPick = new THREE.Mesh(new THREE.SphereGeometry(0.19, 12, 12), cornerPickMaterial.clone());
-        cornerPick.position.copy(corner).multiplyScalar(0.71);
-        cornerPick.userData.direction = corner.clone().normalize();
-        cornerPick.userData.type = "corner";
-        cubeRoot.add(cornerPick);
-        pickableObjects.push(cornerPick);
-      }
-    }
-  }
-
-  const raycaster = new THREE.Raycaster();
-  const pointerNdc = new THREE.Vector2();
-  const inverseMainCameraQuat = new THREE.Quaternion();
-  const lastMainCameraQuat = new THREE.Quaternion();
-  let hasRendered = false;
-  let forceRender = true;
-
-  const resize = () => {
-    const rect = viewCubeCanvasEl.getBoundingClientRect();
-    const width = Math.max(1, Math.round(rect.width));
-    const height = Math.max(1, Math.round(rect.height));
-
-    cubeRenderer.setPixelRatio(Math.min(window.devicePixelRatio, VIEW_CUBE_RENDER_PIXEL_RATIO));
-    cubeRenderer.setSize(width, height, false);
-
-    const aspect = width / Math.max(height, 1);
-    const halfSpan = 1.85;
-    cubeCamera.left = -halfSpan * aspect;
-    cubeCamera.right = halfSpan * aspect;
-    cubeCamera.top = halfSpan;
-    cubeCamera.bottom = -halfSpan;
-    cubeCamera.updateProjectionMatrix();
-    forceRender = true;
-  };
-
-  const getPointerDirection = (event) => {
-    const rect = viewCubeCanvasEl.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) {
-      return null;
-    }
-
-    pointerNdc.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-    pointerNdc.y = -((((event.clientY - rect.top) / rect.height) * 2) - 1);
-    raycaster.setFromCamera(pointerNdc, cubeCamera);
-    const hits = raycaster.intersectObjects(pickableObjects, false);
-    const direction = hits[0]?.object?.userData?.direction;
-    return direction ? direction.clone() : null;
-  };
-
-  const navigateDirection = (direction) => {
-    const targetState = buildViewCubeCameraState(direction);
-    beginCameraTransition(targetState, VIEW_CUBE_TRANSITION_DURATION_MS, {
-      distanceLock: null,
-    });
-  };
-
-  viewCubeCanvasEl.addEventListener("pointerdown", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-  });
-
-  viewCubeCanvasEl.addEventListener("click", (event) => {
-    const direction = getPointerDirection(event);
-    if (!direction) {
-      return;
-    }
-
-    markUserActivity();
-    navigateDirection(direction);
-    forceRender = true;
-  });
-
-  viewCubeCanvasEl.addEventListener("mousemove", (event) => {
-    const direction = getPointerDirection(event);
-    viewCubeCanvasEl.style.cursor = direction ? "pointer" : "default";
-  });
-
-  viewCubeCanvasEl.addEventListener("mouseleave", () => {
-    viewCubeCanvasEl.style.cursor = "default";
-  });
-
-  if (viewCubeHomeButtonEl) {
-    viewCubeHomeButtonEl.addEventListener("click", () => {
-      markUserActivity();
-      resetCameraToRobotView({ smooth: true });
-      forceRender = true;
-    });
-  }
-
-  resize();
-
-  return {
-    onResize: resize,
-    update: () => {
-      inverseMainCameraQuat.copy(camera.quaternion).invert();
-      cubeRoot.quaternion.copy(inverseMainCameraQuat);
-
-      const quaternionChanged = !hasRendered
-        || (1 - Math.abs(lastMainCameraQuat.dot(camera.quaternion))) > 1e-7;
-      if (!quaternionChanged && !forceRender) {
-        return;
-      }
-
-      cubeRenderer.render(cubeScene, cubeCamera);
-      lastMainCameraQuat.copy(camera.quaternion);
-      hasRendered = true;
-      forceRender = false;
-    },
   };
 }
 
@@ -2825,7 +2493,6 @@ function applyWireDrumAppearance() {
 
   // Keep the Materials-menu "Connect wire drum" toggle in sync (it drives the
   // same reveal). Done before the early returns below so it always updates.
-  updateMaterialsWireDrumToggle(clampedProgress);
 
   if (!wireDrumAppearButtonEl) {
     return;
@@ -2891,37 +2558,6 @@ function refreshFeedstockVisibility() {
   applySpoolFeedTypeVisibility();
   wireDrumRevealTarget = computeWireDrumVisibleTarget();
   applyWireDrumAppearance();
-}
-
-// Reflect the wire-drum reveal state on the Materials-menu toggle. Disabled until
-// the drum meshes exist (URDF loaded). Shows a transient "Connecting…/…" label
-// while the reveal animates, mirroring the Appearance button but framed as a
-// feedstock connection. Cosmetic only — never gates or affects a print.
-function updateMaterialsWireDrumToggle(clampedProgress) {
-  if (!materialsWireDrumToggleEl) {
-    return;
-  }
-  const progress =
-    typeof clampedProgress === "number" ? clampedProgress : clamp(wireDrumRevealProgress, 0, 1);
-  const hasWireDrum = wireDrumMaterials.length > 0;
-  materialsWireDrumToggleEl.disabled = !hasWireDrum;
-
-  let label = t("materials.wireDrumConnect");
-  let pressed = false;
-  if (!hasWireDrum) {
-    // keep defaults
-  } else if (wireDrumRevealTarget > progress + 1e-6) {
-    label = t("materials.wireDrumConnecting");
-    pressed = true;
-  } else if (wireDrumRevealTarget < progress - 1e-6) {
-    label = t("materials.wireDrumDisconnecting");
-    pressed = false;
-  } else if (progress >= 0.999) {
-    label = t("materials.wireDrumConnected");
-    pressed = true;
-  }
-  materialsWireDrumToggleEl.textContent = label;
-  materialsWireDrumToggleEl.setAttribute("aria-pressed", pressed ? "true" : "false");
 }
 
 function registerWireDrumMaterials(object3d) {
@@ -10209,7 +9845,6 @@ function onResize() {
   // Re-apply the view-offset pan for the new viewport size.
   applySceneViewOffset(sceneViewShiftCurrentPx);
   assemblyAnnotationManager.onResize();
-  viewCubeController?.onResize();
   feederPreviewController?.onResize();
   updateHotspotContextPanelPosition();
   updateFeederWheelFloatingControls();
@@ -11023,7 +10658,6 @@ function animate(nowMs = performance.now()) {
     renderer.render(scene, camera);
     renderDirty = false;
     assemblyAnnotationManager.update(nowMs);
-    viewCubeController?.update();
     feederPreviewController?.update(nowMs);
   }
   updateQuickFrontDoorToggleButton();
@@ -11392,14 +11026,6 @@ if (wireDrumAppearButtonEl) {
   });
 }
 
-if (materialsWireDrumToggleEl) {
-  // Materials-menu "Connect wire drum": explicitly connect/disconnect (not a blind
-  // toggle) so it reads off the shared reveal state. Cosmetic feedstock display —
-  // does not touch the spool material accounting or the print cycle.
-  materialsWireDrumToggleEl.addEventListener("click", () => {
-    setWireDrumConnected(!isWireDrumConnected());
-  });
-}
 
 if (cloudStlOpacityEl) {
   cloudStlOpacityEl.addEventListener("input", () => {
