@@ -71,6 +71,13 @@ LEVEL_RANK = {"none": 0, "operator": 1, "operatorPlus": 2, "support": 3, "god": 
 # Append-only JSON-lines audit trail of accepted machine commands (who/when/what),
 # written under DATABASE_ROOT so it moves with the data dir (and tests redirect it).
 COMMAND_AUDIT_LOG_NAME = "command_audit.log"
+# Bounds on that trail (N-A1). It had none, and `emergencyStop` is level `none`
+# by contract, so an unauthenticated caller could append to it at 77.6 MB/s —
+# measured — until the data directory was full, taking the permissions store and
+# the datasets with it. 8 MB is ~40k commands, months of a real kiosk; the
+# per-line cap keeps one enormous `args` from being the whole budget.
+COMMAND_AUDIT_MAX_BYTES = 8 * 1024 * 1024
+COMMAND_AUDIT_MAX_LINE_CHARS = 4 * 1024
 # Serialises the read-modify-write in PUT /api/permissions/config. In-process
 # only: the second writer, tools/set_password.py, is a separate process and is
 # made safe by the atomic write instead.
@@ -658,6 +665,28 @@ def create_app() -> FastAPI:
         name or legacy alias), or None when the command is not declared."""
         return COMMAND_LEVELS.get(command)
 
+    def _rotate_command_audit_if_needed(audit_path: Path) -> None:
+        """Keep the trail to two files of at most COMMAND_AUDIT_MAX_BYTES each.
+
+        N-A1: this log had no bound at all, and `emergencyStop` is declared at
+        level `none` in contract.json — correctly, it must work signed out — so
+        an unauthenticated caller could append to it as fast as the disk would
+        take it. Measured at 77.6 MB/s. Filling the data directory takes the
+        permissions store and the datasets down with it.
+
+        Two files, not N: the trail exists so someone can answer "who commanded
+        this?" after an incident, and one previous generation covers that
+        without turning a kiosk's disk into an archive. Deliberately NOT
+        deleting the older data silently — the rotation is visible as a `.1`
+        file sitting next to the live one.
+        """
+        try:
+            if audit_path.stat().st_size < COMMAND_AUDIT_MAX_BYTES:
+                return
+        except FileNotFoundError:
+            return
+        audit_path.replace(audit_path.with_suffix(audit_path.suffix + ".1"))
+
     def _append_command_audit(operator: dict, command: str, args: dict, ack: dict) -> None:
         """Append one JSON line recording an accepted (authorised + dispatched)
         machine command. Best-effort: an audit-sink hiccup never fails a command
@@ -675,9 +704,22 @@ def create_app() -> FastAPI:
         }
         audit_path = DATABASE_ROOT / COMMAND_AUDIT_LOG_NAME
         try:
+            line = json.dumps(entry, ensure_ascii=False)
+        except (TypeError, ValueError):
+            # `args` comes off the wire; a value json cannot serialise must not
+            # cost us the whole audit line, only the arguments.
+            entry["args"] = {"_unserialisable": True}
+            line = json.dumps(entry, ensure_ascii=False)
+        if len(line) > COMMAND_AUDIT_MAX_LINE_CHARS:
+            # Keep WHO did WHAT — that is what the trail is for — and drop the
+            # payload that made the line huge, recording that it happened.
+            entry["args"] = {"_truncated": True, "_originalChars": len(line)}
+            line = json.dumps(entry, ensure_ascii=False)
+        try:
             audit_path.parent.mkdir(parents=True, exist_ok=True)
+            _rotate_command_audit_if_needed(audit_path)
             with audit_path.open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                fh.write(line + "\n")
         except OSError as exc:
             # The command already went to the machine; losing the audit line
             # must not fail it, but it must not vanish quietly either.
