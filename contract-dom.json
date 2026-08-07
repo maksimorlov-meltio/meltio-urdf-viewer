@@ -4,7 +4,7 @@
   "totals": {
     "modules": 27,
     "domIds": 215,
-    "globals": 8
+    "globals": 7
   },
   "domIds": [
     "advancedModeIndicator",
@@ -230,12 +230,6 @@
       ],
       "readBy": [
         "hmi/ports/slicerClient.js"
-      ]
-    },
-    "ENABLE_NOTIFICATION_MOCK_SIGNALS": {
-      "providedBy": "embedder",
-      "readBy": [
-        "hmi/notifications.js"
       ]
     },
     "MeltioAdvanced": {
@@ -569,7 +563,6 @@
         "openSettingsMenu"
       ],
       "globalsRead": [
-        "ENABLE_NOTIFICATION_MOCK_SIGNALS",
         "MeltioNotifications",
         "PRINTER_NOTIFICATION_SIGNALS"
       ],
