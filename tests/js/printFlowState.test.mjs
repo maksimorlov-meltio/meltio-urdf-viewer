@@ -17,10 +17,20 @@ function simIn(state) {
   return { getState: () => state };
 }
 
-function reset({ inertPurging = false } = {}) {
+/** A machine-link stand-in. `connected` defaults to true because the
+ *  interesting case is a link that answers; the disconnected one is its own
+ *  test. */
+function linkIn(state, { connected = true } = {}) {
+  return { isConnected: () => connected, getState: () => state };
+}
+
+function reset({ inertPurging = false, link = null } = {}) {
   flow.setPrintSim(null);
   flow.setPrePrintSequenceActive(false);
-  flow.initPrintFlowState({ isInertPurging: () => inertPurging });
+  flow.initPrintFlowState({
+    isInertPurging: () => inertPurging,
+    getMachineLink: () => link,
+  });
 }
 
 test("with no simulation and nothing pending, nothing is running", () => {
@@ -71,6 +81,71 @@ test("without an injected purge probe the module assumes not purging", () => {
   flow.setPrintSim(null);
   flow.setPrePrintSequenceActive(false);
   assert.equal(flow.isPrintActivelyRunning(), false);
+  reset();
+});
+
+// --- isMachinePrinting / isPrintSessionActive (N-C3) -------------------------
+//
+// The defect these guard: machine printing, local simulation idle, and the
+// bottom-nav button that should read Stop instead OPENS THE FRONT DOOR. One F5
+// is enough to reach it — the page reloads with no toolpath, so printSim is
+// idle while the machine carries on.
+
+test("no link at all means no machine print — the standalone demo is unaffected", () => {
+  reset();
+  assert.equal(flow.isMachinePrinting(), false);
+  assert.equal(flow.isPrintSessionActive(), false);
+});
+
+test("a printing machine with no local simulation IS a print session", () => {
+  // The F5 case exactly: nothing local survived the reload, the machine did.
+  reset({ link: linkIn("printing") });
+  flow.setPrintSim(simIn("idle"));
+  assert.equal(flow.isPrintActivelyRunning(), false, "the sim really is idle");
+  assert.equal(flow.isPrintSessionActive(), true, "and the door must not open");
+});
+
+test("a paused machine still owns the axes", () => {
+  reset({ link: linkIn("paused") });
+  assert.equal(flow.isMachinePrinting(), true);
+});
+
+test("the predicate is derived, not latched: it clears itself with no cleanup", () => {
+  // Nothing is reset between the two reads but the link's answer. A latched
+  // flag would need a teardown path here, and a teardown path is a thing to
+  // forget — which is how the original defect worked.
+  const state = { value: "printing" };
+  reset({ link: { isConnected: () => true, getState: () => state.value } });
+  assert.equal(flow.isPrintSessionActive(), true);
+  state.value = "idle";
+  assert.equal(flow.isPrintSessionActive(), false);
+});
+
+test("a stale link reports nothing, however confident its last state was", () => {
+  // isConnected() folds in the staleness window, so this also covers REN-2:
+  // the polling loop dying does not leave the predicate stuck on 'printing'.
+  reset({ link: linkIn("printing", { connected: false }) });
+  assert.equal(flow.isMachinePrinting(), false);
+  assert.equal(flow.isPrintSessionActive(), false);
+});
+
+test("a playing simulation wins over a machine that has not acked yet", () => {
+  // Between printSim.play() and the START_PRINT ack the machine says 'armed'.
+  // This pins the direction of the OR: under "the machine is the authority"
+  // the Stop button would disappear for that window.
+  reset({ link: linkIn("armed") });
+  flow.setPrintSim(simIn("playing"));
+  assert.equal(flow.isMachinePrinting(), false);
+  assert.equal(flow.isPrintSessionActive(), true);
+});
+
+test("a malformed link is treated as no link, not as an exception", () => {
+  // The god-file hands over whatever `machineLink` currently is, and that is
+  // null for most of boot.
+  for (const link of [undefined, {}, { isConnected: true }]) {
+    reset({ link });
+    assert.equal(flow.isMachinePrinting(), false, JSON.stringify(link));
+  }
   reset();
 });
 

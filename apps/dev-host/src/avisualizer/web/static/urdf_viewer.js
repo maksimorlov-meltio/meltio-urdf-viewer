@@ -132,11 +132,16 @@ let isAdvancedModeActive = false;
 // Runs at module load; JS-driven copy uses t(...) directly.
 applyDomTranslations();
 
-// Wire the one scene fact the print-flow state cannot reach for itself. Done
-// here, at the top of the module body, because isPrintActivelyRunning() is
-// reachable from any listener the moment the page is interactive. The closure
-// defers reading `inertPhase` (declared much further down) until call time.
-initPrintFlowState({ isInertPurging: () => inertPhase === "purging" });
+// Wire the two facts the print-flow state cannot reach for itself. Done here,
+// at the top of the module body, because isPrintActivelyRunning() is reachable
+// from any listener the moment the page is interactive. Both are closures, so
+// they defer reading `inertPhase` and `machineLink` (both declared much further
+// down) until call time — which for the link also means it picks up the
+// transport the instant initMachineLink() creates it, with nothing to re-wire.
+initPrintFlowState({
+  isInertPurging: () => inertPhase === "purging",
+  getMachineLink: () => machineLink,
+});
 
 // Embedded-slicer pane domain (hmi/slicerPane.js) — owns the iframe embed, the
 // flyout, the fullscreen slice view and the docked-print variant, plus its own
