@@ -76,8 +76,14 @@ export function setPrintViewResetTimerId(value) { printViewResetTimerId = value;
 // The chamber-inert purge lives scene-side; isPrintActivelyRunning needs it and
 // this module may not reach into the scene.
 let _isInertPurging = () => false;
-export function initPrintFlowState({ isInertPurging } = {}) {
+// The machine transport (hmi/ports/machineLink.js). Injected rather than
+// imported: this module is pure and every test of it must be able to answer for
+// the link without standing one up. Null when the console runs on the local
+// simulation, which is the default (?machine=1 enables the transport).
+let _machineLink = () => null;
+export function initPrintFlowState({ isInertPurging, getMachineLink } = {}) {
   if (typeof isInertPurging === "function") _isInertPurging = isInertPurging;
+  if (typeof getMachineLink === "function") _machineLink = getMachineLink;
 }
 
 // --- Derived rules -----------------------------------------------------------
@@ -94,6 +100,40 @@ export function isPrintActivelyRunning() {
     || state === "paused"
     || isPrePrintSequenceActive
     || _isInertPurging();
+}
+
+/** Is the MACHINE mid-print, according to the machine rather than to us?
+ *
+ *  DERIVED, NEVER LATCHED — and that is the whole design. `isDockedPrintActive`
+ *  is a boolean with one owner (startDockedPrint); anything that writes it from
+ *  telemetry creates a latch that one spurious snapshot leaves stuck for ever.
+ *  This reads the link's current answer instead, so it self-heals on the next
+ *  poll (500 ms) with no cleanup path to get wrong.
+ *
+ *  `isConnected()` and not just `getState()`: isConnected folds in
+ *  `Date.now() - lastSnapshotAt <= STALE_TELEMETRY_MS`, so the predicate falls
+ *  back to false after 3 s even if the polling loop itself died. */
+export function isMachinePrinting() {
+  const link = _machineLink();
+  if (!link || typeof link.isConnected !== "function" || !link.isConnected()) return false;
+  const state = typeof link.getState === "function" ? link.getState() : null;
+  return state === "printing" || state === "paused";
+}
+
+/** Is there a print session at all — ours, the machine's, or both?
+ *
+ *  This is the predicate the CHROME follows: the topbar pill, the bottom-nav
+ *  button and its label. The scene keeps following `printSim` alone; that
+ *  frontier is deliberate and is written down in ARCHITECTURE.md §1.1.
+ *
+ *  Why OR and not "the machine is the authority": between `printSim.play()` and
+ *  the START_PRINT ack the machine still says `armed` while the sim says
+ *  `playing`. Under "machine wins" the Stop button would vanish in that window.
+ *  The two failure directions are not symmetric — a false positive offers Stop
+ *  where a door toggle would do; a false negative opens the front door on a
+ *  machine that is printing. */
+export function isPrintSessionActive() {
+  return isPrintActivelyRunning() || isMachinePrinting();
 }
 
 /** Where the sliced part sits relative to the plate centre, in millimetres.
