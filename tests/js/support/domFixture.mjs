@@ -48,6 +48,10 @@ export function mountUrdfDom() {
   globalThis.CustomEvent = dom.window.CustomEvent;
   globalThis.localStorage = dom.window.localStorage;
   globalThis.sessionStorage = dom.window.sessionStorage;
+  // hmi/permissions.js constructs one at boot from the bare global, and node
+  // has no MutationObserver of its own. jsdom's is a real implementation, so
+  // the observer under test is the observer that ships.
+  globalThis.MutationObserver = dom.window.MutationObserver;
   globalThis.requestAnimationFrame = (fn) => setTimeout(() => fn(Date.now()), 0);
   globalThis.cancelAnimationFrame = (id) => clearTimeout(id);
 

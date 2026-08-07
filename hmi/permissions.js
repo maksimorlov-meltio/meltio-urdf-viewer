@@ -251,6 +251,25 @@
     requestAnimationFrame(() => { applyScheduled = false; apply(); });
   }
 
+  // ---- Rendered-state key ----------------------------------------------------
+  // COD-1 / N-B1. A MutationObserver on document.body -> scheduleApply -> apply
+  // -> these two renderers, and both rebuilt their subtree unconditionally.
+  // Their own DOM writes were mutations, so the observer re-fired: a measured
+  // 126 mutation records on .perm-account-chip in two idle seconds.
+  //
+  // Built from the four values these renderers actually DRAW, never from their
+  // sources. In particular currentLevelName() resolves through
+  // getRole(roleId)?.name, so a key made of roleId would freeze the chip for
+  // ever the first time an administrator renames a role.
+  function accountStateKey() {
+    return [
+      isSignedIn(),
+      currentUser ? currentUser.name : "",
+      currentLevelName(),
+      currentUser ? currentUser.avatarColor || "" : "",
+    ].join("|");
+  }
+
   // ---- Account chip (near the machine title) --------------------------------
   let accountChipEl = null;
   function installAccountChip() {
@@ -264,8 +283,12 @@
     left.appendChild(accountChipEl);
     updateAccountChip();
   }
+  let lastChipKey = null;
   function updateAccountChip() {
     if (!accountChipEl) return;
+    const key = accountStateKey();
+    if (key === lastChipKey) return;
+    lastChipKey = key;
     accountChipEl.innerHTML = "";
     accountChipEl.classList.toggle("is-signed-in", isSignedIn());
     const text = h("span", { class: "perm-account-chip-text" },
@@ -276,31 +299,52 @@
   }
 
   // ---- Settings header account block ----------------------------------------
+  // The Sign in/out button is created ONCE here and never replaced. That is the
+  // difference that mattered in COD-1: the account chip is one <button> with one
+  // onclick that dispatches on isSignedIn() at CLICK time, so it survived the
+  // repaint storm; this block used to recreate its button — and with it the
+  // listener — on every apply(), so a press that landed between the mousedown
+  // and the repaint hit a node that was already detached.
+  //
+  // The dirty-check below makes that rare again, but rare is not the fix: the
+  // property to hold is that NO CLICKABLE NODE OWNED BY THIS MODULE IS EVER
+  // DESTROYED. That removes the class of defect; the memo only removes the
+  // instance.
   let settingsAccountEl = null;
+  let settingsAccountInfoEl = null;
+  let settingsAccountButtonEl = null;
   function installSettingsAccount() {
     const header = document.querySelector("#topbarSettingsMenu .topbar-settings-header");
     if (!header || settingsAccountEl) return;
     settingsAccountEl = h("div", { class: "perm-settings-account" });
+    settingsAccountInfoEl = h("div", { class: "perm-settings-account-info" });
+    settingsAccountButtonEl = h("button", {
+      type: "button",
+      onclick: () => { if (isSignedIn()) signOut(); else openLogin(); },
+    });
+    settingsAccountEl.append(
+      settingsAccountInfoEl,
+      h("div", { class: "perm-settings-account-actions" }, settingsAccountButtonEl),
+    );
     // Place as a full-width block directly BELOW the "Settings" title (not inside
     // the flex header row, which would collide with the title).
     header.insertAdjacentElement("afterend", settingsAccountEl);
     updateSettingsAccount();
   }
+  let lastSettingsKey = null;
   function updateSettingsAccount() {
     if (!settingsAccountEl) return;
-    settingsAccountEl.innerHTML = "";
-    const info = h("div", { class: "perm-settings-account-info" },
+    const key = accountStateKey();
+    if (key === lastSettingsKey) return;
+    lastSettingsKey = key;
+    settingsAccountInfoEl.innerHTML = "";
+    settingsAccountInfoEl.append(
       avatarEl(currentUser, "perm-avatar-lg"),
       h("div", { class: "perm-settings-account-text" },
         h("span", { class: "perm-settings-account-name" }, currentUser ? currentUser.name : "Not signed in"),
         h("span", { class: "perm-settings-account-level" }, currentLevelName())));
-    const actions = h("div", { class: "perm-settings-account-actions" });
-    if (isSignedIn()) {
-      actions.appendChild(h("button", { class: "btn-secondary", type: "button", onclick: signOut }, "Sign out"));
-    } else {
-      actions.appendChild(h("button", { class: "btn-primary", type: "button", onclick: openLogin }, "Sign in"));
-    }
-    settingsAccountEl.append(info, actions);
+    settingsAccountButtonEl.className = isSignedIn() ? "btn-secondary" : "btn-primary";
+    settingsAccountButtonEl.textContent = isSignedIn() ? "Sign out" : "Sign in";
   }
 
   // ---- Login modal ----------------------------------------------------------
@@ -511,6 +555,18 @@
     }
     apply();
     emit();
+    // Re-gate controls that appear after boot. Today it has NO work to do: all
+    // 11 [data-requires-permission] elements are static in urdf.html and no
+    // module adds the attribute at runtime. It stays because removing it fails
+    // in the dangerous direction — a control that arrives ungated — and because
+    // after the dirty-checks above its cost is a no-op apply(), not a repaint.
+    //
+    // Do NOT "fix" the feedback loop with a reentrancy guard: observer callbacks
+    // are microtasks and scheduleApply defers to rAF, so apply() never runs
+    // inside apply() and the guard would merge green having changed nothing.
+    // Nor with disconnect()/observe() around apply(): correct today, silently
+    // blind the day someone puts an await in apply(). The dirty-checks are the
+    // fix because they remove the WRITES the observer was reacting to.
     const obs = new MutationObserver(() => scheduleApply());
     obs.observe(document.body, { childList: true, subtree: true });
   }
