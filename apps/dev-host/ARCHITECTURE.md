@@ -48,6 +48,36 @@ imports slicer Python code — it only ever talks to the slicer over HTTP and
 **The one sentence to remember:** the *slicer* turns an STL into a toolpath; the
 *viewer* takes that toolpath and animates the robot printing it.
 
+### 1.1 Safety model — read this before touching anything machine-facing
+
+**This console is an operator aid. It is not a safety controller, and it must
+never become one.** Three facts that follow, and that are easy to break by
+accident:
+
+- **There is no software emergency stop, and that is deliberate.** Emergency stop
+  on the M600 is the physical E-stop plus the hardware interlocks. On top of that
+  the electronics **watchdog this software**: if the console dies for any reason,
+  the machine cancels the job and drops safety on its own. Nothing in the UI
+  emits an emergency stop, and nothing should — a button that looked like an
+  E-stop but could be refused by a rank check, or hang on a dead socket, is worse
+  than no button. `machineLink.emergencyStop()` exists only as transport for a
+  *host* that wants to issue the contract's `emergencyStop`; it has no UI caller.
+- **`stopPrint` is not an emergency stop.** It halts a running print
+  *recoverably*, without dropping safety, precisely so the job can be resumed.
+  That is why it requires an operator identity (`permission: "operator"`, rank 1)
+  while `emergencyStop` is `permission: "none"`. The two are not alternatives at
+  different severities: one is a process command, the other is a hardware
+  function. **A consequence worth knowing: with no users in
+  `database/permissions.json`, nobody can perform a recoverable stop** — running
+  `tools/set_password.py --create` is a precondition for operating the machine,
+  not an optional setup step.
+- **Role gating in `hmi/permissions.js` is a UI convenience, not a boundary.**
+  The server-side check on `POST /api/machine/command` is (see `CONTRIBUTING.md`).
+
+The live transport is off by default (`?machine=1` enables it) and the real
+adapter is read-only unless `AVIS_MACHINE_READONLY=0`, forwarding only `ESTOP`
+and `STOP`. Widening either is the moment every assumption above needs re-checking.
+
 ---
 
 ## 2. The end-to-end flow (load → slice → print)

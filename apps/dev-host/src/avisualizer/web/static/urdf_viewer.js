@@ -12494,6 +12494,16 @@ function initializePrintSimulation() {
 
 
 
+// There is deliberately NO software emergency stop here. Emergency stop is a
+// hardware function on the M600: the physical E-stop and the interlocks are the
+// safety layer, and the electronics additionally watchdog this software — if the
+// console dies, the machine cancels and drops safety on its own. A button that
+// looked like an E-stop but could be refused by a rank check, or hang on a dead
+// socket, would be worse than no button, so the console does not offer one.
+// (A `MeltioMachine.emergencyStop()` used to live here with zero callers; it was
+// removed because dead scaffolding that plausibly implies a safety feature is
+// the dangerous kind. The transport still exposes `machineLink.emergencyStop()`
+// for a HOST that wants to issue the contract's `emergencyStop` — see below.)
 window.MeltioMachine = {
   // Halt the print for a safety-disengaging error: pause an active print and
   // surface the pause notice. Idempotent + safe to call when nothing is running.
@@ -12516,20 +12526,5 @@ window.MeltioMachine = {
       }
       if (slicerLoadToViewerEl) slicerLoadToViewerEl.disabled = true; // block Start until cleared
     } catch (_e) {}
-  },
-
-  // Software emergency stop. Highest-priority command; the machine honors it from
-  // any state. This is an operator aid layered ON TOP of the machine's hardware
-  // E-stop and interlocks — it does not replace them. Returns a promise so a
-  // caller can react to a failed send (e.g. escalate to "press the physical
-  // E-stop"), but the physical E-stop remains the real safety guarantee.
-  emergencyStop() {
-    if (!machineConnected()) return Promise.resolve(false);
-    return machineLink.emergencyStop()
-      .then(() => true)
-      .catch((err) => {
-        showPrintNotice(`E-STOP command failed — use the physical E-stop. (${err && err.message ? err.message : "no ack"})`);
-        return false;
-      });
   },
 };
