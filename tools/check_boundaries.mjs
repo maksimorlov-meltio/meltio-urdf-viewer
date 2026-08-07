@@ -51,7 +51,8 @@ function stripComments(source) {
 const MUTABLE_EXPORT_CEILING = {
   "hmi/fileLibrary.js": 4,
   "hmi/materials.js": 3,
-  "hmi/state/materialsState.js": 4,
+  // hmi/state/materialsState.js is closed — deliberately absent, so a new one
+  // there comes back as "unregistered" rather than as room under a ceiling.
   "hmi/state/printFlowState.js": 10,
 };
 

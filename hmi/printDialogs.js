@@ -19,9 +19,8 @@ import {
   formatGramsText,
   getSpoolDisplayLabel,
   lastPrintUsedGramsBySpool,
+  getSelectedPrintJobUsage,
   normalizeSpoolKey,
-  selectedPrintJobActualGrams,
-  selectedPrintJobEstimatedGrams,
   spoolRemainingAmountGramsByKey,
 } from "./state/materialsState.js";
 import { printSim } from "./state/printFlowState.js";
@@ -82,7 +81,8 @@ export function describeCommandFailure(error, action = "control the machine") {
  *  is worth being able to check without a DOM. */
 export function buildPrintStopSummary(progress) {
   const fraction = Math.max(0, Math.min(1, Number(progress) || 0));
-  const estimatedTotal = Number(selectedPrintJobEstimatedGrams);
+  const { estimatedGrams, actualGrams } = getSelectedPrintJobUsage();
+  const estimatedTotal = Number(estimatedGrams);
   const estTotal =
     Number.isFinite(estimatedTotal) && estimatedTotal > 0
       ? estimatedTotal
@@ -91,7 +91,7 @@ export function buildPrintStopSummary(progress) {
   const nominalGrams = estTotal * fraction;
   // Over-deposition: excess laid down beyond nominal. Prefer the job's recorded
   // actual-vs-estimate delta; otherwise fall back to the representative figure.
-  const actualTotal = Number(selectedPrintJobActualGrams);
+  const actualTotal = Number(actualGrams);
   const overPct =
     Number.isFinite(actualTotal) && actualTotal > estTotal
       ? (actualTotal / estTotal - 1) * 100
