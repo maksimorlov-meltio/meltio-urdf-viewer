@@ -106,10 +106,23 @@ for (const root of SCAN_ROOTS) {
     for (const match of src.matchAll(ENTRY_RE)) {
       entries.push(match[1]);
       // Destructured signature: `createCalendarUi({ escapeHtml, onOpen })`.
-      const params = match[2];
-      if (params.includes("{")) {
-        const inner = params.slice(params.indexOf("{") + 1, params.lastIndexOf("}"));
-        destructuredKeys(inner).forEach((key) => deps.add(key));
+      //
+      // Strip comments FIRST, then take the first brace group. Both halves are
+      // load-bearing, and each covers a real signature in this tree:
+      //
+      //  - last `}` is wrong for a default: `initPrintFlowState({ a, b } = {})`
+      //    ends at the default's brace, so the tail read as `b } = {` and the
+      //    LAST key of every such signature was silently dropped. Reporting one
+      //    dep of two is worse than reporting none — a host reads a short list
+      //    as complete.
+      //  - first `}` is wrong without the strip: createMovePanelUi's parameter
+      //    list opens with a comment containing `{ x, y, z, probe }`, whose
+      //    brace would close the group before the first real key.
+      const params = match[2].replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+      const open = params.indexOf("{");
+      const close = open === -1 ? -1 : params.indexOf("}", open);
+      if (open !== -1 && close !== -1) {
+        destructuredKeys(params.slice(open + 1, close)).forEach((key) => deps.add(key));
       }
     }
 
