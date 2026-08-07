@@ -470,6 +470,13 @@ function setNotificationCenterOpen(isOpen) {
     topbarNotificationsToggleEl.setAttribute("aria-expanded", isNotificationCenterOpen ? "true" : "false");
     topbarNotificationsToggleEl.classList.toggle("is-active", isNotificationCenterOpen);
   }
+
+  // The counterpart of skipping the list rebuild while closed: rebuild it here,
+  // once, at the moment it becomes visible. Without this the operator opens the
+  // centre onto whatever was rendered before it was last closed.
+  if (isNotificationCenterOpen) {
+    renderNotificationCenter();
+  }
 }
 
 function setNotificationFilter(nextFilter) {
@@ -547,6 +554,21 @@ function syncNotificationToasts() {
     if (notificationToastedIds.has(n.id)) continue;
     notificationToastedIds.add(n.id);
     showNotificationToast(n);
+  }
+  // Prune, or the set grows for the life of the kiosk session (COD-2): this
+  // runs every 5 s and never forgot an id, so a machine that raises and clears
+  // codes all shift accumulates them all. Pruning also restores the intended
+  // behaviour — a re-raised fault toasts again, exactly like the bell.
+  //
+  // Pruned against every ACTIVE notification, NOT against `active` above.
+  // `active` is already filtered by severity, so an id that went critical ->
+  // info would be dropped here and toasted afresh the moment it went back up.
+  // Same faithful set the bell uses.
+  const activeIds = new Set(
+    [...notificationsById.values()].filter((n) => n.status === "active").map((n) => n.id),
+  );
+  for (const id of [...notificationToastedIds]) {
+    if (!activeIds.has(id)) notificationToastedIds.delete(id);
   }
 }
 
@@ -1130,17 +1152,29 @@ function renderNotificationCenter() {
     notificationActiveCountEl.textContent = `${activeNotifications.length} active ${label}`;
   }
 
-  if (notificationListEl) {
-    notificationListEl.innerHTML = filteredNotifications.length
-      ? filteredNotifications.map(renderNotificationCard).join("")
-      : "";
-  }
+  // The list and the filter chips are the expensive half — a full innerHTML
+  // rebuild of every card, driven by a 5 s interval whether or not anyone can
+  // see it (REN-3 / N-B2). Skip them while the centre is closed.
+  //
+  // The guard CANNOT go at the top of this function: the badge above, the bell,
+  // the toasts and the history below all hang off the same call chain, and a
+  // closed centre is exactly when a toast matters most. It also has to live
+  // inside this module — `isNotificationCenterOpen` is module-scope and not
+  // exported. setNotificationCenterOpen re-renders on open, so the list is
+  // rebuilt from current state the moment it becomes visible.
+  if (isNotificationCenterOpen) {
+    if (notificationListEl) {
+      notificationListEl.innerHTML = filteredNotifications.length
+        ? filteredNotifications.map(renderNotificationCard).join("")
+        : "";
+    }
 
-  if (notificationEmptyStateEl) {
-    notificationEmptyStateEl.hidden = filteredNotifications.length !== 0;
-  }
+    if (notificationEmptyStateEl) {
+      notificationEmptyStateEl.hidden = filteredNotifications.length !== 0;
+    }
 
-  updateNotificationFilterCounts(activeNotifications);
+    updateNotificationFilterCounts(activeNotifications);
+  }
   updateNotificationBellState();
   syncNotificationToasts();
   syncNotificationBellArrival();
