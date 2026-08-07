@@ -50,6 +50,11 @@ const STATE_BY_WIRE = Object.fromEntries(
 export function createMachineLink(options = {}) {
   const base = String(options.base || "").replace(/\/$/, "");
   const pollMs = Number(options.pollMs) || DEFAULT_POLL_MS;
+  // Abandon a telemetry fetch at twice the cadence (1 s at the default 2 Hz).
+  // Deliberately shorter than STALE_TELEMETRY_MS: the loop keeps re-arming while
+  // a socket hangs, so isConnected() goes false on its own schedule rather than
+  // waiting on the socket. A spurious abort on a slow link costs one poll.
+  const pollTimeoutMs = pollMs * 2;
   const onTelemetry = typeof options.onTelemetry === "function" ? options.onTelemetry : null;
   const onStateChange = typeof options.onStateChange === "function" ? options.onStateChange : null;
 
@@ -124,9 +129,17 @@ export function createMachineLink(options = {}) {
   }
 
   // ── Polling loop ───────────────────────────────────────────────────────
+  // The abort here is not an optimisation, it is what keeps the loop alive.
+  // A server that accepts the connection and never answers leaves this promise
+  // pending forever; loop() re-arms in .finally(), so one hung socket killed
+  // telemetry permanently — and silently, because the catch below never ran
+  // either, leaving the topbar reading "connected" (onStateChange is its only
+  // writer) over a dead link. Same AbortController shape as sendCommand.
   async function pollOnce() {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), pollTimeoutMs);
     try {
-      const res = await fetch(`${base}/api/machine/state`, { cache: "no-store" });
+      const res = await fetch(`${base}/api/machine/state`, { cache: "no-store", signal: controller.signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const snapshot = await res.json();
       if (machine.get() === MachineState.DISCONNECTED) {
@@ -136,12 +149,15 @@ export function createMachineLink(options = {}) {
       }
       ingest(snapshot);
     } catch (_e) {
-      // Link down or telemetry stale → drop to DISCONNECTED and stop trusting
-      // the last-known state (never keep animating a print we can't see).
+      // Link down, telemetry stale, or the fetch above aborted → drop to
+      // DISCONNECTED and stop trusting the last-known state (never keep
+      // animating a print we can't see).
       if (Date.now() - lastSnapshotAt > STALE_TELEMETRY_MS) {
         window.PRINTER_NOTIFICATION_SIGNALS = { ...(window.PRINTER_NOTIFICATION_SIGNALS || {}), internetConnected: false };
         machine.set(MachineState.DISCONNECTED);
       }
+    } finally {
+      window.clearTimeout(timer);
     }
   }
 
