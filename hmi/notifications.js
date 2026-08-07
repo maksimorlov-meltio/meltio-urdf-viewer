@@ -251,7 +251,6 @@ const mockNotificationSignals = {
   doorsClosed: true,
   laserHeadReady: true,
 };
-let notificationMockTickCounter = 0;
 let selectedNotificationDetailId = null;
 function getNotificationTimestampMs(value) {
   const parsed = Date.parse(String(value || ""));
@@ -1273,34 +1272,23 @@ function clearResolvedNotifications() {
   renderNotificationCenter();
 }
 
-function updateMockNotificationSignals(nowMs = performance.now()) {
-  const isMockEnabled = typeof window !== "undefined" && window.ENABLE_NOTIFICATION_MOCK_SIGNALS === true;
-  if (!isMockEnabled) {
-    return;
-  }
+// `updateMockNotificationSignals` used to sit here: 25 lines that churned the
+// demo signals on a 15 s tick, behind an ENABLE_NOTIFICATION_MOCK_SIGNALS flag
+// on the window. Nothing in this repo, the dev host or the published artefact
+// ever set that flag, so the body was unreachable in every deployment (N-B4).
+// Its `nowMs` parameter was the only reason updateFromSignals took one.
+//
+// Deleted rather than wired up, because what it did is now wrong: telemetry
+// arrives through the PRINTER_NOTIFICATION_SIGNALS global (written by
+// hmi/ports/machineLink.js) and the function's own last guard already bailed
+// out whenever that was present. A demo that rotates fake faults underneath a
+// live machine link is not a feature worth keeping alive.
+//
+// The flag name is spelled without its `window.` prefix above on purpose:
+// gen_dom_contract scans the source text, so writing it in full would keep the
+// global in the published contract after the last reader is gone.
 
-  const tick = Math.floor(nowMs / 15000);
-  if (tick === notificationMockTickCounter) {
-    return;
-  }
-
-  notificationMockTickCounter = tick;
-  const hasExternalSignals = typeof window !== "undefined" && typeof window.PRINTER_NOTIFICATION_SIGNALS === "object";
-  if (hasExternalSignals) {
-    return;
-  }
-
-  mockNotificationSignals.internetConnected = !(tick % 6 === 2);
-  mockNotificationSignals.machineArmedRequired = tick % 7 === 3;
-  mockNotificationSignals.gasFlowDecreasing = tick % 5 === 2;
-  mockNotificationSignals.coolantTemperature = tick % 8 === 4 ? 62 : 48;
-  mockNotificationSignals.preventiveMaintenanceDue = tick % 9 === 5;
-  mockNotificationSignals.softwareUpdateAvailable = tick % 11 === 3;
-  mockNotificationSignals.firmwareUpdateAvailable = tick % 13 === 5;
-}
-
-function updateNotificationCenterFromSignals(nowMs = performance.now()) {
-  updateMockNotificationSignals(nowMs);
+function updateNotificationCenterFromSignals() {
   const snapshot = getNotificationSignalsSnapshot();
   const records = buildSignalDrivenNotificationRecords(snapshot);
   mergeSignalNotifications(records);

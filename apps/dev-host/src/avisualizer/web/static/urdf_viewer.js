@@ -12264,7 +12264,7 @@ initializeStatusLineStates();
 updateTopbarClock();
 window.setInterval(updateTopbarClock, 1000);
 window.setInterval(() => {
-  notificationsUi.updateFromSignals(performance.now());
+  notificationsUi.updateFromSignals();
 }, 5000);
 applySceneTheme();
 updateBottomNavState();
