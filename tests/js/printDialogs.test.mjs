@@ -292,3 +292,41 @@ test("an unknown remaining time produces no claim at all", () => {
     assert.equal(ui.formatFinishClock(value, NOON), "", String(value));
   }
 });
+
+// --- describeCommandFailure: the residue of N-C4 -----------------------------
+//
+// `stopPrint` requiring an operator is correct by design — it is a RECOVERABLE
+// process halt, not an emergency stop, so who ordered it matters. What was
+// wrong is what the refusal looked like: `Stop command failed: command
+// HTTP 401`, in front of a plant operator.
+
+test("a 401 tells the operator what to do, not which status code came back", () => {
+  const err = new Error("command HTTP 401");
+  err.status = 401;
+  assert.equal(dialogs.describeCommandFailure(err, "stop the print"),
+    "Sign in to stop the print.");
+});
+
+test("every other failure keeps its own text", () => {
+  // Not collapsed into one friendly sentence: the operator's next move differs
+  // between "the machine refused" and "the link timed out", and a generic
+  // message costs them that difference.
+  const refused = new Error("cannot stop from 'idle'");
+  assert.equal(dialogs.describeCommandFailure(refused, "stop the print"),
+    "Could not stop the print: cannot stop from 'idle'");
+
+  const timeout = new Error("The operation was aborted.");
+  timeout.status = undefined;
+  assert.match(dialogs.describeCommandFailure(timeout, "stop the print"), /aborted/);
+});
+
+test("a 403 is not a 401 — being signed in is not the problem", () => {
+  const err = new Error("command HTTP 403");
+  err.status = 403;
+  assert.doesNotMatch(dialogs.describeCommandFailure(err, "stop the print"), /Sign in/);
+});
+
+test("an error with nothing in it still says something", () => {
+  assert.match(dialogs.describeCommandFailure(null, "stop the print"),
+    /Could not stop the print: unknown error/);
+});
