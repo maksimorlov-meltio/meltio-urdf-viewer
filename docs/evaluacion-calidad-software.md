@@ -170,7 +170,7 @@ No es «el segundo E-Stop»: son **los ~15 tipos de señal, y para siempre** en 
 | Calidad de código | 62/100 | 🟡 | **−4** |
 | Seguridad | 55/100 | 🔴 | **−4** |
 | Rendimiento *(no pondera)* | 77/100 | 🟢 | **+5** |
-| Mantenibilidad | 75/100 | 🟢 | 0 |
+| Mantenibilidad | 78/100 | 🟢 | **+3** |
 | Escalabilidad | 74/100 | 🟡 | 0 |
 | Testing | 78/100 | 🟢 | **−4** |
 | **Global (ponderada)** | **66/100** | 🟡 | **−1** |
@@ -418,7 +418,7 @@ No es cortesía: cada punto se verificó ejecutando, y una refactorización desc
 | Calidad de código | 66 | **62** | **−4** | Entra **COD-1+N-B1** (−6): un bucle a 60 Hz medido en Chrome real que ayer nadie vio, con el botón de Sign in/out destruido cada frame. La acumulación 🟡 baja de −4 a −3 al acotarse varios hallazgos. |
 | Seguridad | 59 | **55** | **−4** | Entran **SEG-4** (fail-open del almacén con ventana de truncado medida en NTFS) y **N-C3** (vías de parada), ninguno visto ayer, y **ARQ-1(b)** (el E-stop muere con el contrato ilegible). Salen del bloque 🟠 los SEG-2 y SEG-3 de ayer, que al acotarse bajaron a 🟡. La acumulación 🟡 sube de −4 a −5: 16 hallazgos, uno de ellos una **puerta de CI roja ahora mismo**. |
 | Rendimiento *(no pondera)* | 72 | **77** | **+5** | La contradicción de §2.4 quedó **resuelta** y el hallazgo bajó a 🟡 al acotarse a >180k segmentos; el polling sin timeout bajó a 🟡 porque el enlace de máquina está apagado por defecto. Entra REN-3 (−5), confirmado y agravado. |
-| Mantenibilidad | 75 | **75** | 0 | Sin cambios netos: entra la contradicción `ARCHITECTURE.md` / `CONTRIBUTING.md` sobre el e-stop, salen los descuentos secundarios que ayer venían de 🟠 hoy rebajados. |
+| Mantenibilidad | 75 | **78** | **+3** | Entra la contradicción `ARCHITECTURE.md` / `CONTRIBUTING.md` sobre el e-stop y salen los descuentos secundarios que ayer venían de 🟠 hoy rebajados — eso se cancelaba en 75. El +3 llega después, al refutarse ARQ-5 por completo (§8.2 corrección 5): el contador 🟡 cae de 11 a 10 y cruza su umbral. **El código no cambió; la medición sí.** |
 | Escalabilidad | 74 | **74** | 0 | Sin cambios netos: desaparece el `−2` ad hoc del ritmo de extracción, aparece el `−2` secundario de ARQ-3 (el segundo consumidor recibe dos descripciones contradictorias y la legible por máquina es la mala). |
 | Testing | 82 | **78** | **−4** | **La única base que se movió**: de 84 a 80. No es un hallazgo nuevo, es un hecho medido que ayer no se tenía — **cero medición de cobertura de línea en las cinco suites** y **7 módulos vivos ≈15.500 líneas sin un solo test**, con dos mutantes que sobreviven a las 336 pruebas, a eslint, a las cuatro puertas y al boot check. La calidad del test sigue siendo alta; su alcance no es de banda alta. |
 | **Global** | **67** | **66** | **−1** | Las subidas y las bajadas casi se cancelan. |
@@ -525,7 +525,7 @@ Y de ahí se sigue algo que conviene decir en voz alta, porque es el resumen má
 
 Efecto secundario sobre el diseño del aislamiento de arranque: un `boot()` por fases que capture excepciones y continúe **convertiría el caso seguro en el peligroso** (HMI a medias, viva, con el watchdog satisfecho). Las fases deben relanzar tras marcar la app inutilizable; el aislamiento compra diagnóstico, nunca continuación.
 
-### 8.2 Tres correcciones a este informe, encontradas al planificar los arreglos
+### 8.2 Cinco correcciones a este informe, encontradas al planificar los arreglos
 
 Verificadas leyendo el código, después de publicar.
 
@@ -536,7 +536,11 @@ Verificadas leyendo el código, después de publicar.
 | 3 | ARQ-3 se presenta como un defecto de contrato | El contrato lo dispara, pero la causa raíz de que sea **invisible** es `machineLink.js:107`: `if (!item \|\| !item.code) continue;` sobre un string hace `continue` mudo | El arreglo son dos cambios en dos ficheros, no uno. Sin el `console.warn`, un host que malinterprete el contrato corregido seguiría sin enterarse |
 | 4 | N-C4 🟡: que `stopPrint` exija sesión «muerde en el camino nominal» y es precondición de hardware | **Mal clasificado, aclarado por el responsable del producto.** `stopPrint` para una impresión **de forma recuperable, sin tirar seguridad**, justo para poder reanudarla después: es un comando de proceso, no de seguridad. Exigir identidad de operador es el diseño correcto, no un defecto. La parada de emergencia es el E-stop de hardware, con el watchdog de §8.1 detrás | N-C4 **sale de las precondiciones de §7.1** y `contract.json` no cambia para `stopPrint`. Queda un residuo real pero menor, de UX (§8.2.1) |
 
+| 5 | ARQ-5 🟡: `CONTRIBUTING.md` «no se tocó en la fase C», arrastra **9 rutas rotas** y afirma *"There is no active CI at the repo root… these local commands are the contract"* (`CONTRIBUTING.md:39`) | **Refutado. El texto citado no existe en el árbol evaluado.** Se eliminó en `33bbbc1` (Sprint 1), varios commits antes del HEAD `319406e` que este informe mide. El fichero en HEAD abre su sección de validación con *"**CI is the contract.** `.github/workflows/ci.yml` runs on every PR and `main` is protected behind its three required checks"*, y sus rutas resuelven. Tampoco está en `urdf_viewer/CONTRIBUTING.md` ni en `_slicer_branch/CONTRIBUTING.md` (28 líneas cada uno, sin la frase). El «no build step» del README se fue en el mismo commit | ARQ-5 queda **refutado por completo**: la mitad de `CLAUDE.md` ya lo estaba en verificación, y ésta era la otra. Sale de los tres contadores 🟡 → **Mantenibilidad 75 → 78** (§8.2.2). Global sin cambio |
+
 La corrección 1 es la más costosa: es la que habría hecho perder tiempo a quien siguiera el informe al pie de la letra. La 4 es la más instructiva sobre el método — **la evaluación leyó una decisión de dominio deliberada como un defecto**, por no tener acceso a la semántica del producto. Un revisor externo no puede distinguir «parada recuperable que exige operador» de «parada bloqueada por un permiso mal puesto» solo leyendo el código; los dos se ven igual desde fuera.
+
+La 5 es de otra clase, y merece decirse sin adornos: **es la única corrección en la que el informe cita literalmente un texto que no existe.** Las otras cuatro son lecturas discutibles de código real. Ésta es una cita — con número de línea y comillas — de un fichero que en el commit evaluado dice lo contrario. La verificación adversarial de la fase 3 no la cazó porque ARQ-5 llegó como 🟡 y el protocolo solo verifica 🔴 y 🟠, así que la única parte de ARQ-5 que se verificó fue la de `CLAUDE.md`, que también resultó falsa. Dos de dos. **Corolario operativo: una cita textual de un revisor es una afirmación verificable y barata de comprobar; conviene comprobarla aunque el hallazgo sea 🟡.**
 
 #### 8.2.1 Lo que sí queda de N-C4
 
@@ -544,9 +548,35 @@ Ninguno de los elementos del camino de Stop (`navDoorToggle`, `printStopConfirm`
 
 Y una consecuencia operativa que se sigue de la regla, y que no está escrita en ningún sitio: con **cero usuarios** en el store —el estado de un clon fresco, verificado en este árbol— nadie puede ejecutar una parada recuperable; solo queda la vía de hardware. **`set_password.py --create` no es un paso opcional de puesta en marcha: es precondición para operar la máquina.**
 
+#### 8.2.2 Efecto de la corrección 5 en las puntuaciones
+
+ARQ-5 no llevaba descuento propio —era 🟡— pero figuraba en tres contadores de acumulación, y uno de ellos estaba **justo en el umbral**:
+
+| Dimensión | Contador 🟡 | Regla | Antes | Ahora |
+|---|---|---|---|---|
+| Arquitectura | 9 → **8** | >10 resta | 0 | 0 (sin cambio) |
+| Escalabilidad | 9 → **8** | >10 resta | 0 | 0 (sin cambio) |
+| **Mantenibilidad** | 11 → **10** | >10 resta | **−3** | **0** |
+
+Mantenibilidad pasa de `80 − 2 − 3 = 75` a `80 − 2 = 78`. La global se recalcula a **66,05 → 66**: no se mueve. Que un contador cruce su umbral por un solo hallazgo y la global no lo note es, otra vez, el argumento de §5 — el número global promedia el ruido de instrumento hasta hacerlo invisible, y por eso las señales de este informe no están en él.
+
+Las tablas del Apéndice A y de §5 están actualizadas con este resultado. **Ninguna otra corrección de §8.2 mueve una puntuación**: la 1 cambia un arreglo, no un hallazgo; la 2 y la 4 sacan hallazgos de la puerta de hardware sin sacarlos de ningún contador con descuento (Seguridad baja de 16 a 14 🟡 y Arquitectura de 9 a 7, ambas se quedan del mismo lado de su umbral); la 3 añade una causa raíz a un hallazgo que ya descontaba.
+
 ### 8.3 Estado de ejecución
 
-Existe un plan de mejora por fases derivado de este informe (7 fases, ~21 PRs, más una puerta con criterio de entrada a hardware que agrupa las precondiciones de §7.1). **Fase 0 ejecutada**: `npm audit --audit-level=high`, que estaba en rojo y bloqueaba todo merge, sale ahora en 0 — nueve puertas verdes, 187 tests JS y 49 de pytest.
+Existe un plan de mejora por fases derivado de este informe (7 fases, ~21 PRs, más una puerta con criterio de entrada a hardware que agrupa las precondiciones de §7.1). Lo ejecutado hasta ahora, una rama por PR:
+
+| PR | Cierra | Estado |
+|---|---|---|
+| Fase 0 — desbloquear el pipeline | SEG-8 | `npm audit --audit-level=high` estaba en rojo y bloqueaba **todo** merge; sale en 0. Además `package.json` gana los scripts `test`/`gate` que `gate.sh` y `ci.yml` duplicaban como glob literal |
+| Fase 2.1 — timeout de telemetría | REN-2, puerta H nº 3 | `AbortController` en `pollOnce`, y el primer test que tiene `machineLink.js` (135 líneas, 4 casos). Mutación: quitar el `signal` mata 3 de 4 |
+| N-C1 — el E-stop es hardware | N-C1, puerta H nº 9 | Borrado el andamiaje muerto de `MeltioMachine.emergencyStop()` (14 líneas, cero llamadores, que además fallaba abierto devolviendo `false`), escrita la §1.1 de `ARCHITECTURE.md` y corregido `CONTRIBUTING.md`. **Resuelve la contradicción documental que este informe cuenta en §1.1** |
+| Fase 1.1 — `contract.json` | ARQ-3, ARQ-1(a), SEG-7, N-A2, N-C5; puerta H nº 7 y nº 8 | `activeCodes` pasa a la forma objeto, `signals` a sus 20 claves, `FEEDER` deja de ser alias de `loadFeeder` y pasa a `driveFeeder`, cota en `distanceMm`, `homePosition`→`resetCameraHome`. Más la causa raíz de la invisibilidad (corrección 3): el `continue` mudo de `machineLink.js` ahora avisa. Test de regresión nuevo |
+| Fase 1.2 — `contract-dom.json` | ARQ-2 residuo, SEG-5 residuo, ARQ-8 | El bus de `window` publicado como sección **generada**, separando quién escribe de quién lee. Deja a la vista que `MeltioMachine` no lo provee ningún módulo publicado |
+| Fase 1.3 — documentación | ARQ-5 | §3.3.1 de `ARCHITECTURE.md` para el bus de globales. ARQ-5 no necesitaba arreglo: ver corrección 5 |
+| Fase 1.4 — puerta 3 inversa | N-C6 | La puerta contrasta ahora el contrato contra el código, no solo el código contra el contrato: **todo alias declarado debe emitirse**. Verde sin sembrar excepciones. La formulación que pedía el plan (*todo `permission:"none"` debe emitirse*) se descartó al llegar en rojo con once excepciones que sembrar |
+
+Cada PR se verificó con las nueve puertas, `pytest apps/dev-host/tests` y el boot check; los que tocan módulos publicados, además contra el artefacto generado.
 
 ---
 
@@ -619,7 +649,7 @@ capado: no aplica por Seguridad | no aplica por Arq/Cod
 | **SEG-1 🟠** (secundaria; primaria en Seguridad, −6) — la UI de administración contradice el modelo de autorización | **−3** |
 | **ARQ-1(b)/SEG-6 🟠** (secundaria; primaria en Seguridad, −4) — la disponibilidad de la superficie de comandos cuelga de la legibilidad de un fichero | **−2** |
 | **N-C3 🟠** (secundaria; primaria en Seguridad, −5) — el estado de la simulación local es la autoridad de un control con función de parada; no hay reconciliación con la telemetría | **−2** |
-| Acumulación 🟡 = 9, **no supera 10**: ARQ-2, ARQ-4, ARQ-5, ARQ-6, SEG-5 residuo, N-C6, N-C2, N-A2, REN-5 | **0** |
+| Acumulación 🟡 = 8, **no supera 10**: ARQ-2, ARQ-4, ARQ-6, SEG-5 residuo, N-C6, N-C2, N-A2, REN-5. *(Era 9; ARQ-5 sale por §8.2 corrección 5 — no cambia el resultado)* | **0** |
 | **Total** | 82 − 17 = **65** |
 
 > **Nota de discrepancia.** El revisor propuso **61**. La verificación bajó a 🟡 dos de sus 🟠 (ARQ-2 y ARQ-4) y corrigió el conteo de ARQ-1. Se usa **65**.
@@ -651,14 +681,14 @@ capado: no aplica por Seguridad | no aplica por Arq/Cod
 
 > **Nota de discrepancia.** El revisor propuso **72**. La verificación bajó REN-1 y REN-2 a 🟡 (medidos y acotados) y confirmó REN-3. Se usa **77**. Advertencia que acompaña a esta nota: **no hay ni una medición del frame real en el panel objetivo** (§6.2); 77 califica la disciplina verificada del código, no el comportamiento medido del kiosco.
 
-### A.5 Mantenibilidad — **75/100** (Buena)
+### A.5 Mantenibilidad — **78/100** (Buena)
 
 | Concepto | Valor |
 |---|---|
 | **Base: Buena** — *idéntica a la del informe anterior.* Documentos autoritativos actualizados con el código; deuda declarada en cero (0 TODO/FIXME/HACK, 0 `console.log` en JS propio, 0 `print(` de depuración); comentarios de decisión que nombran el bug histórico que los motivó; nueve puertas más boot check; `serve_artifact.py` convierte la verificación end-to-end del artefacto en un comando; bus factor 2 con dos personas reales | **80** |
 | **COD-2 🟠** (secundaria; primaria en Código, −4) — el comentario de `notifications.js:872-880` afirma literalmente lo contrario de lo que el código hace. Un comentario que miente es peor que ninguno: convierte la revisión en arqueología | **−2** |
-| Acumulación 🟡 = 11 > 10 → **−3** (y no −5: casi todo es documentación o código muerto, barato de arreglar, y los documentos autoritativos están por lo demás al día): ARQ-2, ARQ-4, ARQ-5, ARQ-6, COD-4, COD-5, COD-6, N-B2, N-B3, N-C1 (**`ARCHITECTURE.md` cero menciones de e-stop/safety frente a `CONTRIBUTING.md:143-147`**), N-C6 | **−3** |
-| **Total** | 80 − 5 = **75** |
+| Acumulación 🟡 = **10**, no supera 10: ARQ-2, ARQ-4, ARQ-6, COD-4, COD-5, COD-6, N-B2, N-B3, N-C1 (**`ARCHITECTURE.md` cero menciones de e-stop/safety frente a `CONTRIBUTING.md:143-147`**), N-C6. *(Eran 11, con **−3**; ARQ-5 sale por §8.2 corrección 5 y el contador cruza su umbral a la baja. Éste es el único descuento que la corrección elimina)* | **0** |
+| **Total** | 80 − 2 = **78** |
 
 ### A.6 Escalabilidad — **74/100** (Aceptable)
 
@@ -667,7 +697,7 @@ capado: no aplica por Seguridad | no aplica por Arq/Cod
 | **Base: Buena, banda baja** — *idéntica a la del informe anterior.* La partición en dos apps sin import Python cruzado, el contrato host-owned, el puerto de máquina y el artefacto de release autocontenido y ejecutable son las piezas correctas para un segundo consumidor | **78** |
 | **ARQ-1(a) 🟠** (secundaria; primaria en Arquitectura, −5) — el defecto es **exportado**: el host C# que mapee `FEEDER → loadFeeder` no recibe el número de alimentador, y no hay `notSupported` que implementar porque el backend de referencia no lo emite | **−2** |
 | **ARQ-3 🟠** (secundaria; primaria en Arquitectura, −5) — un consumidor que priorice el contrato legible por máquina sobre un comentario de cabecera **pierde todos los faults** | **−2** |
-| Acumulación 🟡 = 9, **no supera 10**: ARQ-2, ARQ-5, N-A1 (el host C# reimplementará la ruta de auditoría sin cota, `"audited": true` sin tope), N-A2, N-C4, N-C5, N-C6, REN-1, REN-2 | **0** |
+| Acumulación 🟡 = 8, **no supera 10**: ARQ-2, N-A1 (el host C# reimplementará la ruta de auditoría sin cota, `"audited": true` sin tope), N-A2, N-C4, N-C5, N-C6, REN-1, REN-2. *(Era 9; ARQ-5 sale por §8.2 corrección 5 — no cambia el resultado)* | **0** |
 | **Total** | 78 − 4 = **74** |
 
 > **Nota de discrepancia, con el informe anterior.** El informe del 6 de agosto aplicó aquí un `−2` adicional «de ajuste» por el ritmo de extracción (−586 LOC en 4 fases, ~85 fases restantes). **Esta evaluación no lo repite**, porque el verificador midió que esa contabilidad omitía **1.064 líneas de test** añadidas por las mismas cuatro fases a código que no tenía ninguna. El revisor de arquitectura propuso **68**; se usa **74**, y la diferencia es enteramente que ARQ-2 y ARQ-4 bajaron a 🟡 en verificación.
@@ -690,10 +720,10 @@ capado: no aplica por Seguridad | no aplica por Arq/Cod
 | Seguridad | 55 | 25 % | 13,75 |
 | Arquitectura | 65 | 20 % | 13,00 |
 | Calidad de código | 62 | 20 % | 12,40 |
-| Mantenibilidad | 75 | 15 % | 11,25 |
+| Mantenibilidad | 78 | 15 % | 11,70 |
 | Escalabilidad | 74 | 10 % | 7,40 |
 | Testing | 78 | 10 % | 7,80 |
-| **Global** | | **100 %** | **65,60 → 66** |
+| **Global** | | **100 %** | **66,05 → 66** |
 
 **Capado global:** Seguridad 55 ≥ 40, y (Arquitectura 65, Código 62) ambas ≥ 50 → **no aplica**. Rendimiento (77) se evalúa y no pondera.
 
