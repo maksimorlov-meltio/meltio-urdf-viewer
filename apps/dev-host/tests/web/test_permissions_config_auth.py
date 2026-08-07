@@ -161,3 +161,58 @@ def test_fresh_install_serves_builtin_roles_and_no_users(
   assert config["users"] == [], "a default install must seed no credentials"
   # ...and with no users, nothing is authorised.
   assert client.post("/api/machine/command", json={"command": "ARM"}).status_code == 401
+
+
+# --- SEG-1: rank is editable now, so the server has to validate it -----------
+#
+# The admin UI could not see or set a role's `rank`, while `rank` is exactly
+# what authorises machine commands: a role with no capability ticked could
+# still start a print, and the matrix said otherwise. Exposing the control
+# without validating it server-side would have traded a lying screen for an
+# escalation vector, so the two land together.
+
+@pytest.mark.parametrize("bad", [0, 5, 99, -1, "4", 2.5, None, True])
+def test_rank_must_be_an_integer_between_one_and_four(client: TestClient, store: Path, bad) -> None:
+  _login(client, "adm")
+  before = store.read_text(encoding="utf-8")
+  doc = _doc()
+  doc["roles"][0]["rank"] = bad
+  r = client.put("/api/permissions/config", json=doc)
+  assert r.status_code == 400, f"rank={bad!r} was accepted"
+  assert store.read_text(encoding="utf-8") == before, f"rank={bad!r} reached the store"
+
+
+def test_a_valid_rank_change_is_saved(client: TestClient, store: Path) -> None:
+  # The other direction: the validation must not have made the field read-only
+  # again, which would leave the screen lying in a new way.
+  _login(client, "adm")
+  doc = _doc()
+  doc["roles"][0]["rank"] = 3
+  assert client.put("/api/permissions/config", json=doc).status_code == 200
+  assert json.loads(store.read_text(encoding="utf-8"))["roles"][0]["rank"] == 3
+
+
+def test_nobody_can_mint_a_level_above_their_own(client: TestClient, store: Path) -> None:
+  # The admin in this fixture is rank 4, so build a rank-3 administrator to
+  # check the ceiling is the CALLER's rank and not the constant 4.
+  doc = _doc()
+  doc["roles"][1]["rank"] = 3          # the role that carries admin.users
+  store.write_text(json.dumps(doc), encoding="utf-8")
+  _login(client, "adm")
+
+  escalate = json.loads(store.read_text(encoding="utf-8"))
+  escalate["roles"][0]["rank"] = 4     # operator -> above the caller
+  r = client.put("/api/permissions/config", json=escalate)
+  assert r.status_code == 403
+  assert "above your own" in r.json()["detail"]
+  assert json.loads(store.read_text(encoding="utf-8"))["roles"][0]["rank"] == 1
+
+
+def test_the_ceiling_does_not_block_granting_your_own_level(client: TestClient, store: Path) -> None:
+  doc = _doc()
+  doc["roles"][1]["rank"] = 3
+  store.write_text(json.dumps(doc), encoding="utf-8")
+  _login(client, "adm")
+  same = json.loads(store.read_text(encoding="utf-8"))
+  same["roles"][0]["rank"] = 3
+  assert client.put("/api/permissions/config", json=same).status_code == 200
