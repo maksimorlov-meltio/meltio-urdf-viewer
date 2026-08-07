@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // Generates contract-dom.json: what the published hmi/ + viewer/ modules need
-// from their embedder, beyond the ES imports they carry themselves.
+// from their embedder, beyond the ES imports they carry themselves — plus, in a
+// separate section, the ids the unpublished dev-host assembly looks up, so
+// gate 9 can hold those against urdf.html too.
 //
 //   node tools/gen_dom_contract.mjs [outfile]     (default: contract-dom.json)
 //
@@ -22,10 +24,34 @@ import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..");
-const SCAN_ROOTS = ["hmi", "viewer"];
+// The published partitions, plus the assembly that mounts them. `static/` is
+// NOT published on the release branch, and its ids are not a contract an
+// embedder has to satisfy — it is here so gate 9 (check_dead_lookups) can see
+// them. Before this, `getElementById` in the 12k-line god-file was invisible to
+// every gate: an element could leave urdf.html and its lookups would sit there
+// returning null for ever, which is exactly what the ViewCube and the eleven
+// hotspot ids did. The `assemblyOnly` flag keeps them out of the published
+// half of the manifest.
+// The assembly entry is the FILE, not the folder. `static/` also holds app.js
+// and machine_library.js, which belong to index.html — the point-cloud viewer,
+// a different page with a different DOM — and scanning them would report 33
+// perfectly live ids as missing from urdf.html. urdf.html loads exactly one
+// script of its own (`data-app-entry` -> /static/urdf_viewer.js) plus the two
+// classic hmi/ scripts, which this already covers. Its two imports under
+// static/modules/ contain zero getElementById calls, checked.
+const SCAN_ROOTS = [
+  { root: "hmi" },
+  { root: "viewer" },
+  { root: "apps/dev-host/src/avisualizer/web/static/urdf_viewer.js", assemblyOnly: true },
+];
 
 function walk(dir, out = []) {
+  if (statSync(dir).isFile()) return dir.endsWith(".js") ? [dir] : [];
   for (const name of readdirSync(dir)) {
+    // vendor/ is three.js and dist/ is the built bundle — which CONTAINS all of
+    // hmi/, so scanning it would make the manifest self-referential. Copied
+    // from check_contract.mjs, where the same exclusion is load-bearing.
+    if (name === "vendor" || name === "dist") continue;
     const full = join(dir, name);
     if (statSync(full).isDirectory()) walk(full, out);
     else if (name.endsWith(".js")) out.push(full);
@@ -80,12 +106,21 @@ function noteGlobal(name, file, isWrite) {
   (isWrite ? entry.writtenBy : entry.readBy).add(file);
 }
 
-for (const root of SCAN_ROOTS) {
+// Ids the unpublished assembly looks up. Kept apart from `allIds` because the
+// two answer different questions: `domIds` is what an EMBEDDER must provide,
+// and the assembly is precisely the thing an embedder replaces.
+const assemblyIds = new Set();
+
+for (const { root, assemblyOnly } of SCAN_ROOTS) {
   for (const file of walk(join(REPO_ROOT, root))) {
     const rel = relative(REPO_ROOT, file).split(sep).join("/");
     const src = readFileSync(file, "utf8");
 
     const domIds = [...src.matchAll(DOM_ID_RE)].map((m) => m[1]);
+    if (assemblyOnly) {
+      domIds.forEach((id) => assemblyIds.add(id));
+      continue;
+    }
     const dynamicLookups = [...src.matchAll(DOM_DYNAMIC_RE)].length;
     const deps = new Set([...src.matchAll(DEP_READ_RE)].map((m) => m[1]));
     for (const match of src.matchAll(DEP_DESTRUCTURE_RE)) {
@@ -153,9 +188,17 @@ const out = {
   totals: {
     modules: Object.keys(modules).length,
     domIds: allIds.size,
+    assemblyDomIds: assemblyIds.size,
     globals: globals.size,
   },
   domIds: [...allIds].sort(),
+  $assemblyDomIdsComment:
+    "Ids the dev-host assembly (apps/dev-host/.../static/) looks up. NOT part of "
+    + "the embedder contract — the assembly is the thing an embedder replaces. They "
+    + "are listed so tools/check_dead_lookups.mjs can hold them against urdf.html: "
+    + "before this the god-file's lookups were invisible to every gate, which is how "
+    + "the ViewCube and eleven hotspot ids sat there returning null for months.",
+  assemblyDomIds: [...assemblyIds].sort(),
   globals: Object.fromEntries(
     [...globals.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
@@ -170,6 +213,6 @@ const out = {
 const outfile = resolve(REPO_ROOT, process.argv[2] || "contract-dom.json");
 writeFileSync(outfile, JSON.stringify(out, null, 2) + "\n", "utf8");
 console.log(
-  `contract-dom: ${out.totals.modules} modules, ${out.totals.domIds} DOM ids -> `
+  `contract-dom: ${out.totals.modules} modules, ${out.totals.domIds} DOM ids + ${out.totals.assemblyDomIds} assembly ids -> `
   + relative(REPO_ROOT, outfile).split(sep).join("/"),
 );
