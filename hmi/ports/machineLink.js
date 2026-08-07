@@ -203,7 +203,14 @@ export function createMachineLink(options = {}) {
     }
   }
 
-  // Convenience wrappers (self-documenting; keep call sites readable).
+  // Convenience wrappers (self-documenting; keep call sites readable). These
+  // mirror the protocol contract in this file's header, so the table stays
+  // complete even where this console emits nothing: `emergencyStop` has NO UI
+  // caller on purpose — emergency stop is a hardware function on the M600 (see
+  // the note above `window.MeltioMachine` in the assembly) — but it stays here
+  // because `contract.json` declares the command host-owned at `permission:
+  // "none"` and the real adapter forwards `ESTOP`, so a host that wants to issue
+  // it has the transport for it. Do not delete it as "unused".
   const commands = {
     arm: () => sendCommand("ARM"),
     disarm: () => sendCommand("DISARM"),
