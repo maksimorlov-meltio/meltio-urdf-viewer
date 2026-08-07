@@ -108,13 +108,10 @@ import {
   DEFAULT_PRINT_JOB_USAGE_GRAMS,
   hotspotMaterialAssignments,
   spoolRemainingAmountGramsByKey,
-  lastPrintUsedGramsBySpool,
   normalizeSpoolKey,
   restorePersistedMaterialsState,
   getSelectedPrintJobRequiredGrams,
   formatGramsText,
-  selectedPrintJobEstimatedGrams,
-  selectedPrintJobActualGrams,
   recordMaterialUsage,
 } from "/hmi/state/materialsState.js";
 

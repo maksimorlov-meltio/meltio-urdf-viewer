@@ -13,8 +13,14 @@ import {
   getSpoolStatusState,
   hotspotMaterialAssignments,
   setSelectedPrintJobUsage,
+  getSelectedPrintJobUsage,
   formatGramsText,
   SPOOL_LOW_THRESHOLD_GRAMS,
+  MATERIAL_FEEDSTOCK_KEYS,
+  DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY,
+  lastPrintUsedGramsBySpool,
+  buildPersistedMaterialsState,
+  restorePersistedMaterialsState,
 } from "../../hmi/state/materialsState.js";
 
 test("setSpoolAmountState sets manual amount and resets usage", () => {
@@ -105,4 +111,97 @@ test("getSpoolStatusState: the low band is the greater of 500 g and 1.2x require
 test("formatGramsText rounds and floors at zero", () => {
   assert.equal(formatGramsText(749.6), "750g");
   assert.equal(formatGramsText(-3), "0g");
+});
+
+// --- COD-5: the write path must cover the same feedstocks the read path reads -
+
+// The defect these two pin down was a skew, not a crash. `restorePersisted…`
+// iterated MATERIAL_FEEDSTOCK_KEYS while `buildPersisted…` spelled spool1 /
+// spool2 / wiredrum out by hand in five blocks. Both halves happened to agree,
+// so nothing was observably wrong — until someone added a fourth feedstock, at
+// which point it would be read back but never written, and the only symptom is
+// a value that quietly reverts after a reload.
+//
+// Distinct values per key and per record on purpose: equal values would let a
+// copy-paste key swap (`spool2: …spool1`) pass, which is the exact shape the
+// hand-unrolled version was one keystroke away from.
+const MARKERS = ["ti64", "inconel-718", "316l-stainless"];
+function seedDistinctPerFeedstock() {
+  MATERIAL_FEEDSTOCK_KEYS.forEach((key, i) => {
+    hotspotMaterialAssignments[key] = MARKERS[i % MARKERS.length];
+    spoolManualAmountGramsByKey[key] = 1000 + i;
+    spoolUsedAmountGramsByKey[key] = 200 + i;
+    spoolRemainingAmountGramsByKey[key] = 800 + i;
+    lastPrintUsedGramsBySpool[key] = 30 + i;
+  });
+}
+
+test("every feedstock reaches the persisted document, under its own key", () => {
+  seedDistinctPerFeedstock();
+  const doc = buildPersistedMaterialsState();
+
+  for (const record of ["materialAssignments", "manualAmounts", "usedAmounts",
+                        "remainingAmounts", "lastPrintUsedBySpool"]) {
+    assert.deepEqual(Object.keys(doc[record]), [...MATERIAL_FEEDSTOCK_KEYS],
+      `${record} does not cover the feedstock list`);
+  }
+  MATERIAL_FEEDSTOCK_KEYS.forEach((key, i) => {
+    assert.equal(doc.materialAssignments[key], MARKERS[i % MARKERS.length], key);
+    assert.equal(doc.manualAmounts[key], 1000 + i, key);
+    assert.equal(doc.usedAmounts[key], 200 + i, key);
+    assert.equal(doc.remainingAmounts[key], 800 + i, key);
+    assert.equal(doc.lastPrintUsedBySpool[key], 30 + i, key);
+  });
+});
+
+test("persist -> wipe -> restore round-trips every feedstock", () => {
+  // The round trip is the property: whatever the write path emits, the read
+  // path has to put back. Four lines of localStorage rather than the DOM stub —
+  // this module is pure and the file's first line promises to keep it that way.
+  const store = new Map();
+  globalThis.window = {
+    localStorage: {
+      getItem: (k) => (store.has(k) ? store.get(k) : null),
+      setItem: (k, v) => store.set(k, String(v)),
+    },
+  };
+  try {
+    seedDistinctPerFeedstock();
+    const before = buildPersistedMaterialsState();
+    window.localStorage.setItem("avisualizer.materials.state.v1", JSON.stringify(before));
+
+    for (const key of MATERIAL_FEEDSTOCK_KEYS) {
+      hotspotMaterialAssignments[key] = null;
+      spoolManualAmountGramsByKey[key] = 0;
+      spoolUsedAmountGramsByKey[key] = 0;
+      spoolRemainingAmountGramsByKey[key] = 0;
+      lastPrintUsedGramsBySpool[key] = 0;
+    }
+
+    assert.equal(restorePersistedMaterialsState(), true);
+    assert.deepEqual(buildPersistedMaterialsState().manualAmounts, before.manualAmounts);
+    MATERIAL_FEEDSTOCK_KEYS.forEach((key, i) => {
+      assert.equal(hotspotMaterialAssignments[key], MARKERS[i % MARKERS.length], key);
+      assert.equal(spoolManualAmountGramsByKey[key], 1000 + i, key);
+      assert.equal(spoolUsedAmountGramsByKey[key], 200 + i, key);
+      assert.equal(spoolRemainingAmountGramsByKey[key], 800 + i, key);
+      assert.equal(lastPrintUsedGramsBySpool[key], 30 + i, key);
+    });
+  } finally {
+    delete globalThis.window;
+  }
+});
+
+test("the key list and the capacity table are one table, not two", () => {
+  // Adding a feedstock is adding a line to DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY.
+  // If these ever drift apart, byFeedstock() starts producing `undefined`
+  // capacities and the single-source property is gone.
+  assert.deepEqual([...MATERIAL_FEEDSTOCK_KEYS], Object.keys(DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY));
+});
+
+test("the selected job's grams are read back through the accessor that pairs with the setter", () => {
+  // They stopped being `export let` — a live binding is a write no reader can
+  // see coming. This is the whole external surface they have left.
+  setSelectedPrintJobUsage(640, 705);
+  assert.deepEqual(getSelectedPrintJobUsage(), { estimatedGrams: 640, actualGrams: 705 });
 });
