@@ -247,14 +247,12 @@ than the rest:
 | `PRINTER_NOTIFICATION_SIGNALS` | `hmi/ports/machineLink.js` | `notifications.js`, `prePrintCheck.js` |
 | `MeltioErrors` | `hmi/error_codes.js` | `hmi/ports/machineLink.js` |
 | **`MeltioMachine`** | **nothing published** — the assembly (`urdf_viewer.js`) | `error_codes.js`, `ports/machineLink.js` |
-| **`ENABLE_NOTIFICATION_MOCK_SIGNALS`** | **nothing** — host config | `notifications.js` |
 
-The two in bold are the ones a host must provide itself. `MeltioMachine` is the
-sharp one: the artefact README invites a host to replace `urdf_viewer.js`, and
-the fault path runs `telemetry → MeltioErrors.raise → MeltioMachine.
-haltPrintForError`. Replace the assembly without reproviding the global and
-that path ends in a guarded `if` — no halt, no message. See §1.1 for why that
-path carries weight.
+The one in bold is the one a host must provide itself, and it is the sharp one:
+the artefact README invites a host to replace `urdf_viewer.js`, and the fault
+path runs `telemetry → MeltioErrors.raise → MeltioMachine.haltPrintForError`.
+Replace the assembly without reproviding the global and that path ends in a
+guarded `if` — no halt, no message. See §1.1 for why that path carries weight.
 
 ### 3.4 Sensor/utility modules — `static/modules/`
 Support the point-cloud viewer (unrelated to printing):
