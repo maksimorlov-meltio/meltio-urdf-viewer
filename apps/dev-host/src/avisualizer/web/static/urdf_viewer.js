@@ -48,6 +48,7 @@ import {
 import {
   initPrintFlowState,
   isPrintActivelyRunning,
+  isPrintSessionActive,
   slicerPlacementOffsetMm,
   printSim, setPrintSim,
   isDockedPrintActive, setDockedPrintActive,
@@ -4905,9 +4906,42 @@ function initMachineLink() {
   machineLink.start();
 }
 
-// Reflect the machine's connection/operational state in the topbar label.
+// Reflect the machine's connection/operational state in the topbar label, and
+// react to the two states that mean the machine has stopped itself.
 function onMachineStateChange(next) {
-  if (!topbarConnectionEl) return;
+  // The guard used to wrap this whole function, so on a page with no
+  // #topbarConnection element NOTHING below would run either. It now protects
+  // only the label block it belongs to.
+  if (topbarConnectionEl) renderConnectionLabel(next);
+
+  // A fault or an engaged E-stop: the machine has ALREADY stopped. Park the
+  // local reveal so the scene stops depicting deposition that is not happening,
+  // and say so.
+  //
+  // Deliberately NOT commanding STOP. There is nothing left to stop — and
+  // stopPrint requires an operator (contract.json), so on a signed-out kiosk
+  // the command would fail and the operator's only feedback about a machine
+  // fault would be a spurious "Stop command failed" toast on top of it.
+  if (next === "fault" || next === "estop") {
+    if (printSim && printSim.getState() === "playing") {
+      printSim.pause();
+      printDialogsUi.openPauseNotice();
+    }
+    showPrintNotice(next === "estop"
+      ? "Emergency stop engaged on the machine."
+      : "The machine reported a fault and stopped.");
+  }
+
+  // No branch for `idle` or `completed`, and that is the design working rather
+  // than an omission: the chrome DERIVES from isPrintSessionActive(), so "the
+  // print ended somewhere else" needs no code. An idle branch that tore the
+  // scene down would kill a demo simulation because a mock said idle.
+
+  updateTopbarPrintProgress();
+  updateBottomNavState();
+}
+
+function renderConnectionLabel(next) {
   const label = {
     disconnected: t("topbar.disconnected"),
     connecting: t("topbar.connecting"),
@@ -4941,7 +4975,18 @@ function onMachineStateChange(next) {
 const MACHINE_PROGRESS_RESYNC_THRESHOLD = 0.03;
 
 function onMachineTelemetry(snap) {
-  if (!printSim || !snap || !isDockedPrintActive) return;
+  if (!snap) return;
+  // The topbar pill is drawn from telemetry now, so it has to be refreshed on
+  // every snapshot — including the ones the guard below drops. Cheap: it
+  // memoizes and only writes to the DOM when a rendered value changed.
+  updateTopbarPrintProgress();
+  updateBottomNavState();
+  // `isDockedPrintActive` is gone from the guard on purpose. It is set by
+  // startDockedPrint and does not survive a reload, so requiring it meant the
+  // progress resync below could never run for a print this page did not start —
+  // the exact case N-C3 is about. What remains is the honest precondition:
+  // there has to be a local simulation to resync.
+  if (!printSim) return;
   const state = snap.state;
   if (state === "printing" || state === "paused" || state === "completed") {
     const target = state === "completed" ? 1 : (Number(snap.progress) || 0);
@@ -10441,25 +10486,33 @@ function confirmStopPrint() {
   // the NEXT model's "Start print" can reuse its placement (warmToolpathReady),
   // leaving the fresh part hanging in mid-air below the nozzle. stop() forces the
   // next selection to re-prepare + re-place from a clean slate.
-  if (printSim && printSim.getState() !== "idle") {
+  if (printSim && simStateAtStop !== "idle") {
     printSim.stop();
   }
-  // Reset the scene: stop the bed tracing AND remove the STL/sliced model from the
-  // scene entirely (clearCloudStlObject tears down the bed sim, disposes the
-  // overlay, and re-renders the file library) so the user is left with just the
-  // Files list — no model in the viewport.
-  clearCloudStlObject();
   expandFilesListForPrint();
-  // eje_x / eje_y / z_axis all return to the print position, ready for the next
-  // print. The vertical z_axis MUST be reset too (not just X/Y): leaving it at the
-  // previous print's descended height made the next print's start-pose solve land
-  // differently and clamp, hanging the first bead below the nozzle.
-  resetGantryToPrintPosition();
+  // The scene teardown only makes sense if this page was the one showing the
+  // print. With the machine authoritative, Stop is now reachable with the local
+  // sim idle — after a reload, say — and there `resetGantryToPrintPosition()`
+  // would SNAP THE ON-SCREEN ROBOT to the print pose while the real machine is
+  // half way through a part. Nothing to tear down, so tear nothing down; the
+  // STOP command above already went out, which is the part that matters.
+  if (simStateAtStop !== "idle") {
+    // Reset the scene: stop the bed tracing AND remove the STL/sliced model from
+    // the scene entirely (clearCloudStlObject tears down the bed sim, disposes
+    // the overlay, and re-renders the file library) so the user is left with
+    // just the Files list — no model in the viewport.
+    clearCloudStlObject();
+    // eje_x / eje_y / z_axis all return to the print position, ready for the next
+    // print. The vertical z_axis MUST be reset too (not just X/Y): leaving it at the
+    // previous print's descended height made the next print's start-pose solve land
+    // differently and clamp, hanging the first bead below the nozzle.
+    resetGantryToPrintPosition();
+    // Swing the camera back to the Files-menu top-angle view so the user lands in
+    // the file browser looking into the (now empty) build area. Safe here: the sim
+    // is idle after stop(), so this won't fight an active print's framing.
+    applyFilesMenuOpenDoorAndCameraBehavior();
+  }
   updateBottomNavState();
-  // Swing the camera back to the Files-menu top-angle view so the user lands in
-  // the file browser looking into the (now empty) build area. Safe here: the sim
-  // is idle after stop(), so this won't fight an active print's framing.
-  applyFilesMenuOpenDoorAndCameraBehavior();
   // Report what was printed / deposited before the stop, and log the partial
   // material used to the usage history.
   if (stopSummary) {
@@ -10484,17 +10537,32 @@ let lastPrintProgressActive = null;
 function updateTopbarPrintProgress() {
   const el = document.getElementById("topbarPrintProgress");
   if (!el) return;
-  const state = printSim && typeof printSim.getState === "function" ? printSim.getState() : "idle";
-  const active = state === "playing" || state === "paused";
+  const simState = printSim && typeof printSim.getState === "function" ? printSim.getState() : "idle";
+  // Visibility follows the SESSION; the numbers below prefer the machine.
+  // Progress can be drawn without a scene, and after an F5 that is the only
+  // thing left to draw — the pill used to vanish while the machine printed on.
+  const active = isPrintSessionActive();
   if (!active && lastPrintProgressActive === false) return;
   lastPrintProgressActive = active;
   document.body.classList.toggle("print-progress-active", active);
   if (el.hidden === active) el.hidden = !active;
   if (!active) return;
-  const progress = typeof printSim.getProgress === "function" ? Number(printSim.getProgress()) || 0 : 0;
+
+  const snap = machineConnected() && machineLink ? machineLink.getTelemetry() : null;
+  const machineState = snap ? String(snap.state || "") : "";
+  const linked = machineState === "printing" || machineState === "paused";
+  const paused = linked ? machineState === "paused" : simState === "paused";
+
+  // Everything below must survive printSim being null: `active` can now be true
+  // with no simulation at all, which is exactly the reloaded-page case.
+  const progress = linked
+    ? Math.max(0, Math.min(1, Number(snap.progress) || 0))
+    : (printSim && typeof printSim.getProgress === "function" ? Number(printSim.getProgress()) || 0 : 0);
   const pct = Math.max(0, Math.min(100, Math.round(progress * 100)));
   let stats = {};
-  try { stats = (typeof printSim.getStats === "function" && printSim.getStats()) || {}; } catch (_e) { /* best effort */ }
+  if (printSim && typeof printSim.getStats === "function") {
+    try { stats = printSim.getStats() || {}; } catch (_e) { /* best effort */ }
+  }
   const total = Number(stats.printSeconds);
   const pctEl = document.getElementById("topbarPrintPct");
   const barEl = document.getElementById("topbarPrintBar");
@@ -10502,11 +10570,19 @@ function updateTopbarPrintProgress() {
   const pctText = `${pct}%`;
   if (pctEl && pctEl.textContent !== pctText) pctEl.textContent = pctText;
   if (barEl) barEl.style.width = pctText;
-  const remainSec = Math.max(0, Math.round(total * (1 - progress)));
+  // The machine's own countdown beats one derived from a local estimate; fall
+  // back to the sliced total only when there is no machine answering.
+  const machineRemain = linked && Number.isFinite(Number(snap.remainingSeconds))
+    ? Math.max(0, Math.round(Number(snap.remainingSeconds)))
+    : null;
+  const localRemain = Number.isFinite(total) && total > 0
+    ? Math.max(0, Math.round(total * (1 - progress)))
+    : null;
+  const remainSec = machineRemain !== null ? machineRemain : localRemain;
   let etaText;
-  if (state === "paused") {
+  if (paused) {
     etaText = "Paused";
-  } else if (Number.isFinite(total) && total > 0) {
+  } else if (remainSec !== null) {
     etaText = `ETA ${formatPrintDuration(remainSec)}`;
   } else {
     etaText = "ETA —";
@@ -10516,13 +10592,12 @@ function updateTopbarPrintProgress() {
   // Hidden while paused (no meaningful finish moment) or when the total is unknown.
   const finishEl = document.getElementById("topbarPrintFinish");
   if (finishEl) {
-    const finishText =
-      state !== "paused" && Number.isFinite(total) && total > 0
-        ? printDialogsUi.formatFinishClock(remainSec)
-        : "";
+    const finishText = !paused && remainSec !== null
+      ? printDialogsUi.formatFinishClock(remainSec)
+      : "";
     if (finishEl.textContent !== finishText) finishEl.textContent = finishText;
   }
-  el.classList.toggle("is-paused", state === "paused");
+  el.classList.toggle("is-paused", paused);
 }
 
 // animate() reaches this every frame (via updateQuickFrontDoorToggleButton), so
@@ -10544,6 +10619,13 @@ function updateBottomNavState() {
     slicerPaneUi.isMenuOpen(),
     isFrontDoorOpen(),
     getLocale(),
+    // The machine term. Without it the key carried nothing the machine could
+    // change, so a telemetry-only transition — the machine starts or finishes
+    // printing while the local sim never moves — produced an identical key and
+    // the early return below swallowed the repaint. The door button would keep
+    // whatever label it had. This is the half of N-C3 that makes the other half
+    // invisible.
+    isPrintSessionActive(),
   ].join("|");
   if (stateKey === lastBottomNavStateKey) {
     return;
@@ -10649,13 +10731,16 @@ function updateBottomNavState() {
   }
 
   if (navDoorToggleEl) {
-    const doorSimState = printSim ? printSim.getState() : "idle";
-    // While a print is docked and underway the door button is repurposed as
-    // Stop. Only in the docked print view — with the Files browser open it stays
-    // the normal Open/Close Door so the bar matches the un-activated state.
-    const printUnderway =
-      filesListCollapsedForPrint &&
-      (doorSimState === "playing" || doorSimState === "paused" || isPrePrintSequenceActive);
+    // While a print is underway the door button is repurposed as Stop.
+    //
+    // EXACTLY the predicate the click listener uses — that is the point, not a
+    // coincidence. The two used to differ: this required
+    // `filesListCollapsedForPrint` and the listener did not, so in any state
+    // where the sim was playing with the Files browser open the button READ
+    // "Open door" and DID "Stop print". A control that mislabels itself is the
+    // same defect family as N-C3, one layer up. In the nominal docked flow both
+    // flags are true, so nothing about a normal print changes.
+    const printUnderway = isPrintSessionActive();
     const labelEl = navDoorToggleEl.querySelector("span");
     const iconEl = navDoorToggleEl.querySelector("svg");
     if (printUnderway) {
@@ -11720,8 +11805,13 @@ if (navDoorToggleEl) {
     markUserActivity();
     // While a print is underway the door button is the Stop control and opens a
     // confirmation first; otherwise it toggles the front door as before.
-    const simState = printSim ? printSim.getState() : "idle";
-    if (simState === "playing" || simState === "paused" || isPrePrintSequenceActive) {
+    //
+    // This used to inline the sim-state test, which made it the sharp end of
+    // N-C3: after an F5 the page comes back with no toolpath, so printSim reads
+    // "idle" while the machine keeps printing — and the button that should say
+    // Stop OPENED THE FRONT DOOR on a running machine. isPrintSessionActive()
+    // also asks the machine.
+    if (isPrintSessionActive()) {
       printDialogsUi.openStopConfirm();
       return;
     }
