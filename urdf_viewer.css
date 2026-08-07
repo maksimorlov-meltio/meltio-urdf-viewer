@@ -185,7 +185,6 @@ body::after {
 
 #scene,
 .annotation-layer,
-.viewcube-overlay,
 .bottom-nav {
   transition: transform 0.28s ease;
   will-change: transform;
@@ -195,12 +194,10 @@ body::after {
    an empty void strip on the left). Instead the rendered image is panned via
    the camera's view offset in JS, which keeps the canvas full-bleed. Only the
    non-projected UI overlays shift with CSS to stay clear of the left panel. */
-body.controls-panel-open .viewcube-overlay,
 body.controls-panel-open .bottom-nav {
   transform: translateX(132px);
 }
 
-body.cloud-menu-open .viewcube-overlay,
 body.cloud-menu-open .bottom-nav {
   transform: translateX(132px);
 }
@@ -1981,20 +1978,17 @@ body.light-mode .feeder-camera-placeholder {
   .control-subpanel,
   .quick-front-door-toggle,
   #scene,
-  .annotation-layer,
-  .viewcube-overlay {
+  .annotation-layer {
     animation: none !important;
     transition: none !important;
   }
 }
 
 @media (max-width: 900px) {
-  body.controls-panel-open .viewcube-overlay,
   body.controls-panel-open .bottom-nav {
     transform: translateX(72px);
   }
 
-  body.cloud-menu-open .viewcube-overlay,
   body.cloud-menu-open .bottom-nav {
     transform: translateX(72px);
   }
@@ -2089,8 +2083,6 @@ body.light-mode .feeder-camera-placeholder {
   inset: 0;
 }
 
-body.controls-panel-open .viewcube-overlay,
-body.cloud-menu-open .viewcube-overlay,
 body.controls-panel-open .bottom-nav,
 body.cloud-menu-open .bottom-nav {
   transform: translateX(132px);
