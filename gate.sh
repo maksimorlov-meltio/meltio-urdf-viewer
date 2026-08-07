@@ -23,7 +23,7 @@ node tools/check_imports.mjs
 echo "=== gate 3/9 — contract: every emitted machine command is declared"
 node tools/check_contract.mjs
 
-echo "=== gate 4/9 — boundaries: hmi/ never imports three; viewer/ no DOM outside overlays/"
+echo "=== gate 4/9 — boundaries: hmi/ no three; viewer/ no DOM outside overlays/; export let census"
 node tools/check_boundaries.mjs
 
 echo "=== gate 5/9 — lint: eslint (errors fail; warnings tolerated)"

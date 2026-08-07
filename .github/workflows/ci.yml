@@ -152,7 +152,7 @@ jobs:
         run: node tools/check_imports.mjs
       - name: Contract gate (every emitted command declared in contract.json)
         run: node tools/check_contract.mjs
-      - name: Boundary gate (hmi/ no-three, viewer/ no-DOM outside overlays)
+      - name: Boundary gate (hmi/ no-three, viewer/ no-DOM outside overlays, export let census)
         run: node tools/check_boundaries.mjs
       # Runs against the COMMITTED urdf.html, before the build step below
       # rewrites it to the (gitignored) bundle. See finding ARQ-1.
