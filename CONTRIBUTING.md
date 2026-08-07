@@ -142,9 +142,14 @@ if you forget.
   `postMessage` (`source:"meltio-slicer"`) only.
 - Role gating (`hmi/permissions.js`) is a **UI convenience, not a security
   boundary**. Any control for a physically dangerous action (motion, laser,
-  feeder, e-stop) must be authorized server-side/in firmware before the live
+  feeder) must be authorized server-side/in firmware before the live
   machine transport (`?machine=1` → `hmi/ports/machineLink.js`) is pointed at real
   hardware.
+- **Do not add an emergency-stop control to the UI.** Emergency stop is a
+  hardware function (physical E-stop + interlocks, with the electronics
+  watchdogging this software), and the console deliberately offers no software
+  equivalent. `stopPrint` is a *recoverable* process halt, not an emergency stop,
+  which is why it requires an operator. See `apps/dev-host/ARCHITECTURE.md` §1.1.
 
 ## Change hygiene
 
