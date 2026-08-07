@@ -48,6 +48,12 @@ export const MELTIO_MATERIAL_LIBRARY = Object.freeze([
 export function getMaterialSpecById(materialId) {
   return MELTIO_MATERIAL_LIBRARY.find((entry) => entry.id === materialId) || null;
 }
+// THE feedstock table. Adding a feedstock is adding a line here and nothing
+// else: the key list, the four per-key accounting records and every persisted
+// block below are all derived from it (finding COD-5 — they used to be spelled
+// out by hand in ten places, so the read path iterated a list the write path
+// did not, and a fourth feedstock would have been dropped on save with no
+// error anywhere: you would only notice it after a reload).
 export const DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY = Object.freeze({
   spool1: 800,
   spool2: 450,
@@ -56,46 +62,39 @@ export const DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY = Object.freeze({
 });
 // Feedstock keys that participate in material assignment / accounting / the print
 // gate. The wire drum is a first-class feedstock alongside the two spools.
-export const MATERIAL_FEEDSTOCK_KEYS = Object.freeze(["spool1", "spool2", "wiredrum"]);
+export const MATERIAL_FEEDSTOCK_KEYS = Object.freeze(Object.keys(DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY));
+// Every per-feedstock record is built through this, so none of them can go out
+// of step with the key list — that skew IS the defect.
+function byFeedstock(valueFor) {
+  return Object.fromEntries(MATERIAL_FEEDSTOCK_KEYS.map((key) => [key, valueFor(key)]));
+}
 export const SPOOL_LOW_THRESHOLD_GRAMS = 500;
 export const SPOOL_LOW_REQUIRED_MARGIN_RATIO = 1.2;
 export const DEFAULT_PRINT_JOB_USAGE_GRAMS = 120;
 export const MATERIALS_STORAGE_KEY = "avisualizer.materials.state.v1";
 
-export const hotspotMaterialAssignments = {
-  spool1: null,
-  spool2: null,
-  wiredrum: null,
-};
+export const hotspotMaterialAssignments = byFeedstock(() => null);
 // Per-feeder feed type shown in the Materials menu (Feeder 1/2 can each be a
 // spool or a drum). Session-persisted under its own localStorage key.
 
-export const spoolManualAmountGramsByKey = {
-  spool1: DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY.spool1,
-  spool2: DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY.spool2,
-  wiredrum: DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY.wiredrum,
-};
-export const spoolUsedAmountGramsByKey = {
-  spool1: 0,
-  spool2: 0,
-  wiredrum: 0,
-};
-export const spoolRemainingAmountGramsByKey = {
-  spool1: DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY.spool1,
-  spool2: DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY.spool2,
-  wiredrum: DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY.wiredrum,
-};
-export let selectedPrintJobEstimatedGrams = DEFAULT_PRINT_JOB_USAGE_GRAMS;
-export let selectedPrintJobActualGrams = null;
-export let lastPrintUsedGramsBySpool = {
-  spool1: 0,
-  spool2: 0,
-  wiredrum: 0,
-};
+export const spoolManualAmountGramsByKey = byFeedstock((key) => DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY[key]);
+export const spoolUsedAmountGramsByKey = byFeedstock(() => 0);
+export const spoolRemainingAmountGramsByKey = byFeedstock((key) => DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY[key]);
+export const lastPrintUsedGramsBySpool = byFeedstock(() => 0);
 // Per-print material-usage history (newest first): { ts, spoolKey, materialId,
 // grams, kind: "print" | "stopped" }. Persisted with the materials state; shown
-// in the materials-menu history view.
-export let materialUsageLog = [];
+// in the materials-menu history view. Replaced in place on restore, never
+// reassigned, so importers hold the one array this module owns.
+export const materialUsageLog = [];
+
+// The selected job's material figures are module-private: they are the only
+// two values here that are genuinely reassigned, and a live binding for them
+// would be a write no reader can see coming. Paired accessor + mutator below.
+let selectedPrintJobEstimatedGrams = DEFAULT_PRINT_JOB_USAGE_GRAMS;
+let selectedPrintJobActualGrams = null;
+export function getSelectedPrintJobUsage() {
+  return { estimatedGrams: selectedPrintJobEstimatedGrams, actualGrams: selectedPrintJobActualGrams };
+}
 export const MATERIAL_USAGE_LOG_MAX = 200;
 
 export function getMaterialLabelById(materialId) {
@@ -189,31 +188,12 @@ export function buildPersistedMaterialsState() {
     version: 1,
     focusedSpoolKey: normalizeSpoolKey(_getUiSelection().focusedSpoolKey) || "spool1",
     selectedMaterialId: _getUiSelection().selectedMaterialId || null,
-    materialAssignments: {
-      spool1: hotspotMaterialAssignments.spool1 || null,
-      spool2: hotspotMaterialAssignments.spool2 || null,
-      wiredrum: hotspotMaterialAssignments.wiredrum || null,
-    },
-    manualAmounts: {
-      spool1: normalizeStoredGrams(spoolManualAmountGramsByKey.spool1, DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY.spool1),
-      spool2: normalizeStoredGrams(spoolManualAmountGramsByKey.spool2, DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY.spool2),
-      wiredrum: normalizeStoredGrams(spoolManualAmountGramsByKey.wiredrum, DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY.wiredrum),
-    },
-    usedAmounts: {
-      spool1: normalizeStoredGrams(spoolUsedAmountGramsByKey.spool1, 0),
-      spool2: normalizeStoredGrams(spoolUsedAmountGramsByKey.spool2, 0),
-      wiredrum: normalizeStoredGrams(spoolUsedAmountGramsByKey.wiredrum, 0),
-    },
-    remainingAmounts: {
-      spool1: normalizeStoredGrams(spoolRemainingAmountGramsByKey.spool1, 0),
-      spool2: normalizeStoredGrams(spoolRemainingAmountGramsByKey.spool2, 0),
-      wiredrum: normalizeStoredGrams(spoolRemainingAmountGramsByKey.wiredrum, 0),
-    },
-    lastPrintUsedBySpool: {
-      spool1: normalizeStoredGrams(lastPrintUsedGramsBySpool.spool1, 0),
-      spool2: normalizeStoredGrams(lastPrintUsedGramsBySpool.spool2, 0),
-      wiredrum: normalizeStoredGrams(lastPrintUsedGramsBySpool.wiredrum, 0),
-    },
+    materialAssignments: byFeedstock((key) => hotspotMaterialAssignments[key] || null),
+    manualAmounts: byFeedstock((key) =>
+      normalizeStoredGrams(spoolManualAmountGramsByKey[key], DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY[key])),
+    usedAmounts: byFeedstock((key) => normalizeStoredGrams(spoolUsedAmountGramsByKey[key], 0)),
+    remainingAmounts: byFeedstock((key) => normalizeStoredGrams(spoolRemainingAmountGramsByKey[key], 0)),
+    lastPrintUsedBySpool: byFeedstock((key) => normalizeStoredGrams(lastPrintUsedGramsBySpool[key], 0)),
     usageLog: materialUsageLog.slice(0, MATERIAL_USAGE_LOG_MAX),
   };
 }
@@ -281,9 +261,11 @@ export function restorePersistedMaterialsState() {
   _applyUiSelection({ focusedSpoolKey: persistedFocusKey || null, selectedMaterialId: persistedMaterialId });
 
   if (Array.isArray(parsed.usageLog)) {
-    materialUsageLog = parsed.usageLog
+    // In place, not reassigned: hmi/materials.js holds this array by reference.
+    materialUsageLog.length = 0;
+    materialUsageLog.push(...parsed.usageLog
       .filter((e) => e && typeof e === "object" && Number.isFinite(Number(e.grams)))
-      .slice(0, MATERIAL_USAGE_LOG_MAX);
+      .slice(0, MATERIAL_USAGE_LOG_MAX));
   }
 
   return true;

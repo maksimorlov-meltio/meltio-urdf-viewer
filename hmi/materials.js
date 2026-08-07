@@ -17,7 +17,7 @@ import {
   spoolRemainingAmountGramsByKey,
   lastPrintUsedGramsBySpool,
   materialUsageLog,
-  selectedPrintJobActualGrams,
+  getSelectedPrintJobUsage,
   normalizeSpoolKey,
   getMaterialLabelById,
   getMaterialChipColor,
@@ -130,7 +130,7 @@ const materialsMenuUsageStatusEl = document.getElementById("materialsMenuUsageSt
 const materialsMenuPrintWarningEl = document.getElementById("materialsMenuPrintWarning");
 
 export function getSelectedPrintJobUsedGrams() {
-  const actualGrams = Number(selectedPrintJobActualGrams);
+  const actualGrams = Number(getSelectedPrintJobUsage().actualGrams);
   if (Number.isFinite(actualGrams) && actualGrams > 0) {
     return actualGrams;
   }
