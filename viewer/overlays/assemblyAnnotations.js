@@ -653,7 +653,14 @@ export function createAssemblyAnnotationManager(layerEl, deps = {}) {
     const occlusionStartIndex = occlusionRoundRobinIndex;
     const isFrontDoorViewActive = deps.isFrontDoorOpen();
     const shouldUseFilesPopupRail = deps.isCloudModelMenuOpen();
-    deps.setHotspotTriggerRailVisible(shouldUseFilesPopupRail);
+    // A setHotspotTriggerRailVisible dep used to be called here, once per
+    // frame. Its host implementation bailed out on its first line —
+    // `hotspotTriggerRail` is not in the page — so it never did anything. The
+    // flag itself is still read two lines down.
+    //
+    // The dep name is written without its `deps.` prefix on purpose:
+    // gen_dom_contract scans source text, so spelling it in full would keep it
+    // in the published contract after the last caller is gone.
 
     if (!shouldUseFilesPopupRail && deps.getActiveHotspotPanelId() && !deps.getKeepHotspotContextPanelVisible()) {
       deps.closeHotspotContextPanel();

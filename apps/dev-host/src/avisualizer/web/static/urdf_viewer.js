@@ -110,7 +110,6 @@ import {
   spoolRemainingAmountGramsByKey,
   lastPrintUsedGramsBySpool,
   normalizeSpoolKey,
-  getSpoolDisplayLabel,
   restorePersistedMaterialsState,
   getSelectedPrintJobRequiredGrams,
   formatGramsText,
@@ -235,20 +234,9 @@ const feederJogLeftDownEl = document.getElementById("feederJogLeftDown");
 const feederJogRightUpEl = document.getElementById("feederJogRightUp");
 const feederJogRightDownEl = document.getElementById("feederJogRightDown");
 const hotspotContextPanelEl = document.getElementById("hotspotContextPanel");
-const hotspotContextTitleEl = document.getElementById("hotspotContextTitle");
-const hotspotContextCloseEl = document.getElementById("hotspotContextClose");
-const hotspotTriggerRailEl = document.getElementById("hotspotTriggerRail");
-const hotspotTriggerMaterialsEl = document.getElementById("hotspotTriggerMaterials");
-const hotspotTriggerFeederEl = document.getElementById("hotspotTriggerFeeder");
-const hotspotFeederPanelEl = document.getElementById("hotspotFeederPanel");
 const hotspotFeederCameraPreviewEl = document.getElementById("hotspotFeederCameraPreview");
 const hotspotFeederCameraViewportEl = document.getElementById("hotspotFeederCameraViewport");
 const hotspotMaterialsPanelEl = document.getElementById("hotspotMaterialsPanel");
-const hotspotFeederDriveLeftEl = document.getElementById("hotspotFeederDriveLeft");
-const hotspotFeederDriveStopEl = document.getElementById("hotspotFeederDriveStop");
-const hotspotFeederDriveRightEl = document.getElementById("hotspotFeederDriveRight");
-const hotspotFeederDriveUpEl = document.getElementById("hotspotFeederDriveUp");
-const hotspotFeederDriveDownEl = document.getElementById("hotspotFeederDriveDown");
 const filesMaterialsPanelEl = document.getElementById("filesMaterialsPanel");
 const filesFeederDriveUpEl = document.getElementById("filesFeederDriveUp");
 const filesFeederDriveStopEl = document.getElementById("filesFeederDriveStop");
@@ -610,8 +598,6 @@ const FRONT_DOOR_SEQUENCE_PALPADOR_JOINT = "palpador_pro_joint";
 const FRONT_DOOR_SEQUENCE_Z_JOINT = "z_axis_joint";
 const FRONT_DOOR_SEQUENCE_X_JOINT = "eje_x_joint";
 const FRONT_DOOR_SEQUENCE_Y_JOINT = "eje_y_joint";
-const VIEW_CUBE_TRANSITION_DURATION_MS = 860;
-const VIEW_CUBE_RENDER_PIXEL_RATIO = 1.25;
 const FEEDER_PREVIEW_RENDER_PIXEL_RATIO = 1.5;
 const FEEDER_PREVIEW_MIN_FRAME_MS = 16;
 const FEEDER_PREVIEW_WHEEL_LAYER = 7;
@@ -900,7 +886,6 @@ const SCENE_SHIFT_MOBILE_PX = 72;
 const SCENE_VIEW_SHIFT_TIME_CONSTANT = 0.08;
 let sceneViewShiftCurrentPx = 0;
 const OVERLAY_MENU_SAFE_MARGIN_PX = 10;
-const HOTSPOT_CONTEXT_PANEL_BOTTOM_GAP_PX = 16;
 const HOTSPOT_UI_TRANSITION_MS = 200;
 
 function escapeHtml(value) {
@@ -924,7 +909,6 @@ let isControlsPanelOpen = false;
 let activeHotspotPanelId = null;
 let keepHotspotContextPanelVisible = false;
 let hotspotContextPanelHideTimeoutId = null;
-let hotspotTriggerRailHideTimeoutId = null;
 let activeSpoolHighlightKey = null;
 let spoolHighlightUntilMs = 0;
 let spoolHighlightRingMesh = null;
@@ -1022,7 +1006,6 @@ const assemblyAnnotationManager = createAssemblyAnnotationManager(annotationLaye
   getKeepHotspotContextPanelVisible: () => keepHotspotContextPanelVisible,
   isCloudModelMenuOpen: () => isCloudModelMenuOpen,
   closeHotspotContextPanel: () => closeHotspotContextPanel(),
-  setHotspotTriggerRailVisible: (visible) => setHotspotTriggerRailVisible(visible),
   toggleHotspotContextPanel: (panelId) => toggleHotspotContextPanel(panelId),
   setHotspotMaterialsFocusSpool: (key) => setHotspotMaterialsFocusSpool(key),
   getFrontDoorControlData: () => getFrontDoorControlData(),
@@ -2016,21 +1999,17 @@ function updateFeederDriveButtons() {
   const downActive = feederDriveVertical === "down";
 
   setToggleButtonState(feederDriveLeftEl, leftActive);
-  setToggleButtonState(hotspotFeederDriveLeftEl, leftActive);
   setToggleButtonState(feederDriveStopEl, stopActive);
-  setToggleButtonState(hotspotFeederDriveStopEl, stopActive);
   setToggleButtonState(feederDriveRightEl, rightActive);
-  setToggleButtonState(hotspotFeederDriveRightEl, rightActive);
   setToggleButtonState(feederDriveUpEl, upActive);
-  setToggleButtonState(hotspotFeederDriveUpEl, upActive);
   setToggleButtonState(feederDriveDownEl, downActive);
-  setToggleButtonState(hotspotFeederDriveDownEl, downActive);
   // Controls ▸ Feeder panel per-wheel jog buttons (one active at a time).
   setToggleButtonState(feederJogLeftUpEl, leftActive && upActive);
   setToggleButtonState(feederJogLeftDownEl, leftActive && downActive);
   setToggleButtonState(feederJogRightUpEl, rightActive && upActive);
   setToggleButtonState(feederJogRightDownEl, rightActive && downActive);
   updateFilesSelectedSpoolFeederButtons();
+
   updateFeederDriveDirectionIndicator();
   updateFeederWheelFloatingControls();
 }
@@ -2199,22 +2178,8 @@ function setActiveHotspotPanel(panelId) {
   setHotspotContextPanelVisibility(hasActivePanel);
   hotspotContextPanelEl.setAttribute("aria-hidden", hasActivePanel ? "false" : "true");
 
-  if (hotspotFeederPanelEl) {
-    hotspotFeederPanelEl.hidden = normalizedPanelId !== HOTSPOT_PANEL_FEEDER_ID;
-  }
   if (hotspotMaterialsPanelEl) {
     hotspotMaterialsPanelEl.hidden = normalizedPanelId !== HOTSPOT_PANEL_MATERIALS_ID;
-  }
-
-  if (hotspotContextTitleEl) {
-    if (normalizedPanelId === HOTSPOT_PANEL_FEEDER_ID) {
-      hotspotContextTitleEl.textContent = "Feeder Controls";
-    } else if (normalizedPanelId === HOTSPOT_PANEL_MATERIALS_ID) {
-      const focusedSpoolKey = ensureHotspotMaterialsFocusSpool();
-      hotspotContextTitleEl.textContent = getSpoolDisplayLabel(focusedSpoolKey);
-    } else {
-      hotspotContextTitleEl.textContent = "Hotspot";
-    }
   }
 
   if (normalizedPanelId === HOTSPOT_PANEL_FEEDER_ID) {
@@ -2227,8 +2192,6 @@ function setActiveHotspotPanel(panelId) {
     setSpoolAssemblyHighlight(focusedSpoolKey);
   }
 
-  updateHotspotTriggerButtonStates();
-  updateFeederDriveDirectionIndicator();
   updateHotspotContextPanelPosition(normalizedPanelId);
   feederPreviewController?.onPanelStateChange(normalizedPanelId);
 
@@ -2237,16 +2200,6 @@ function setActiveHotspotPanel(panelId) {
       updateHotspotContextPanelPosition(normalizedPanelId);
     });
   }
-}
-
-function getHotspotPanelAnchorButton(panelId) {
-  if (panelId === HOTSPOT_PANEL_FEEDER_ID) {
-    return hotspotTriggerFeederEl;
-  }
-  if (panelId === HOTSPOT_PANEL_MATERIALS_ID) {
-    return hotspotTriggerMaterialsEl;
-  }
-  return null;
 }
 
 function updateHotspotContextPanelPosition(panelId = activeHotspotPanelId) {
@@ -2270,38 +2223,12 @@ function updateHotspotContextPanelPosition(panelId = activeHotspotPanelId) {
     return;
   }
 
-  const anchorButton = getHotspotPanelAnchorButton(panelId);
-  if (!anchorButton) {
-    hotspotContextPanelEl.style.top = "";
-    return;
-  }
-
-  const anchorRect = anchorButton.getBoundingClientRect();
-  const panelRect = hotspotContextPanelEl.getBoundingClientRect();
-  const panelHeight = Math.max(panelRect.height, 150);
-  const overlayYBounds = getOverlayVerticalSafeBounds(panelHeight);
-  let minY = overlayYBounds.minY;
-  let maxY = overlayYBounds.maxY;
-
-  const bottomMenuEl = document.querySelector(".bottom-nav");
-  if (bottomMenuEl && !bottomMenuEl.hasAttribute("hidden")) {
-    const bottomRect = bottomMenuEl.getBoundingClientRect();
-    if (Number.isFinite(bottomRect.top) && bottomRect.height > 0) {
-      maxY = Math.min(maxY, bottomRect.top - HOTSPOT_CONTEXT_PANEL_BOTTOM_GAP_PX - panelHeight);
-    }
-  }
-
-  if (maxY < minY) {
-    maxY = minY;
-  }
-
-  const desiredTop = clamp(
-    anchorRect.top - 8,
-    minY,
-    maxY,
-  );
-
-  hotspotContextPanelEl.style.top = `${Math.round(desiredTop)}px`;
+  // The context panel used to be positioned against whichever trigger button
+  // opened it. Both triggers (hotspotTriggerFeeder / hotspotTriggerMaterials)
+  // left the page long ago, so the anchor lookup returned null on every call
+  // and this function has done nothing but clear `top` ever since. What
+  // followed — the safe-bounds clamp against the bottom nav — went with them.
+  hotspotContextPanelEl.style.top = "";
 }
 
 function setFeederCameraPreviewPlaceholder(label = "Feeder Camera") {
@@ -2345,79 +2272,6 @@ function updateFeederDriveDirectionIndicator() {
   if (indicatorEl) {
     indicatorEl.remove();
   }
-}
-
-function setHotspotTriggerRailVisible(isVisible) {
-  if (!hotspotTriggerRailEl) {
-    return;
-  }
-
-  const embeddedInFilesPanel = Boolean(
-    cloudModelPopupEl
-      && hotspotTriggerRailEl
-      && cloudModelPopupEl.contains(hotspotTriggerRailEl),
-  );
-
-  if (embeddedInFilesPanel) {
-    const visible = Boolean(isVisible);
-    hotspotTriggerRailEl.hidden = !visible;
-    hotspotTriggerRailEl.classList.toggle("is-visible", visible);
-    hotspotTriggerRailEl.classList.remove("is-hiding");
-    hotspotTriggerRailEl.setAttribute("aria-hidden", visible ? "false" : "true");
-    return;
-  }
-
-  const visible = Boolean(isVisible);
-
-  if (visible) {
-    if (!hotspotTriggerRailEl.hidden && hotspotTriggerRailEl.classList.contains("is-visible")) {
-      hotspotTriggerRailEl.setAttribute("aria-hidden", "false");
-      return;
-    }
-
-    if (hotspotTriggerRailHideTimeoutId) {
-      window.clearTimeout(hotspotTriggerRailHideTimeoutId);
-      hotspotTriggerRailHideTimeoutId = null;
-    }
-
-    hotspotTriggerRailEl.hidden = false;
-    hotspotTriggerRailEl.classList.remove("is-hiding");
-    hotspotTriggerRailEl.setAttribute("aria-hidden", "false");
-    // Force style flush so open transition reliably starts on every browser tick.
-    void hotspotTriggerRailEl.offsetWidth;
-    hotspotTriggerRailEl.classList.add("is-visible");
-    return;
-  }
-
-  if (hotspotTriggerRailEl.hidden || hotspotTriggerRailEl.classList.contains("is-hiding")) {
-    hotspotTriggerRailEl.setAttribute("aria-hidden", "true");
-    return;
-  }
-
-  hotspotTriggerRailEl.classList.remove("is-visible");
-  hotspotTriggerRailEl.classList.add("is-hiding");
-  hotspotTriggerRailEl.setAttribute("aria-hidden", "true");
-
-  if (hotspotTriggerRailHideTimeoutId) {
-    window.clearTimeout(hotspotTriggerRailHideTimeoutId);
-  }
-
-  hotspotTriggerRailHideTimeoutId = window.setTimeout(() => {
-    if (hotspotTriggerRailEl.classList.contains("is-visible")) {
-      return;
-    }
-
-    hotspotTriggerRailEl.hidden = true;
-    hotspotTriggerRailEl.classList.remove("is-hiding");
-    hotspotTriggerRailHideTimeoutId = null;
-  }, HOTSPOT_UI_TRANSITION_MS);
-}
-
-function updateHotspotTriggerButtonStates() {
-  const materialsActive = activeHotspotPanelId === HOTSPOT_PANEL_MATERIALS_ID;
-  const feederActive = activeHotspotPanelId === HOTSPOT_PANEL_FEEDER_ID;
-  setToggleButtonState(hotspotTriggerMaterialsEl, materialsActive);
-  setToggleButtonState(hotspotTriggerFeederEl, feederActive);
 }
 
 function closeHotspotContextPanel() {
@@ -5026,7 +4880,6 @@ function setCloudModelMenuOpen(isOpen, options = {}) {
     cloudModelMenuOpenEl.setAttribute("aria-expanded", isCloudModelMenuOpen ? "true" : "false");
   }
 
-  setHotspotTriggerRailVisible(isCloudModelMenuOpen);
 
   if (!isCloudModelMenuOpen) {
     if (activeHotspotPanelId) {
@@ -5035,8 +4888,6 @@ function setCloudModelMenuOpen(isOpen, options = {}) {
   } else if (!activeHotspotPanelId) {
     setHotspotMaterialsFocusSpool(null);
     setActiveHotspotPanel(HOTSPOT_PANEL_MATERIALS_ID);
-  } else {
-    updateHotspotTriggerButtonStates();
   }
 
   if (isCloudModelMenuOpen) {
@@ -9744,7 +9595,6 @@ async function loadUrdf(urdfUrl) {
     requestRender();
 
     if (isCloudModelMenuOpen) {
-      setHotspotTriggerRailVisible(true);
       if (!activeHotspotPanelId) {
         setHotspotMaterialsFocusSpool(null);
         setActiveHotspotPanel(HOTSPOT_PANEL_MATERIALS_ID);
@@ -10851,41 +10701,6 @@ if (feederJogRightDownEl) {
   feederJogRightDownEl.addEventListener("click", () => runFeederJogToggle("right", "down"));
 }
 
-if (hotspotFeederDriveLeftEl) {
-  hotspotFeederDriveLeftEl.addEventListener("click", () => {
-    markUserActivity();
-    setFeederDriveSide("left");
-  });
-}
-
-if (hotspotFeederDriveStopEl) {
-  hotspotFeederDriveStopEl.addEventListener("click", () => {
-    markUserActivity();
-    setFeederDriveStop();
-  });
-}
-
-if (hotspotFeederDriveRightEl) {
-  hotspotFeederDriveRightEl.addEventListener("click", () => {
-    markUserActivity();
-    setFeederDriveSide("right");
-  });
-}
-
-if (hotspotFeederDriveUpEl) {
-  hotspotFeederDriveUpEl.addEventListener("click", () => {
-    markUserActivity();
-    setFeederDriveVertical("up");
-  });
-}
-
-if (hotspotFeederDriveDownEl) {
-  hotspotFeederDriveDownEl.addEventListener("click", () => {
-    markUserActivity();
-    setFeederDriveVertical("down");
-  });
-}
-
 if (feederWheelFloatLeftUpEl) {
   feederWheelFloatLeftUpEl.addEventListener("click", () => {
     markUserActivity();
@@ -10970,28 +10785,6 @@ if (filesFeederWheelRightEl) {
   filesFeederWheelRightEl.addEventListener("click", () => {
     markUserActivity();
     selectFeederWheelSpool("spool2");
-  });
-}
-
-if (hotspotContextCloseEl) {
-  hotspotContextCloseEl.addEventListener("click", () => {
-    markUserActivity();
-    closeHotspotContextPanel();
-  });
-}
-
-if (hotspotTriggerMaterialsEl) {
-  hotspotTriggerMaterialsEl.addEventListener("click", () => {
-    markUserActivity();
-    setHotspotMaterialsFocusSpool(null);
-    toggleHotspotContextPanel(HOTSPOT_PANEL_MATERIALS_ID);
-  });
-}
-
-if (hotspotTriggerFeederEl) {
-  hotspotTriggerFeederEl.addEventListener("click", () => {
-    markUserActivity();
-    toggleHotspotContextPanel(HOTSPOT_PANEL_FEEDER_ID);
   });
 }
 
@@ -11714,7 +11507,6 @@ updateHotspotMaterialAssignmentStatus();
 updateFilesSelectedSpoolFeederButtons();
 keepHotspotContextPanelVisible = false;
 setActiveHotspotPanel(null);
-setHotspotTriggerRailVisible(false);
 // Settings + Advanced mode domain (hmi/settings.js) — owns its DOM, state,
 // listeners and the window.MeltioAdvanced bridge permissions.js drives.
 settingsUi = createSettingsUi({

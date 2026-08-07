@@ -889,7 +889,6 @@
         "runTopCoverButtonAction",
         "setFrontDoorOpenState",
         "setHotspotMaterialsFocusSpool",
-        "setHotspotTriggerRailVisible",
         "setSpoolsDoorOpenState",
         "setTopCoverOpenState",
         "toggleHotspotContextPanel"
