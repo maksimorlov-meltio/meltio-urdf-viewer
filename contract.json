@@ -26,7 +26,7 @@
         "commands": {
           "toggleFrontDoor": { "params": {}, "permission": "operator", "motion": true },
           "toggleTopDoor": { "params": {}, "permission": "operator", "motion": true, "since": 2 },
-          "homePosition": { "params": {}, "permission": "none", "motion": false, "note": "camera/scene preset, not machine motion" },
+          "resetCameraHome": { "params": {}, "permission": "none", "motion": false, "note": "camera/scene preset, not machine motion. Renamed from 'homePosition' in this revision: it sat between 'home'/'homeXY'/'homeZ', which DO move axes, and nothing has ever emitted it. The viewer channel keeps its own 'homePosition' message - that channel has no machine commands to be confused with" },
           "openMaterials": { "params": {}, "permission": "none", "motion": false },
           "closeMaterials": { "params": {}, "permission": "none", "motion": false },
           "openFiles": { "params": {}, "permission": "none", "motion": false },
@@ -53,13 +53,14 @@
           "setChiller": { "params": { "on": "boolean", "targetC": "number?" }, "permission": "operator", "motion": false, "since": 2 },
           "setLight": { "params": { "on": "boolean" }, "permission": "none", "motion": false, "since": 2 },
 
-          "jog": { "params": { "axis": "x|y|z", "direction": "-1|1", "distanceMm": "number>0" }, "permission": "support", "motion": true, "since": 2, "aliases": ["JOG"] },
+          "jog": { "params": { "axis": "x|y|z", "direction": "-1|1", "distanceMm": "number, 0 < d <= 100" }, "permission": "support", "motion": true, "since": 2, "aliases": ["JOG"], "note": "the upper bound is the largest step the jog pad offers (urdf.html data-move-step). A host MUST reject anything outside it: this is the one command whose magnitude comes straight from a touch target" },
           "homeXY": { "params": {}, "permission": "operatorPlus", "motion": true, "since": 2 },
           "homeZ": { "params": {}, "permission": "operatorPlus", "motion": true, "since": 2 },
           "home": { "params": {}, "permission": "operatorPlus", "motion": true, "since": 2, "note": "full homing routine", "aliases": ["HOME"] },
           "setProbe": { "params": { "deployed": "boolean" }, "permission": "support", "motion": true, "since": 2, "note": "palpador deploy/retract" },
 
-          "loadFeeder": { "params": { "feeder": "1|2", "materialId": "string?", "amountGrams": "number?" }, "permission": "operator", "motion": true, "since": 2, "aliases": ["FEEDER"] },
+          "driveFeeder": { "params": { "action": "side|vertical|stop", "side": "left|right" }, "permission": "operator", "motion": true, "since": 2, "aliases": ["FEEDER"], "note": "drives the feeder wheel. This IS what the HMI emits and what a handler answers; 'FEEDER' used to be listed as an alias of loadFeeder, which shares none of its params - two different operations paired on the word 'feeder'" },
+          "loadFeeder": { "params": { "feeder": "1|2", "materialId": "string?", "amountGrams": "number?" }, "permission": "operator", "motion": true, "since": 2, "note": "load material into a feeder. Nothing emits it and no handler exists; kept as the wide-contract placeholder the $comment authorises. It lost its 'FEEDER' alias - see driveFeeder" },
           "unloadFeeder": { "params": { "feeder": "1|2" }, "permission": "operator", "motion": true, "since": 2 },
 
           "arm": { "params": {}, "permission": "operatorPlus", "motion": true, "since": 2, "aliases": ["ARM"] },
@@ -83,7 +84,24 @@
           "printState": { "payload": { "state": "string", "modelName": "string|null?", "detail": "string|null?" } },
           "printProgress": { "payload": { "progress": "number 0-1" } },
           "materialsState": { "payload": { "requiredGrams": "number", "spools": "record<spool, {materialId, initialGrams, usedGrams}>" } },
-          "machineState": { "payload": { "connected": "boolean", "state": "disconnected|connecting|idle|homing|armed|printing|paused|completed|fault|estop", "progress": "number 0-1", "layer": "number", "layerCount": "number", "elapsedSeconds": "number", "remainingSeconds": "number", "position": "{x,y,z} mm", "signals": "object", "activeCodes": "string[]", "ts": "epoch ms" }, "since": 2, "note": "telemetry snapshot; replaces the HMI's 60fps DOM readout loops - UI updates on this event" },
+          "machineState": {
+            "payload": {
+              "connected": "boolean",
+              "state": "disconnected|connecting|idle|homing|armed|printing|paused|completed|fault|estop",
+              "progress": "number 0-1",
+              "layer": "number",
+              "layerCount": "number",
+              "elapsedSeconds": "number",
+              "remainingSeconds": "number",
+              "position": "{x,y,z} mm",
+              "signals": "{ emergencyStopActive, machineArmedRequired, machineArmedState, inertedSystemActive, filtrationRequired, controllerBoardConnected, gasFlowLow, gasFlowDecreasing, coolantFlowLow, closedLoopFault, externalSecurityFault, softwareUpdateAvailable, firmwareUpdateAvailable, internetConnected, preventiveMaintenanceDue, doorsClosed, laserHeadReady: boolean|null; coolantTemperature: number|null }",
+              "activeCodes": "Array<{ class: \"error\"|\"warning\", code: string }>",
+              "ts": "epoch ms"
+            },
+            "since": 2,
+            "note": "telemetry snapshot; replaces the HMI's 60fps DOM readout loops - UI updates on this event",
+            "$revision": "'signals' and 'activeCodes' used to read 'object' and 'string[]'. Both were wrong, and a host cannot discover either from the wire because both fail SILENTLY. activeCodes: the HMI reads item.class/item.code (hmi/ports/machineLink.js), so a bare string array raises no fault at all - and MeltioErrors.raise has exactly one caller, that reconcile loop, so a contract-faithful host loses every fault the machine reports. signals: the pre-print interlock takes live telemetry VERBATIM and fails closed on missing keys, so a partial object blocks printing with no explanation. The keys above are the full set the HMI knows (hmi/notifications.js mockNotificationSignals); send them all."
+          },
           "sessionChanged": { "payload": { "user": "{id, username, name, roleId, roleName, rank, permissions[]}|null" }, "since": 2 }
         }
       }
