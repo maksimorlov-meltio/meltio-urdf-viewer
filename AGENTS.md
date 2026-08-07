@@ -17,7 +17,7 @@ and component classes; never invent new hex colors or one-off button styles).
 | `tools/` | the JS gates (`check_imports`, `check_contract`, `check_boundaries`) | keep them green |
 | `tests/js/`, `tests/smoke/` | unit tests and full-stack smoke | extend when you add a module. `support/domStub.mjs` = import an `hmi/` module with no DOM (pure logic); `support/domFixture.mjs` = the real `urdf.html` under jsdom (rendering, listeners) |
 | `contract.json` | the UI↔host message contract, v2, **host-owned** | see below |
-| `contract-dom.json` | generated: the DOM ids + injected deps the published modules require of an embedder | never hand-edit — `node tools/gen_dom_contract.mjs` |
+| `contract-dom.json` | generated: the DOM ids, injected deps and `window` globals the published modules require of an embedder | never hand-edit — `node tools/gen_dom_contract.mjs` |
 | `contract-http.json` | generated: the HTTP routes an embedder must provide, which published module calls each, and which enforce authorisation server-side | never hand-edit — `.\.venv\Scripts\python.exe apps/dev-host/tools/gen_http_contract.py` |
 | `release` branch | auto-published `hmi/` + `viewer/` + both contracts | **never commit to it** — the `release` workflow owns it |
 
@@ -30,9 +30,9 @@ resolves via its esbuild plugin. Intra-partition imports stay relative.
 1. **The gate must pass before any PR**: `bash gate.sh` (nine checks: syntax,
    imports, contract, boundaries, lint, tests+build, entry, dom-contract,
    dead-lookups). CI enforces the same; `main` is protected — all PRs need 3
-   required checks. Adding a `getElementById` or a `deps` key to `hmi/` or
-   `viewer/` changes the published artefact's contract: regenerate
-   `contract-dom.json` and commit it in the same change.
+   required checks. Adding a `getElementById`, a `deps` key or a `window.X`
+   read to `hmi/` or `viewer/` changes the published artefact's contract:
+   regenerate `contract-dom.json` and commit it in the same change.
 2. **`contract.json` is host-owned and now ENFORCED.** Any new machine command
    the frontend emits must be declared there first (camelCase, or a legacy
    alias) — an undeclared command is a 400. Its `permission` level is compared
