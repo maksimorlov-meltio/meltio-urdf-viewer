@@ -78,9 +78,9 @@
 
   <link name="palpador_pro_link">
     <visual>
-      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <origin xyz="0.06665 0.03244 0.01529" rpy="-3.140950 -0.000285 1.570937"/>
       <geometry>
-        <mesh filename="Palpador PRO.glb" scale="0.001 0.001 0.001"/>
+        <mesh filename="Palpador PRO.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -98,7 +98,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
       <geometry>
-        <mesh filename="Wire Drum.glb" scale="0.001 0.001 0.001"/>
+        <mesh filename="Wire Drum.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -118,7 +118,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
       <geometry>
-        <mesh filename="User Step.glb" scale="0.001 0.001 0.001"/>
+        <mesh filename="User Step.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
