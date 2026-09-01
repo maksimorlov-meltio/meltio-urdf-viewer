@@ -167,7 +167,7 @@ jobs:
       # Every getElementById is guarded, so an element that was never added to
       # the page fails silently forever. Ratchet: the known ones are listed, new
       # ones fail.
-      - name: Dead-lookup gate (no new lookups without an element)
+      - name: Dead-lookup gate (no lookup without an element, no bound URDF name without a link)
         run: node tools/check_dead_lookups.mjs
       - name: Viewer JS unit tests (pure hmi/ + viewer/ modules)
         run: npm test

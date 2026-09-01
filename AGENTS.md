@@ -59,7 +59,10 @@ resolves via its esbuild plugin. Intra-partition imports stay relative.
    change** — a listener on a missing element throws at load and kills the
    whole module. The reverse direction is now gated: `getElementById` on an id
    that is not in `urdf.html` fails **silently** (every lookup is guarded), so
-   `tools/check_dead_lookups.mjs` refuses new ones. 36 pre-existing dead
+   `tools/check_dead_lookups.mjs` refuses new ones. The same gate holds the
+   URDF: a link/joint name the code binds to (`front_door_joint`,
+   `wire_drum_link`, …) must be declared in `M600_PRO.urdf`. Renaming one there
+   throws nothing — the part simply stops moving. 36 pre-existing dead
    lookups are grandfathered in its list; that number may only go down.
 7. **Mesh assets are Git LFS** (root `.gitattributes`). If you move them,
    verify the pointer state afterwards:

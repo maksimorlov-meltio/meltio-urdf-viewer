@@ -1,6 +1,9 @@
 #!/usr/bin/env node
-// Dead-lookup ratchet: every element id the hmi/ + viewer/ modules look up must
-// exist in urdf.html, except the ones grandfathered below.
+// Dead-lookup ratchet. Two lookups, one rule: a name the code binds to must
+// exist in the thing it binds to, or the binding silently does nothing.
+//
+//   1. every element id the modules look up must exist in urdf.html
+//   2. every URDF link/joint name the code names must exist in the URDF
 //
 //   node tools/check_dead_lookups.mjs
 //
@@ -14,7 +17,7 @@
 // This is a ratchet, not a cleanup: the known ones are listed so the count can
 // only go DOWN. A new dead lookup fails immediately. Removing an id from the
 // page without removing its lookup fails immediately. Fix one, delete its line.
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -22,6 +25,8 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..");
 const HTML = join(REPO_ROOT, "apps", "dev-host", "src", "avisualizer", "web", "static", "urdf.html");
 const CONTRACT = join(REPO_ROOT, "contract-dom.json");
+const URDF = join(REPO_ROOT, "apps", "dev-host", "assets", "M600_PRO", "M600_PRO.urdf");
+const ASSEMBLY = join(REPO_ROOT, "apps", "dev-host", "src", "avisualizer", "web", "static", "urdf_viewer.js");
 
 // EMPTY, and it should stay that way.
 //
@@ -43,6 +48,11 @@ const KNOWN_DEAD = new Set([]);
 const CREATED_AT_RUNTIME = new Set([
   "printNotice", // urdf_viewer.js builds it on first use
 ]);
+
+// The parser's own defaults for a nameless node (viewer/robot/urdfRobot.js).
+// They are literals it WRITES, not names it looks up, so they have no business
+// resolving against the file.
+const PARSER_FALLBACKS = new Set(["unnamed_link", "unnamed_joint"]);
 
 const html = readFileSync(HTML, "utf8");
 const present = new Set([...html.matchAll(/id="([^"]+)"/g)].map((m) => m[1]));
@@ -75,6 +85,56 @@ if (revived.length) {
   console.error("dead-lookups: these are wired up now — remove them from KNOWN_DEAD:");
   for (const id of revived) console.error(`  - ${id}`);
 }
+// --- 2. URDF link/joint names --------------------------------------------
+//
+// The same failure, one layer down and with a nastier deployment story. The
+// assembly binds to ~36 link and joint names by string constant
+// (`front_door_joint`, `wire_drum_link`, `eje_y_link`, …). Nothing resolves
+// them at build time: a renamed joint does not throw, the door just stops
+// opening and the drum stops appearing. An operator sees a machine behaving
+// oddly, not an error.
+//
+// It matters more than it looks because the URDF is deployed as MACHINE
+// CONFIGURATION while the names that depend on it ship with the SOFTWARE, so
+// the two can move on different cadences. check_boot already asserts every
+// mesh the URDF declares actually loads (24/24) — it derives the list from the
+// URDF, so it self-adapts — but it cannot see a joint nobody animates.
+function jsFiles(dir, out = []) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) jsFiles(path, out);
+    else if (entry.name.endsWith(".js")) out.push(path);
+  }
+  return out;
+}
+
+const urdf = readFileSync(URDF, "utf8");
+const declared = new Set([
+  ...[...urdf.matchAll(/<link\s+name="([^"]+)"/g)].map((m) => m[1]),
+  ...[...urdf.matchAll(/<joint\s+name="([^"]+)"/g)].map((m) => m[1]),
+]);
+
+const bindings = new Map();
+for (const file of [ASSEMBLY, ...jsFiles(join(REPO_ROOT, "hmi")), ...jsFiles(join(REPO_ROOT, "viewer"))]) {
+  for (const m of readFileSync(file, "utf8").matchAll(/["'`]([a-z0-9]+(?:_[a-z0-9]+)*_(?:link|joint))["'`]/g)) {
+    if (PARSER_FALLBACKS.has(m[1])) continue;
+    if (!bindings.has(m[1])) bindings.set(m[1], []);
+    bindings.get(m[1]).push(file.slice(REPO_ROOT.length + 1).split(/[\/]/).join("/"));
+  }
+}
+
+const dangling = [...bindings.keys()].filter((name) => !declared.has(name));
+if (dangling.length) {
+  failed = true;
+  console.error("dead-lookups: these URDF names are bound in code but not declared in the URDF:");
+  for (const name of dangling) console.error(`  - ${name}  (${[...new Set(bindings.get(name))].join(", ")})`);
+  console.error(`
+${URDF.slice(REPO_ROOT.length + 1)} declares ${declared.size} links+joints.`);
+  console.error("A renamed joint throws NOTHING — the part just stops moving. Fix the name");
+  console.error("on whichever side is wrong; the URDF and the code version together.");
+}
+
 if (failed) process.exit(1);
 
-console.log(`dead-lookups: ${required.length} ids required, ${dead.length} known-dead, 0 new.`);
+console.log(`dead-lookups: ${required.length} ids required, ${dead.length} known-dead, 0 new; `
+  + `${bindings.size}/${declared.size} URDF names bound, all declared.`);

@@ -56,7 +56,7 @@ if [ "$before" != "$(tr -d '\r' < contract-dom.json)" ]; then
   exit 1
 fi
 
-echo "=== gate 9/9 — dead lookups: every id hmi/+viewer/ look up exists in urdf.html"
+echo "=== gate 9/9 — dead lookups: element ids exist in urdf.html; URDF names exist in the URDF"
 node tools/check_dead_lookups.mjs
 
 echo "gate: all nine gates green."
