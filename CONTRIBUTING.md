@@ -111,10 +111,19 @@ if you forget.
   genuinely new token goes into the STYLEGUIDE table + `:root` first.
 - **UI strings in English**, operator-facing language.
 - Prefer small, pure, testable modules in the repo-root `hmi/` and `viewer/`
-  partitions over adding to the ~13k-line `urdf_viewer.js`; new pure modules
+  partitions over adding to the ~12k-line `urdf_viewer.js`; new pure modules
   should get a `tests/js/` test. `AGENTS.md` documents the two extraction
   patterns and the CI-enforced boundaries (`hmi/` never imports `three`;
-  `viewer/` touches no DOM outside `overlays/`).
+  `viewer/` touches no DOM outside `overlays/`; and the `export let` census
+  below).
+- **`export let` is frozen per file.** The live bindings in `hmi/state/` are the
+  scaffold that let the god-file's globals move out without rewriting ~150 read
+  sites — a migration shape, not a target one. `tools/check_boundaries.mjs`
+  holds an exact census: a count above its entry fails; a count **below** it
+  fails too, so closing one means lowering its ceiling in the same commit (a
+  ceiling nobody lowers is a ratchet that quietly stopped); and a file absent
+  from the table with any `export let` fails as unregistered. Lowering a number
+  needs no justification, raising one needs it in the PR.
 
 ## Backend conventions
 

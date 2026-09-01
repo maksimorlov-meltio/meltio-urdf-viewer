@@ -150,7 +150,10 @@ here is the responsibility map by area (approximate line ranges):
 The modular (non-god-file) frontend code is split into two packages with
 CI-enforced boundaries (`tools/check_boundaries.mjs`): **`hmi/` never imports
 `three`**, **`viewer/` never touches the DOM** (except the sanctioned
-`viewer/overlays/` island for 3D→screen projections). As `urdf_viewer.js` is
+`viewer/overlays/` island for 3D→screen projections), and **the `export let`
+count per file is frozen** by an exact census in the same gate — the live
+bindings are a migration scaffold that only shrinks, so closing one means
+lowering its ceiling in the same commit. As `urdf_viewer.js` is
 carved up, code lands on one side or the other. Phase C hoisted both to the
 repo root together with the FastAPI move to `apps/dev-host/`: the dev server
 mounts them at `/hmi` and `/viewer`, the app entry imports them with
