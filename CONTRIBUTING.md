@@ -30,6 +30,13 @@ Canonical docs (one per topic — read, don't duplicate):
 - [`apps/dev-host/ARCHITECTURE.md`](apps/dev-host/ARCHITECTURE.md) — both apps' map, flow, endpoints, pipeline.
 - [`_slicer_branch/projects/platform/STYLEGUIDE.md`](_slicer_branch/projects/platform/STYLEGUIDE.md) — the single source of UI look (design tokens + component classes).
 - [`AGENTS.md`](AGENTS.md) — the partition rules and the two extraction patterns.
+- [`TODO.md`](TODO.md) — the short recurring checklist to run on **every** change,
+  in Spanish, pointing back here. If the two disagree, this file wins.
+
+For a whole feature there is a repo-local orchestrator: **`/feature`** (see
+[`.claude/README.md`](.claude/README.md)) chains seven subagents that already
+carry these conventions — brief, architect, UX, backend, frontend, adversarial
+review, docs. Optional, and overkill for a three-line fix.
 
 ## Environments
 
@@ -160,10 +167,57 @@ if you forget.
   equivalent. `stopPrint` is a *recoverable* process halt, not an emergency stop,
   which is why it requires an operator. See `apps/dev-host/ARCHITECTURE.md` §1.1.
 
+## Test discipline
+
+Two rules that the last two dozen PRs ran on and that were, until now, written
+nowhere. Both are cheap; both have caught real defects here.
+
+- **A module gets its first test when someone touches it.** No speculative
+  suites for modules nobody is changing — the test is written as the defence of
+  the fix you are making, which is also the cheap way to buy coverage where it
+  is actually being earned.
+- **Verify every test by mutation.** After writing it, deliberately break the
+  code it defends and confirm the test dies. A test that stays green proves
+  nothing, and it is not hypothetical: a toast-pruning test here counted DOM
+  nodes, and since the toast layer caps at 3 and drops the oldest, the count
+  saturated and the mutant survived; it had to assert on toast *titles* instead.
+  Another let a `restore` that appended instead of replacing slip through, which
+  would have doubled an operator's print history on every reload, silently, with
+  every suite green. **Commit before you mutate** — mutation scripts revert with
+  `git checkout <file>`, which targets HEAD and takes uncommitted work with it.
+
+### A refactor that must change nothing
+
+Moving code, deleting something you believe is dead, splitting a function:
+capture the **DOM footprint** first and assert against it after.
+
+```powershell
+node tools/check_boot.mjs --footprint before.txt
+# ...the change...
+node tools/check_boot.mjs --expect-footprint before.txt
+```
+
+Do **not** try this with screenshots: two captures of the same code already
+differ (the topbar clock ticks, swiftshader is not bit-stable). The footprint is
+deterministic, but it only sees a label appear, vanish or change wording — not a
+number changing value.
+
+### Working on the gates themselves
+
+- **Widen an existing gate before adding a tenth.** A new one costs renumbering
+  nine `echo`s, the final message in `gate.sh`, and a step in `ci.yml`.
+- **Never seed `KNOWN_DEAD`** in `check_dead_lookups`. Clean first, tighten the
+  ratchet second — the only order in which the gate proves something rather than
+  merely accusing.
+- **Reword comments when you delete the code they name.** `gen_dom_contract`
+  scans source text, so a comment mentioning `window.X` keeps `X` in the
+  generated contract after the last real use is gone. It happened three times.
+
 ## Change hygiene
 
 - One logical change per commit/PR; keep it small and reviewable. Match the
-  style of the files you touch.
+  style of the files you touch. **Ceiling: ~400 lines of own diff**, generated
+  files aside — bigger than that does not get reviewed, it gets approved.
 - Avoid broad refactors unless explicitly requested (e.g. the `urdf_viewer.js`
   decomposition is a deliberate follow-up, not a drive-by).
 - Update the relevant canonical doc **in the same change** that alters behavior,
@@ -181,3 +235,8 @@ if you forget.
 - [ ] Relevant canonical doc updated.
 - [ ] Validation commands above run green (or explicitly reported as not run, with why).
 - [ ] No unrelated changes included.
+- [ ] New/changed tests verified by mutation (break it, watch one die).
+- [ ] Behaviour-preserving refactor? Footprint captured before and asserted after.
+
+[`TODO.md`](TODO.md) is the same list in checklist form, with the reason next to
+each item.

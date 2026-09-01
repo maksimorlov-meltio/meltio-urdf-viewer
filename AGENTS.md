@@ -67,6 +67,17 @@ resolves via its esbuild plugin. Intra-partition imports stay relative.
 8. Static JS/CSS reloads on browser refresh; **Python does not** — restart the
    server. Legacy `?v=` cache-busters still exist in `urdf.html` for
    non-bundled files; bump them when editing those.
+9. **Verify every test you write by mutation.** Break the code it defends and
+   confirm the test dies; a test that stays green proves nothing. Commit
+   before mutating — revert scripts use `git checkout <file>`, which targets
+   HEAD and discards uncommitted work.
+10. **A refactor that must change nothing is proved, not asserted.** Capture
+    `node tools/check_boot.mjs --footprint before.txt`, make the change, then
+    `--expect-footprint before.txt`. Screenshots do **not** work for this: two
+    captures of identical code already differ.
+11. **When you delete code, reword the comments that name it.** The DOM
+    contract generator scans source text, so a comment mentioning a removed
+    `window.X` or `deps.y` keeps it in `contract-dom.json`.
 
 ## Commands (from the repo root)
 
@@ -91,3 +102,10 @@ npm run build:dev                              # point urdf.html at raw source
 - New backend endpoint → `apps/dev-host/src/avisualizer/web/app.py` + a test
   in `apps/dev-host/tests/web/`.
 - New machine command → `contract.json` FIRST, then `hmi/ports/machineLink.js`.
+
+## Before you open the PR
+
+[`TODO.md`](TODO.md) is the short recurring checklist — the same rules as here
+and in `CONTRIBUTING.md`, in the order you actually hit them, with the reason
+each one exists. Run it on every change. For a whole feature, the repo has its
+own orchestrator: `/feature` (see [`.claude/README.md`](.claude/README.md)).
