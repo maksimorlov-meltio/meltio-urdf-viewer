@@ -28,6 +28,6 @@ consumption (e.g. as a git submodule of the C# WPF host).
   guarded, so an embedder that supplies none of it gets a tree that
   loads cleanly and does nothing, in silence. Read this one first.
 
-Source: `d71826a1b9eb79908eb5481830093a2f35a8e140` on `main` — do not edit this branch; changes land
+Source: `9bac8a587b8b7b840035276fc914f24f48e43167` on `main` — do not edit this branch; changes land
 on `main` and are re-published by the `release` workflow after
 the eight-gate check (`gate.sh`).
