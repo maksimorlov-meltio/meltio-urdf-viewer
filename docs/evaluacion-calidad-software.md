@@ -564,7 +564,7 @@ Las tablas del Apéndice A y de §5 están actualizadas con este resultado. **Ni
 
 ### 8.3 Estado de ejecución
 
-Existe un plan de mejora por fases derivado de este informe (7 fases, más una puerta con criterio de entrada a hardware que agrupa las precondiciones de §7.1). **Ejecutado: 23 PRs**, de `319406e` a `33a9263`, una rama por PR:
+Existe un plan de mejora por fases derivado de este informe (7 fases, más una puerta con criterio de entrada a hardware que agrupa las precondiciones de §7.1). **Ejecutado: 25 PRs**, de `319406e` a `d71826a`, una rama por PR:
 
 | PR | Cierra | Estado |
 |---|---|---|
@@ -580,13 +580,18 @@ Existe un plan de mejora por fases derivado de este informe (7 fases, más una p
 | Fases 2.2-2.6 — arreglos baratos | REN-1, COD-2, REN-3, N-B2, COD-1, N-B1, N-B4, residuo de N-C4 | `getStats()` memoizado (3,4 ms por frame → una lectura por payload); poda de toasts y corte del re-render de 5 s; **213 → 0** registros de mutación en el chip de cuenta, medido por CDP; 25 líneas inalcanzables borradas; el Stop rechazado deja de enseñar `HTTP 401` |
 | Fase 4 — código muerto y su puerta | N-B3 y el residuo de COD-3 | **623 líneas que no podían ejecutarse** (ViewCube, wire drum de Materials, once ids `hotspot*`, tres búsquedas más), y el ratchet de búsquedas muertas pasa de vigilar 215 ids a 331: por fin ve el fichero con el 52 % del JS propio |
 | Fases 6.1-6.4 — backend | **SEG-4, SEG-1, N-A1, ARQ-1(b)**; puerta H nº 4, 5 y 6 | Escritura atómica y «corrupto ≠ ausente» en el almacén de autorización; el `rank` visible, editable y validado en servidor; la auditoría acotada (1 MB de petición → 203 bytes) con rotación; suelo cableado para que `STOP`/`ESTOP` sobrevivan a un `contract.json` ilegible |
+| Fase 5 — congelar y cerrar | **COD-5** | Dos PRs. El censo de `export let` entra como tercera regla de la puerta 4, comparado **exacto y en las dos direcciones**: por encima el andamiaje creció, por debajo alguien cerró uno y no bajó el techo. Y `materialsState.js` cerrado, que es lo que arregla COD-5 — **y el hallazgo se quedaba corto**: no eran diez copias de una lista sino **dos listas**, la de claves y la de capacidades, con el camino de lectura iterando una y el de escritura deletreando la otra a mano. Coincidían, así que hoy no fallaba; con un cuarto feedstock se leería y no se escribiría, sin excepción ni test rojo. Diez sitios → cero |
 | Fase 5.0 — huella de arranque | — | Instrumento, no hallazgo. `check_boot --footprint` / `--expect-footprint` sobre las 331 ids de los contratos. **Sustituye a la comparación por captura que pedía el plan, que no funciona**: dos capturas del mismo código ya difieren |
 
 **La puerta de hardware de §7.1 queda tachada entera.** Las nueve casillas: nº 1 (fase 3), nº 2 retirada por la corrección 4, nº 3 (fase 2.1), nº 4 (6.1), nº 5 (6.2), nº 6 (6.4), nº 7 y nº 8 (1.1), nº 9 (N-C1).
 
 Cada PR se verificó con las nueve puertas, `pytest apps/dev-host/tests` y el boot check; los que tocan módulos publicados, además contra el artefacto generado; los de backend, además con `pytest tests/smoke`.
 
-**Lo que NO se hizo, y por qué no es una omisión de tiempo.** El faseado de `boot()` (fases 5.1-5.4) no se puede ejecutar en el orden que el plan describe. El plan quiere cuatro fases nombradas y una secuencia *listeners → start → módulos → estado*, dejando la arriesgada la tercera. Medido sobre el fichero: **los listeners no son una región contigua** — son tres fragmentos (567, 350 y 108 líneas) separados por tres instanciaciones de módulo que la propia regla de corte del plan prohíbe reordenar. Hacer la fase de listeners primero exige mover antes los módulos, que es justo lo que el plan quería posponer. **La secuencia hay que rediseñarla, no solo ejecutarla.**
+**Lo que queda: el faseado de `boot()`, con la secuencia rediseñada.** El orden que describe el plan —*listeners → start → módulos → estado*, dejando la arriesgada la tercera— no es ejecutable: medido, los listeners no son una región contigua, son fragmentos separados por instanciaciones de módulo que la propia regla de corte prohíbe reordenar. Hacerlos primero exige mover antes los módulos, justo lo que el plan quería posponer.
+
+Al volver a medir aparece una salida que no mueve nada. `urdf_viewer.js` no tiene ninguna función `boot()`: la región densa son las líneas 10505-11662 (1158 líneas, 162 sentencias de nivel superior), y dentro hay cinco declaraciones interpuestas —tres funciones y dos `let`— **cuyas referencias no salen de esa región, ninguna cruza un límite de instanciación, y no hay un solo `await` de nivel superior**. Es decir, la cola entera se puede envolver en una función sin romper una sola referencia; comprobado sobre `d71826a`, el diff bajo `git diff -w` son **tres líneas** y eslint da 0 errores.
+
+Eso deshace el bloqueo, porque **el objetivo de la fase nunca fue agrupar por naturaleza** sino poner las instanciaciones una por línea — y eso se consigue cortando por las costuras que el fichero ya tiene, sin reordenar. Dos PRs: envolver, y partir en once fases con un runner que marca `data-boot-failed` y **relanza**. Con la salvedad que conviene no vender de más: relanzar mata el resto del módulo igual que hoy, la página sigue viva y el watchdog no dispara. El faseado compra diagnóstico, no seguridad.
 
 ---
 
