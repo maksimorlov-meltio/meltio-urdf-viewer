@@ -51,16 +51,24 @@ jobs:
           cat > "$STAGE/README.md" <<EOF
           # Meltio HMI — release channel
 
-          Auto-published snapshot of the frontend partitions, for read-only
+          Auto-published snapshot of the running frontend, for read-only
           consumption (e.g. as a git submodule of the C# WPF host).
 
+          **This is a page that runs, not a pile of parts.** Serve this folder
+          over HTTP, give it the two things it does not carry, and you have the HMI. You do
+          not have to write the assembly.
+
           - \`index.html\` + \`urdf_viewer.css\` + \`vendor/\` + \`icons/\` — the
-            shell: the page these modules expect to find themselves in, with
-            every element id they look up and the stylesheet whose classes they
-            toggle. Its \`data-app-entry\` script is deliberately EMPTY — the
-            wiring lives in the dev host's \`urdf_viewer.js\`, which owns the
-            Three.js scene and is not published. Put your own module there.
-            \`vendor/\` is the pinned \`three\` the import map resolves to.
+            shell: every element id the modules look up and the stylesheet whose
+            classes they toggle. \`vendor/\` is the pinned \`three\` the import
+            map resolves to.
+          - \`app.js\` — **the assembly**, and the entry \`index.html\` points at.
+            It creates the Three.js scene, loads the URDF and instantiates every
+            module below. It is the dev host's own \`urdf_viewer.js\`, shipped
+            as-is rather than hidden, because an artefact you cannot run is not
+            an artefact. Replace it only if you want your own assembly.
+            \`modules/\` travels with it.
+
           - \`hmi/\` — UI-side ES modules (DOM, host state, transports). No
             \`three\` imports (CI-enforced boundary).
           - \`viewer/\` — scene-side ES modules (Three.js; DOM only under
@@ -79,9 +87,25 @@ jobs:
             guarded, so an embedder that supplies none of it gets a tree that
             loads cleanly and does nothing, in silence. Read this one first.
 
+          ## What this branch does NOT carry, and you must supply
+
+          - **\`/assets\`** — the URDF and its 24 \`.glb\` meshes (~140 MB, Git
+            LFS on \`main\`). Without them the page loads and the scene is empty.
+            The URDF names the meshes and the assembly binds to its link and
+            joint names, so those two version together.
+          - **The routes in \`contract-http.json\`** whose \`calledBy\` is not
+            empty. \`tools/serve_artifact.py\` on \`main\` is a 73-line reference
+            implementation of the split: static from the folder, those routes
+            forwarded. That split IS the consuming architecture.
+
           Source: \`$SHA\` on \`main\` — do not edit this branch; changes land
           on \`main\` and are re-published by the \`release\` workflow after
-          the eight-gate check (\`gate.sh\`).
+          the nine-gate check (\`gate.sh\`).
+
+          To check your own host against this: \`node tools/check_boot.mjs --url
+          http://your-host/index.html\` on \`main\` loads the page in headless
+          Chrome and fails on one console error, one unexpected failed request
+          or a missing \`window.Meltio*\` bridge.
           EOF
 
           git config user.name "github-actions[bot]"

@@ -26,11 +26,15 @@
 // derived from the one the app actually runs, plus the stylesheet, the vendored
 // three and the icons it references.
 //
-// What it deliberately does NOT carry: the assembly. Wiring the 25 modules
-// together lives in urdf_viewer.js, which owns the Three.js scene and is not
-// published. The shell leaves a marked, empty entry point for the embedder's
-// own module — an honest hole rather than a page that looks complete and is
-// inert.
+// It DOES carry the assembly, and that was a reversal: this comment used to say
+// the opposite, and the release README still repeated it long after the code
+// stopped agreeing. Wiring the modules together lives in urdf_viewer.js, and it
+// ships as app.js rather than being withheld, because a marked empty entry
+// point is not an honest hole — it is a page that looks complete, is inert, and
+// costs the consumer twelve thousand lines to rediscover.
+//
+// What it does NOT carry is /assets: the URDF and its 24 meshes, ~140 MB on Git
+// LFS. The embedder serves those.
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
