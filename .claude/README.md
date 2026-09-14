@@ -11,6 +11,11 @@ Fue generado con la skill `feature-generico` y endurecido con una auditoría adv
 (`auditor-comandos`). Este README explica **qué hay**, **cómo se usa** y **cómo
 mantenerlo o regenerarlo**.
 
+> **Lo que produzca `/feature` sigue sujeto a [`../TODO.md`](../TODO.md)** — la lista
+> recurrente de cada cambio (mutación de los tests, huella del DOM en refactores que no
+> deben cambiar nada, contratos regenerados, cache-busters). Los subagentes la conocen,
+> pero el PR lo firmas tú.
+
 ## Qué hay aquí
 
 ```

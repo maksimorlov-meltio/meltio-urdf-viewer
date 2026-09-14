@@ -18,6 +18,27 @@ same-origin-proxies to the slicer) and browser **`postMessage`** (`source:"melti
 types `dock-ready` / `slice-data` / `start-print`). The slicer turns an STL into a toolpath;
 the viewer animates the robot printing that toolpath.
 
+## Working rules for this repo
+
+**`TODO.md` (repo root) is the recurring checklist** — what to keep in mind when adding or
+changing functionality, with the reason each rule exists. `CONTRIBUTING.md` and `AGENTS.md`
+remain authoritative; `TODO.md` is the short form, in the order you actually hit them.
+
+**End every turn that added or changed functionality with a reminder.** Not a summary of
+what you did — a short `Antes del PR:` block naming **only the `TODO.md` items that apply
+to this change**, each with its concrete command. Rules:
+
+- Maximum six lines. Never the whole list; a checklist nobody reads is worse than none.
+- Only when the turn touched code, config, contracts or assets. Never after a turn that
+  only read, explained, measured or diagnosed.
+- Always include the two that are easiest to skip and hardest to notice missing:
+  **mutation-verify the test** (break the code, watch the test die) and, for a refactor
+  that should change nothing, **the DOM footprint** (`--footprint` / `--expect-footprint`;
+  screenshots do not work for this).
+- If the request is a whole feature rather than a fix, offer **`/feature`** in the first
+  reply — the repo's own orchestrator, in `.claude/`, whose subagents already carry these
+  conventions.
+
 ## Read these first
 
 Do not rediscover the architecture by reading the two ~16k / ~5k-line frontend files. Two
@@ -32,6 +53,8 @@ existing docs are authoritative and kept current:
   `--accent`, `--radius`, …). **When adding any UI element, reuse an existing token and
   component class (`.tool-btn`, `.primary`, `.card`, …); do not introduce new hex colors or
   one-off button styles.**
+- **`TODO.md`** — the per-change checklist (Spanish), and `CONTRIBUTING.md` / `AGENTS.md`
+  for the full conventions and the non-negotiable rules.
 
 ## Commands (PowerShell, from repo root)
 
