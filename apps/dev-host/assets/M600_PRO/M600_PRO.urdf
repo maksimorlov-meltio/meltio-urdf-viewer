@@ -15,72 +15,72 @@
 
   <link name="front_door_link">
     <visual>
-      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <origin xyz="-0.0002 -0.0011 0" rpy="1.570796 0 -3.141593"/>
       <geometry>
-        <mesh filename="Front Door.glb" scale="0.001 0.001 0.001"/>
+        <mesh filename="Front Door.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
 
   <link name="spools_door_link">
     <visual>
-      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <origin xyz="0 0 0.0017" rpy="1.570796 0 -3.141593"/>
       <geometry>
-        <mesh filename="Spools Door.glb" scale="0.001 0.001 0.001"/>
+        <mesh filename="Spools Door.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
 
   <link name="top_cover_link">
     <visual>
-      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <origin xyz="0.0006 0 0.0002" rpy="-3.141593 0 -3.141593"/>
       <geometry>
-        <mesh filename="Top Cover.glb" scale="0.001 0.001 0.001"/>
+        <mesh filename="Top Cover.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
 
   <link name="gas_spring_main_part_left_link">
     <visual>
-      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <origin xyz="0 -0.0047 0" rpy="1.570796 0 -3.141593"/>
       <geometry>
-        <mesh filename="Gas Spring Main Part Left.glb" scale="0.001 0.001 0.001"/>
+        <mesh filename="Gas Spring Main Part Left.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
 
   <link name="gas_spring_main_part_right_link">
     <visual>
-      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <origin xyz="0 -0.0047 0" rpy="1.570796 0 -3.141593"/>
       <geometry>
-        <mesh filename="Gas Spring Main Part Right.glb" scale="0.001 0.001 0.001"/>
+        <mesh filename="Gas Spring Main Part Right.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
 
   <link name="gas_spring_secondary_part_left_link">
     <visual>
-      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <origin xyz="0 0.0068 0" rpy="1.570796 0 -3.141593"/>
       <geometry>
-        <mesh filename="Gas Spring Secondary Part Left.glb" scale="0.001 0.001 0.001"/>
+        <mesh filename="Gas Spring Secondary Part Left.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
 
   <link name="gas_spring_secondary_part_right_link">
     <visual>
-      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <origin xyz="0 0.0068 0" rpy="1.570796 0 -3.141593"/>
       <geometry>
-        <mesh filename="Gas Spring Secondary Part Right.glb" scale="0.001 0.001 0.001"/>
+        <mesh filename="Gas Spring Secondary Part Right.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
 
   <link name="palpador_pro_link">
     <visual>
-      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <origin xyz="0.0667 0.0325 0.0152" rpy="-3.141593 0 -1.570796"/>
       <geometry>
-        <mesh filename="Palpador PRO.glb" scale="0.001 0.001 0.001"/>
+        <mesh filename="Palpador PRO.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -96,18 +96,18 @@
 
   <link name="wire_drum_link">
     <visual>
-      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <origin xyz="0 0 0" rpy="0 3.141593 0"/>
       <geometry>
-        <mesh filename="Wire Drum.glb" scale="0.001 0.001 0.001"/>
+        <mesh filename="Wire Drum.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
 
   <link name="handle_link">
     <visual>
-      <origin xyz="-0.002 0.009 0" rpy="0 3.141592653589793 0"/>
+      <origin xyz="-0.002 0.009 0.0001" rpy="1.570796 0 -3.141593"/>
       <geometry>
-        <mesh filename="Handle.glb" scale="0.0254 0.0254 0.0254"/>
+        <mesh filename="Handle.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -116,108 +116,108 @@
 
   <link name="user_step_link">
     <visual>
-      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <origin xyz="-0.0007 0.0007 -0.0001" rpy="-3.141593 0 -3.141593"/>
       <geometry>
-        <mesh filename="User Step.glb" scale="0.001 0.001 0.001"/>
+        <mesh filename="User Step.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
 
   <link name="z_axis_link">
     <visual>
-      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <origin xyz="-0.3066 -0.1623 0.1094" rpy="1.570796 0 1.570796"/>
       <geometry>
-        <mesh filename="Z axis.glb" scale="0.001 0.001 0.001"/>
+        <mesh filename="Z axis.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
 
   <link name="eje_x_link">
     <visual>
-      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <origin xyz="0.0002 0 -0.0013" rpy="1.570796 0 -3.141593"/>
       <geometry>
-        <mesh filename="Eje X.glb" scale="0.001 0.001 0.001"/>
+        <mesh filename="Eje X.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
 
   <link name="eje_y_link">
     <visual>
-      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <origin xyz="0.5851 0.3988 -0.1768" rpy="1.570796 0 1.570796"/>
       <geometry>
-        <mesh filename="Eje Y.glb" scale="0.001 0.001 0.001"/>
+        <mesh filename="Eje Y.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
 
   <link name="spool_1_link">
     <visual>
-      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <origin xyz="-0.102 0.0001 -0.0001" rpy="1.570796 0 0"/>
       <geometry>
-        <mesh filename="Spool Cooper.glb" scale="0.001 0.001 0.001"/>
+        <mesh filename="Spool Cooper.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
 
   <link name="spool_2_link">
     <visual>
-      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <origin xyz="-0.102 0.0001 -0.0001" rpy="1.570796 0 0"/>
       <geometry>
-        <mesh filename="Spool Stainless Steel.glb" scale="0.001 0.001 0.001"/>
+        <mesh filename="Spool Stainless Steel.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
 
   <link name="display_link">
     <visual>
-      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <origin xyz="0 0.0005 0.0001" rpy="1.570796 0 -3.141593"/>
       <geometry>
-        <mesh filename="Display.glb" scale="0.001 0.001 0.001"/>
+        <mesh filename="Display.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
 
   <link name="head_link">
     <visual>
-      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <origin xyz="-0.0001 -0.0101 0" rpy="1.570796 0 -3.141593"/>
       <geometry>
-        <mesh filename="Head.glb" scale="0.001 0.001 0.001"/>
+        <mesh filename="Head.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
 
   <link name="feeder_link">
     <visual>
-      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <origin xyz="0.0764 0.0037 0.059" rpy="3.141593 1.570796 0"/>
       <geometry>
-        <mesh filename="Feeder.glb" scale="0.001 0.001 0.001"/>
+        <mesh filename="Feeder.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
 
   <link name="central_feeder_wheel_link">
     <visual>
-      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <origin xyz="0 0 0" rpy="-3.141593 0 -3.141593"/>
       <geometry>
-        <mesh filename="Central Feeder Wheel.glb" scale="0.001 0.001 0.001"/>
+        <mesh filename="Central Feeder Wheel.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
 
   <link name="left_feeder_wheel_link">
     <visual>
-      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <origin xyz="0 0 0" rpy="-3.141593 0 -3.141593"/>
       <geometry>
-        <mesh filename="Left Feeder Wheel.glb" scale="0.001 0.001 0.001"/>
+        <mesh filename="Left Feeder Wheel.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
 
   <link name="right_feeder_wheel_link">
     <visual>
-      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <origin xyz="0 0 0" rpy="-3.141593 0 -3.141593"/>
       <geometry>
-        <mesh filename="Right Feeder Wheel.glb" scale="0.001 0.001 0.001"/>
+        <mesh filename="Right Feeder Wheel.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>

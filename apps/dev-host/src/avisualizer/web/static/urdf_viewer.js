@@ -6998,10 +6998,10 @@ async function loadMeshObject(meshPath, urdfUrl) {
 // in the scene and is positioned from the machine's live bounding box each time
 // it is shown. The mesh is loaded lazily on first activation.
 const CHILLER_MODEL_URL = "/assets/M600_PRO/HRS050-AF-20.glb";
-// The machine GLBs are authored in metres, but HRS050-AF-20.glb is authored in
-// millimetres (its raw bounds are ~600×377×1000 units for a ~1 m-tall chiller),
-// so it must be scaled down by 1000x to sit correctly next to the machine.
-const CHILLER_MM_TO_M = 0.001;
+// HRS050-AF-20.glb is authored in metres like the machine GLBs (the 2026-09
+// re-export; the earlier file was millimetres and needed 0.001). Same frame
+// as before, so only the unit changed: raw bounds ~0.61×1.0×0.38 m.
+const CHILLER_MM_TO_M = 1;
 // Placement beside the machine's +X face (the door/hinge side, which reads as
 // "left" in both the default 3/4 view and top-down). Tuned against the operator's
 // requested top-down layout. All metres, machine-relative so it is deterministic.
