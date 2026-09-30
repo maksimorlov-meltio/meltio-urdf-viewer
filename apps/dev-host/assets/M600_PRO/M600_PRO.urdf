@@ -87,9 +87,9 @@
 
   <link name="wire_spool_door_link">
     <visual>
-      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <origin xyz="1e-05 7e-05 -0.00028" rpy="-3.141593 0.0 -3.141593"/>
       <geometry>
-        <mesh filename="Wire Drum Door.glb" scale="0.001 0.001 0.001"/>
+        <mesh filename="Wire Drum Door.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
