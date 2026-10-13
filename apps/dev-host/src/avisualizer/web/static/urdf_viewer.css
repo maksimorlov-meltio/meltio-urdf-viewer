@@ -7972,7 +7972,10 @@ a:not(.btn):not([class*="nav"]):hover {
    ========================================================================== */
 .topbar-utility-settings {
   position: absolute;
-  top: calc(100% + 18px);
+  /* 2026-10-13 (Maksim): leave a visible gap under the topbar instead of
+     butting against its bottom edge (+18px landed flush with it), and lift
+     the card off the scene: control ground + DS strong hairline. */
+  top: calc(100% + 28px);
   left: 0;
   z-index: 260;
   width: 268px;
@@ -7981,9 +7984,9 @@ a:not(.btn):not([class*="nav"]):hover {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  border: 1px solid var(--ui-border-subtle);
+  border: 1px solid rgba(255, 255, 255, 0.30);
   border-radius: var(--ui-radius-md);
-  background: var(--ui-modal-bg);
+  background: var(--ws-control, #12161a);
   box-shadow: var(--ui-shadow-panel);
   backdrop-filter: none;
 }
@@ -8301,8 +8304,8 @@ a:not(.btn):not([class*="nav"]):hover {
    plain <button> children turned white via the blanket light-mode rule.
    ========================================================================== */
 body.light-mode .topbar-utility-settings {
-  background: rgba(255, 253, 249, 0.98);
-  border-color: rgba(33, 33, 33, 0.18);
+  background: #ffffff;
+  border-color: rgba(7, 8, 10, 0.30);
 }
 body.light-mode .topbar-utility-settings-header h3 {
   color: #2e2e2e;
@@ -9926,3 +9929,55 @@ body.light-mode .cloud-file-item-name { color: #07080a; }
 body.light-mode .cloud-list-tags span,
 body.light-mode .cloud-list-tag-button { color: #3a4046; }
 body.light-mode .cloud-source-filter:disabled { background: #f0f1f3; color: #565d65; border-color: rgba(7, 8, 10, 0.18); }
+
+/* ==========================================================================
+   Topbar toggles (chiller / fan / controls) — ON state like the bottom nav
+   (2026-10-13, Maksim). With the DS v3 white accent the old "accent-tinted
+   icon" active state was white on white, i.e. invisible. Now: idle glyph at
+   72 %, ON glyph full ink + a 2 px ink underline, same timing as the nav.
+   Scoped to the three on/off toggles; notifications/calendar/settings keep
+   their open-state handling.
+   ========================================================================== */
+#topbarChillerToggle,
+#topbarFanToggle,
+#topbarPanToggle { position: relative; }
+#topbarChillerToggle svg,
+#topbarFanToggle svg,
+#topbarPanToggle svg {
+  stroke: var(--ui-accent);
+  opacity: 0.72;
+  transition: opacity 0.15s ease;
+}
+#topbarChillerToggle[aria-pressed="true"] svg,
+#topbarFanToggle[aria-pressed="true"] svg,
+#topbarPanToggle[aria-pressed="true"] svg { opacity: 1; }
+#topbarChillerToggle::after,
+#topbarFanToggle::after,
+#topbarPanToggle::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 1px;
+  width: 18px;
+  height: 2px;
+  margin-left: -9px;
+  border-radius: 1px;
+  background: var(--ui-accent);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  pointer-events: none;
+}
+#topbarChillerToggle[aria-pressed="true"]::after,
+#topbarFanToggle[aria-pressed="true"]::after,
+#topbarPanToggle[aria-pressed="true"]::after { opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+  #topbarChillerToggle svg, #topbarFanToggle svg, #topbarPanToggle svg,
+  #topbarChillerToggle::after, #topbarFanToggle::after, #topbarPanToggle::after { transition: none; }
+}
+
+/* Touch-friendly taps (2026-10-13, Maksim): touch-action: manipulation removes
+   the double-tap-zoom click delay on the HMI for the tap targets that open
+   menus/dialogs. */
+.perm-account-chip,
+.topbar-icon,
+.bottom-nav .bottom-nav-item { touch-action: manipulation; }

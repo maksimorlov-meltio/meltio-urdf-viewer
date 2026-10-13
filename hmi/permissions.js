@@ -281,6 +281,10 @@
       class: "perm-account-chip", type: "button",
       "aria-label": "Account — sign in / out",
       onclick: () => { if (isSignedIn()) openAccountMenu(); else openLogin(); },
+      // Touch panels: act on the tap itself. preventDefault() on touchend stops
+      // the browser from synthesising a (possibly delayed or swallowed) click, so
+      // the dialog opens exactly once, directly from the finger lift.
+      ontouchend: (e) => { if (e.cancelable) e.preventDefault(); if (isSignedIn()) openAccountMenu(); else openLogin(); },
     });
     left.appendChild(accountChipEl);
     updateAccountChip();
