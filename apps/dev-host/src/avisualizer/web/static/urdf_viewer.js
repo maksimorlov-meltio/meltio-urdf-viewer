@@ -419,7 +419,7 @@ const gltfLoader = new GLTFLoader();
 const objLoader = new OBJLoader();
 const stlLoader = new STLLoader();
 const CAD_TO_VIEWER_X_ROTATION = Math.PI * 0.5;
-const DARK_BG_HEX = 0x0b0a09;
+const DARK_BG_HEX = 0x0b0e12;
 const LIGHT_BG_HEX = 0xffffff;
 const LEFT_FEEDER_WHEEL_JOINT = "left_feeder_wheel_joint";
 const RIGHT_FEEDER_WHEEL_JOINT = "right_feeder_wheel_joint";
@@ -632,26 +632,20 @@ const SPOOL_ICON_OUTLINE_SVG =
     '<path d="M7 9.6 17 11.6M7 13 17 15" />' +
   '</g>' +
   '<path class="spool-wire" pathLength="100" d="M17.8 7.3 22 3.2" />';
-// Materials nav icon (2026-08 isometric "cube family" redesign, theme-aware):
-// same flat-3D cube family as Open Door / Top Door / Files. Idle = a plain
-// cube with a right-face seam; active (materials menu open) lifts the right
-// face in the accent colour with a dark interior, matching the other
-// cube-family active states. Superseded the constant spool glyph (still used
-// for the drum/spool cards elsewhere) as the nav button's own icon.
-const MATERIALS_ICON_IDLE_SVG =
-  '<g><path class="iso-c1" d="M12 3 20 7.5 12 12 4 7.5Z"/><path class="iso-c3" d="M4 7.5 12 12 12 20 4 15.5Z"/><path class="iso-c2" d="M12 12 20 7.5 20 15.5 12 20Z"/><path class="iso-seam" d="M18 9 18 16"/></g>';
-const MATERIALS_ICON_ACTIVE_SVG =
-  '<g><path class="iso-c1" d="M12 3 20 7.5 12 12 4 7.5Z"/><path class="iso-c3" d="M4 7.5 12 12 12 20 4 15.5Z"/><path class="iso-int" d="M12 12 20 7.5 20 15.5 12 20Z"/><path class="iso-acc" d="M15.5 10 23.5 5.5 23.5 13.5 15.5 18Z"/></g>';
-// Files nav icon (2026-08 isometric "cube family" redesign, theme-aware):
-// stacked flat-3D layers, idle vs. a "spread apart" active state with an
-// accent top layer. Faces use the shared .iso-* classes (see
-// .bottom-nav-item svg .iso-* in urdf_viewer.css) which resolve to
-// theme-aware --iso-* custom properties instead of baked hex fills, so the
-// icon stays visible in both dark and light mode.
-const FILES_ICON_OUTLINE_SVG =
-  '<g><path class="iso-c2" d="M12 15 20 11 12 7 4 11Z"/><path class="iso-c1" d="M12 12 18 9 12 6 6 9Z"/><path class="iso-c1" style="opacity:.7" d="M12 9 16 7 12 5 8 7Z"/></g>';
-const FILES_ICON_SOLID_SVG =
-  '<g><path class="iso-c2" d="M12 17 20 13 12 9 4 13Z"/><path class="iso-c1" d="M12 12 18 9 12 6 6 9Z"/><path class="iso-acc" d="M12 7 16 5 12 3 8 5Z"/></g>';
+// Materials nav icon (2026-10-08, Maksim picked "A" off the icon reference
+// sheet): Lucide-style stroke reel — ring, hub, four spokes — in currentColor
+// like every other nav glyph. ONE drawing; the pressed state is CSS in
+// #navMaterialsToggle off aria-pressed: the reel (.spool-reel) spins.
+const SPOOL_ICON_SOLID_SVG =
+  '<g class="spool-reel"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/><path d="M12 3v6.5M12 14.5V21M3 12h6.5M14.5 12H21"/></g>';
+// Files nav icon (2026-10-08, Maksim picked "A" + a one-to-many motion):
+// ONE drawing — a single sheet (.file-s1) when idle; when the browser opens
+// two more sheets (.file-s2/.file-s3, partial outlines so the strokes never
+// cross) fan out up-right from behind it while the front sheet settles
+// down-left. Close runs the reverse. All motion is CSS in #navFilesToggle
+// keyed off aria-pressed (tap only, no hover), so the glyph is never swapped.
+const FILES_ICON_SVG =
+  '<g><g class="file-s3"><path d="M8 3.5V2.5A1.5 1.5 0 0 1 9.5 1h8.5L22 5v10.5a1.5 1.5 0 0 1-1.5 1.5h-1"/></g><g class="file-s2"><path d="M5.5 6V5A1.5 1.5 0 0 1 7 3.5h8.5l4 4V18a1.5 1.5 0 0 1-1.5 1.5H17"/></g><g class="file-s1"><path d="M13 6H4.5A1.5 1.5 0 0 0 3 7.5v13A1.5 1.5 0 0 0 4.5 22h11a1.5 1.5 0 0 0 1.5-1.5V10Z"/><path d="M12.5 6v3a1.5 1.5 0 0 0 1.5 1.5H17"/></g></g>';
 // Door / Top-door icon set (2026-07-29 redesign): both glyphs are the SAME
 // M600 enclosure silhouette — a tall cabinet on small casters — so the two
 // bottom-nav buttons read as one machine-representative family rather than a
@@ -669,24 +663,20 @@ const NAV_MACHINE_BODY_SVG =
 // Closed: a flush seam + handle knob. Open: hinge stays at the seam (x11),
 // the leaf swings out past the cabinet's left edge, knob riding with it.
 const NAV_DOOR_ICON_CONSOLE = '<rect x="12.6" y="12.4" width="3.6" height="4.6" rx="0.6" />';
-// Open Door (2026-08 isometric "cube family" redesign, theme-aware): idle is
-// a plain flat-3D cube with a seam down the left (door) face; active lifts
-// that face up-left in the accent colour, revealing a dark interior cavity —
-// same .iso-* class convention as the other cube-family nav icons (see
-// .bottom-nav-item svg .iso-* in urdf_viewer.css).
+// Front door (2026-10-08, Maksim picked "A" off the icon reference sheet):
+// Lucide door-closed (.door-panel) and door-open (.door-open) in one svg;
+// the pressed state cross-fades between them and swings the open leaf
+// (.door-leaf) out from its hinge. CSS in #navDoorToggle off aria-pressed.
+// .door-panel is also the install-once hook the call site checks for.
 const NAV_DOOR_ICON_DOOR_SVG =
-  '<g><path class="iso-c1" d="M12 3 20 7.5 12 12 4 7.5Z"/><path class="iso-c3" d="M4 7.5 12 12 12 20 4 15.5Z"/><path class="iso-c2" d="M12 12 20 7.5 20 15.5 12 20Z"/><path class="iso-seam" d="M6 9 6 16"/></g>';
-const NAV_DOOR_ICON_DOOR_OPEN_SVG =
-  '<g><path class="iso-c1" d="M12 3 20 7.5 12 12 4 7.5Z"/><path class="iso-c2" d="M12 12 20 7.5 20 15.5 12 20Z"/><path class="iso-int" d="M4 7.5 12 12 12 20 4 15.5Z"/><path class="iso-acc" d="M0.5 5.5 8.5 10 8.5 18 0.5 13.5Z"/></g>';
+  '<g class="door-panel"><path d="M19 21V5a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v16"/><path d="M2 21h20"/><path d="M9 12h.01"/></g><g class="door-open"><path d="M10 21H2"/><path d="M10 3H7a2 2 0 0 0-2 2v16"/><path d="M22 21h-3"/><g class="door-leaf"><path d="M14 12h.01"/><path d="M19 21V5a2 2 0 0 0-1.675-1.974l-6.163-1.013A1 1 0 0 0 10 3v18a1 1 0 0 0 1.124.992z"/></g></g>';
 const NAV_DOOR_ICON_STOP_SVG = '<rect x="6" y="6" width="12" height="12" rx="1.5" />';
-// Top cover (2026-08 isometric "cube family" redesign, theme-aware): a
-// flat-3D cube. Closed = a plain three-face cube with a top-face seam. Open =
-// the top face lifts off (accent) revealing a dark opening underneath. Same
-// .iso-* class convention as the other cube-family nav icons.
-const TOP_DOOR_ICON_CLOSED_SVG =
-  '<g><path class="iso-c1" d="M12 3 20 7.5 12 12 4 7.5Z"/><path class="iso-c3" d="M4 7.5 12 12 12 20 4 15.5Z"/><path class="iso-c2" d="M12 12 20 7.5 20 15.5 12 20Z"/><path class="iso-seam" d="M8 5.25 16 9.75"/></g>';
-const TOP_DOOR_ICON_OPEN_SVG =
-  '<g><path class="iso-c3" d="M4 7.5 12 12 12 20 4 15.5Z"/><path class="iso-c2" d="M12 12 20 7.5 20 15.5 12 20Z"/><path class="iso-int" d="M12 3 20 7.5 12 12 4 7.5Z"/><path class="iso-acc" d="M12 0.5 20 5 12 9.5 4 5Z"/></g>';
+// Top door (2026-10-08, Maksim picked "A": his lid drawing in Lucide
+// strokes): cabinet + lid slab (.lid-slab) + handle. Open = the lid lifts
+// 4 units and an A-frame sling (.lid-sling) appears above it; close reverses.
+// ONE drawing, all motion CSS off aria-pressed on #annotationNavTopCover.
+const TOP_DOOR_ICON_SVG =
+  '<g><rect x="3" y="12" width="18" height="9" rx="2"/><path d="M17 15v3"/><path class="lid-sling" d="M6 5l6-4 6 4"/><g class="lid-slab"><rect x="3" y="9" width="18" height="3" rx="1"/></g></g>';
 const ANNOTATION_UPDATE_INTERVAL_MS = 0;
 const ANNOTATION_CLICK_ACTIVE_HOLD_MS = 2200;
 const ENABLE_ANNOTATION_OCCLUSION = false;
@@ -746,7 +736,7 @@ const calendarUi = createCalendarUi({
 const ANNOTATION_DEFINITIONS = [
   {
     id: "front-door",
-    label: "Open Door",
+    label: "Open door",
     jointName: FRONT_DOOR_JOINT,
     targetObjectName: "link:front_door_link",
     localOffset: [-0.5, -0.05, -0.03],
@@ -1474,11 +1464,11 @@ function createFeederPreviewController() {
       powerPreference: "high-performance",
     });
   } catch (error) {
-    setFeederCameraPreviewPlaceholder("Feeder Camera");
+    setFeederCameraPreviewPlaceholder("Feeder camera");
     return null;
   }
 
-  previewRenderer.setClearColor(0x141312, 1);
+  previewRenderer.setClearColor(0x0d0f12, 1);
   previewRenderer.outputColorSpace = THREE.SRGBColorSpace;
   previewRenderer.toneMapping = THREE.ACESFilmicToneMapping;
   previewRenderer.toneMappingExposure = 1.35;
@@ -2224,7 +2214,7 @@ function updateHotspotContextPanelPosition(panelId = activeHotspotPanelId) {
   hotspotContextPanelEl.style.top = "";
 }
 
-function setFeederCameraPreviewPlaceholder(label = "Feeder Camera") {
+function setFeederCameraPreviewPlaceholder(label = "Feeder camera") {
   if (!hotspotFeederCameraViewportEl) {
     return;
   }
@@ -2349,7 +2339,7 @@ function applyWireDrumAppearance() {
   wireDrumAppearButtonEl.disabled = !hasWireDrum;
 
   if (!hasWireDrum) {
-    wireDrumAppearButtonEl.textContent = "Wire Drum";
+    wireDrumAppearButtonEl.textContent = "Wire drum";
     wireDrumAppearButtonEl.setAttribute("aria-pressed", "false");
     return;
   }
@@ -2367,12 +2357,12 @@ function applyWireDrumAppearance() {
   }
 
   if (clampedProgress >= 0.999) {
-    wireDrumAppearButtonEl.textContent = "Hide Wire Drum + Close Door";
+    wireDrumAppearButtonEl.textContent = "Hide wire drum + close door";
     wireDrumAppearButtonEl.setAttribute("aria-pressed", "true");
     return;
   }
 
-  wireDrumAppearButtonEl.textContent = "Wire Drum";
+  wireDrumAppearButtonEl.textContent = "Wire drum";
   wireDrumAppearButtonEl.setAttribute("aria-pressed", "false");
 }
 
@@ -7337,8 +7327,14 @@ function applySceneTheme() {
   scene.fog = new THREE.Fog(bgHex, 400, 2200);
 
   document.body.classList.toggle("light-mode", isLightMode);
+  // L6: the perspective floor grid recedes on the light stage (ink ~15%).
+  if (grid.material) {
+    grid.material.transparent = isLightMode;
+    grid.material.opacity = isLightMode ? 0.15 : 1;
+    grid.material.needsUpdate = true;
+  }
   if (lightModeToggleEl) {
-    lightModeToggleEl.textContent = isLightMode ? "Light Mode: On" : "Light Mode: Off";
+    lightModeToggleEl.textContent = isLightMode ? "Light mode: On" : "Light mode: Off";
   }
   if (settingsUi) {
     settingsUi.syncLightLabel(isLightMode);
@@ -7673,7 +7669,7 @@ function updateQuickFrontDoorToggleButton() {
   if (isOpen !== lastQuickFrontDoorIsOpen) {
     lastQuickFrontDoorIsOpen = isOpen;
     quickFrontDoorToggleEl.hidden = !isOpen;
-    quickFrontDoorToggleEl.textContent = "Close Door";
+    quickFrontDoorToggleEl.textContent = "Close door";
     quickFrontDoorToggleEl.setAttribute("aria-pressed", isOpen ? "true" : "false");
   }
   updateBottomNavState();
@@ -7714,7 +7710,11 @@ function updateTopDoorShortcutButton() {
   const topIconEl = annotationNavTopCoverEl.querySelector("svg");
   const topIconMode = isOpen ? "top-open" : "top-closed";
   if (topIconEl && topIconEl.dataset.mode !== topIconMode) {
-    topIconEl.innerHTML = isOpen ? TOP_DOOR_ICON_OPEN_SVG : TOP_DOOR_ICON_CLOSED_SVG;
+    // One animated drawing: install it once, then only the mode flips (the
+    // lid motion is CSS off aria-pressed). Re-setting innerHTML would reset it.
+    if (!topIconEl.querySelector(".lid-slab")) {
+      topIconEl.innerHTML = TOP_DOOR_ICON_SVG;
+    }
     topIconEl.dataset.mode = topIconMode;
   }
 
@@ -7724,7 +7724,7 @@ function updateTopDoorShortcutButton() {
     controlsTopCoverButtonEl.disabled = !hasControlData;
     controlsTopCoverButtonEl.setAttribute("aria-pressed", isOpen ? "true" : "false");
     controlsTopCoverButtonEl.classList.toggle("is-open", isOpen);
-    controlsTopCoverButtonEl.textContent = isOpen ? "Top Door Open" : "Top Door";
+    controlsTopCoverButtonEl.textContent = isOpen ? "Top door open" : "Top door";
   }
 }
 
@@ -9162,11 +9162,11 @@ function rebuildJointControls() {
 
     const label = document.createElement("label");
     label.textContent = isCombinedHandleDoorPrimary
-      ? "Spools Door"
+      ? "Spools door"
       : isCombinedTopCoverGasSpringPrimary || state.name === TOP_COVER_JOINT
       ? "Top cover"
       : isFrontDoorPrimary
-      ? "Front Door"
+      ? "Front door"
       : state.name;
 
     let controlEl = null;
@@ -9712,7 +9712,7 @@ function setControlsPanelOpen(isOpen) {
 
   if (controlsSidebarToggleEl) {
     controlsSidebarToggleEl.setAttribute("aria-expanded", isControlsPanelOpen ? "true" : "false");
-    controlsSidebarToggleEl.textContent = isControlsPanelOpen ? "Hide Controls" : "Controls";
+    controlsSidebarToggleEl.textContent = isControlsPanelOpen ? "Hide controls" : "Controls";
   }
 
   if (topbarPanToggleEl) {
@@ -10135,7 +10135,11 @@ function updateBottomNavState() {
     if (navFilesIconEl) {
       const filesIconMode = isFilesModeActive ? "solid" : "outline";
       if (navFilesIconEl.dataset.mode !== filesIconMode) {
-        navFilesIconEl.innerHTML = isFilesModeActive ? FILES_ICON_SOLID_SVG : FILES_ICON_OUTLINE_SVG;
+        // One animated drawing (sheets fan out via CSS off aria-pressed);
+        // install once, never re-set on a state flip.
+        if (!navFilesIconEl.querySelector(".file-s1")) {
+          navFilesIconEl.innerHTML = FILES_ICON_SVG;
+        }
         navFilesIconEl.dataset.mode = filesIconMode;
       }
     }
@@ -10183,7 +10187,11 @@ function updateBottomNavState() {
       // Top Door / Files above.
       const matIconMode = isMaterialsMenuOpen ? "materials-active" : "materials-idle";
       if (matIconEl.dataset.mode !== matIconMode) {
-        matIconEl.innerHTML = isMaterialsMenuOpen ? MATERIALS_ICON_ACTIVE_SVG : MATERIALS_ICON_IDLE_SVG;
+        // One animated drawing (reel spins via CSS off aria-pressed);
+        // install once, never re-set on a state flip.
+        if (!matIconEl.querySelector(".spool-reel")) {
+          matIconEl.innerHTML = SPOOL_ICON_SOLID_SVG;
+        }
         matIconEl.dataset.mode = matIconMode;
       }
     }
@@ -10246,7 +10254,12 @@ function updateBottomNavState() {
       }
       const doorIconMode = isOpen ? "door-open" : "door-closed";
       if (iconEl && iconEl.dataset.mode !== doorIconMode) {
-        iconEl.innerHTML = isOpen ? NAV_DOOR_ICON_DOOR_OPEN_SVG : NAV_DOOR_ICON_DOOR_SVG;
+        // One animated drawing (leaf swings via CSS off aria-pressed);
+        // (re)install only when the svg holds something else — e.g. the Stop
+        // square after a print — never on a plain open/close flip.
+        if (!iconEl.querySelector(".door-panel")) {
+          iconEl.innerHTML = NAV_DOOR_ICON_DOOR_SVG;
+        }
         iconEl.dataset.mode = doorIconMode;
       }
     }

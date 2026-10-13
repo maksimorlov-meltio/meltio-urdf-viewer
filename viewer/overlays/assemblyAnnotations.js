@@ -609,7 +609,7 @@ export function createAssemblyAnnotationManager(layerEl, deps = {}) {
           runMenuActionWithSwitchHandling(item, focusPoint);
         };
 
-        const navLabel = item.id === "front-door" ? "Front Door" : definition.label;
+        const navLabel = item.id === "front-door" ? "Front door" : definition.label;
         item.navButton.textContent = navLabel;
         item.navButton.onclick = triggerNavAction;
         setNavButtonState(item.id, { enabled: true, active: false, open: false });

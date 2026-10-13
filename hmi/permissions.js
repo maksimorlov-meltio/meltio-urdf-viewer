@@ -55,6 +55,8 @@
   let rootEl = null;
 
   // ---- DOM helper -----------------------------------------------------------
+  // Lucide "x" (24 viewBox, stroke 2, round caps) — same glyph as the other close buttons.
+  const CLOSE_X_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12"/><path d="M18 6L6 18"/></svg>';
   function h(tag, attrs, ...kids) {
     const el = document.createElement(tag);
     if (attrs) for (const [k, v] of Object.entries(attrs)) {
@@ -342,7 +344,7 @@
       avatarEl(currentUser, "perm-avatar-lg"),
       h("div", { class: "perm-settings-account-text" },
         h("span", { class: "perm-settings-account-name" }, currentUser ? currentUser.name : "Not signed in"),
-        h("span", { class: "perm-settings-account-level" }, currentLevelName())));
+        h("span", { class: currentUser ? "perm-settings-account-level" : "perm-settings-account-level is-hint" }, currentLevelName())));
     settingsAccountButtonEl.className = isSignedIn() ? "btn-secondary" : "btn-primary";
     settingsAccountButtonEl.textContent = isSignedIn() ? "Sign out" : "Sign in";
   }
@@ -386,7 +388,7 @@
       rootEl.innerHTML = "";
       const card = h("div", { class: "perm-modal-card", role: "dialog", "aria-modal": "true" },
         h("div", { class: "perm-modal-head" }, h("h3", null, "Sign in"),
-          h("button", { class: "perm-icon-btn", type: "button", "aria-label": "Close", onclick: closeOverlay }, "✕")),
+          h("button", { class: "perm-icon-btn", type: "button", "aria-label": "Close", onclick: closeOverlay, html: CLOSE_X_SVG })),
         h("p", { class: "perm-modal-note" }, "Enter your operator credentials. Your access level is set by your account."),
         h("div", { class: "perm-field" }, h("label", null, "Username"), userInput),
         h("div", { class: "perm-field" }, h("label", null, "Password"), passInput),
@@ -406,7 +408,7 @@
     rootEl.innerHTML = "";
     const card = h("div", { class: "perm-modal-card", role: "dialog", "aria-modal": "true" },
       h("div", { class: "perm-modal-head" }, h("h3", null, "Account"),
-        h("button", { class: "perm-icon-btn", type: "button", "aria-label": "Close", onclick: closeOverlay }, "✕")),
+        h("button", { class: "perm-icon-btn", type: "button", "aria-label": "Close", onclick: closeOverlay, html: CLOSE_X_SVG })),
       h("div", { class: "perm-account-summary" },
         avatarEl(currentUser, "perm-avatar-lg"),
         h("div", { class: "perm-settings-account-text" },
@@ -435,7 +437,7 @@
       else body.appendChild(renderRoles(render));
       const card = h("div", { class: "perm-dash-card", role: "dialog", "aria-modal": "true" },
         h("div", { class: "perm-modal-head" }, h("h3", null, "Modes & Permissions"),
-          h("button", { class: "perm-icon-btn", type: "button", "aria-label": "Close", onclick: closeOverlay }, "✕")),
+          h("button", { class: "perm-icon-btn", type: "button", "aria-label": "Close", onclick: closeOverlay, html: CLOSE_X_SVG })),
         h("div", { class: "perm-tabs" },
           tabBtn("Permissions", "matrix", tab, () => { tab = "matrix"; render(); }),
           tabBtn("Modes", "roles", tab, () => { tab = "roles"; render(); }),

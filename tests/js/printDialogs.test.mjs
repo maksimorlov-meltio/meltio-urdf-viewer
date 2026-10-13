@@ -174,8 +174,8 @@ test("the complete modal renders material, spool, time, layers and thermal", () 
 
   assert.equal(el("printCompleteModal").hidden, false);
   assert.equal(el("printCompleteModal").getAttribute("aria-hidden"), "false");
-  assert.equal(el("printCompleteMaterial").textContent, "640g");
-  assert.match(el("printCompleteSpool").textContent, /3000g left \(.*\) · ~4 more print\(s\)/);
+  assert.equal(el("printCompleteMaterial").textContent, "640 g");
+  assert.match(el("printCompleteSpool").textContent, /3000 g left \(.*\) · ~4 more print\(s\)/);
   assert.equal(el("printCompleteTime").textContent, "1h 2m");
   assert.equal(el("printCompleteLayers").textContent, "42 layers · 61.3 mm");
   assert.equal(el("printCompleteThermal").textContent,
@@ -216,7 +216,7 @@ test("the stop summary shows the percentage, the draw and the over-run", () => {
   });
   assert.equal(el("printStopSummaryModal").hidden, false);
   assert.equal(el("printStopSummaryPrinted").textContent, "37% complete");
-  assert.equal(el("printStopSummaryMaterial").textContent, "385g");
+  assert.equal(el("printStopSummaryMaterial").textContent, "385 g");
   assert.equal(el("printStopSummaryOverprint").textContent,
     "+15.5g (4.2% over nominal)");
 

@@ -94,7 +94,7 @@ test("the amount is committed by Load, not by typing", () => {
   click("materialsLoadAction");
   assert.equal(state.spoolManualAmountGramsByKey.spool1, 1500);
   for (const id of ["hotspotSpool1Amount", "filesSpool1Amount", "materialsSpool1Amount"]) {
-    assert.equal(el(id).textContent, "1500g", `${id}`);
+    assert.equal(el(id).textContent, "1500 g", `${id}`);
   }
 });
 
