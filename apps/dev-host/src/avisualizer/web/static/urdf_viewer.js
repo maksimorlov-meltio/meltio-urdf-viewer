@@ -671,12 +671,13 @@ const NAV_DOOR_ICON_CONSOLE = '<rect x="12.6" y="12.4" width="3.6" height="4.6" 
 const NAV_DOOR_ICON_DOOR_SVG =
   '<g class="door-panel"><path d="M19 21V5a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v16"/><path d="M2 21h20"/><path d="M9 12h.01"/></g><g class="door-open"><path d="M10 21H2"/><path d="M10 3H7a2 2 0 0 0-2 2v16"/><path d="M22 21h-3"/><g class="door-leaf"><path d="M14 12h.01"/><path d="M19 21V5a2 2 0 0 0-1.675-1.974l-6.163-1.013A1 1 0 0 0 10 3v18a1 1 0 0 0 1.124.992z"/></g></g>';
 const NAV_DOOR_ICON_STOP_SVG = '<rect x="6" y="6" width="12" height="12" rx="1.5" />';
-// Top door (2026-10-08, Maksim picked "A": his lid drawing in Lucide
-// strokes): cabinet + lid slab (.lid-slab) + handle. Open = the lid lifts
-// 4 units and an A-frame sling (.lid-sling) appears above it; close reverses.
-// ONE drawing, all motion CSS off aria-pressed on #annotationNavTopCover.
+// Top door (2026-10-13, Maksim picked "M" from the machine-silhouette round):
+// chamber front view - body, floor, chamber window, and the top cover band
+// (.lid-cover) hinged at the back-left corner. Open = the cover rotates 20°
+// up; close reverses. ONE drawing, all motion CSS off aria-pressed on
+// #annotationNavTopCover.
 const TOP_DOOR_ICON_SVG =
-  '<g><rect x="3" y="12" width="18" height="9" rx="2"/><path d="M17 15v3"/><path class="lid-sling" d="M6 5l6-4 6 4"/><g class="lid-slab"><rect x="3" y="9" width="18" height="3" rx="1"/></g></g>';
+  '<g><path d="M3 21V7"/><path d="M21 21V7"/><path d="M3 21h18"/><rect x="7" y="11" width="10" height="6" rx="1"/><g class="lid-cover"><path d="M3 7V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2"/><path d="M3 7h18"/></g></g>';
 const ANNOTATION_UPDATE_INTERVAL_MS = 0;
 const ANNOTATION_CLICK_ACTIVE_HOLD_MS = 2200;
 const ENABLE_ANNOTATION_OCCLUSION = false;
@@ -7712,7 +7713,7 @@ function updateTopDoorShortcutButton() {
   if (topIconEl && topIconEl.dataset.mode !== topIconMode) {
     // One animated drawing: install it once, then only the mode flips (the
     // lid motion is CSS off aria-pressed). Re-setting innerHTML would reset it.
-    if (!topIconEl.querySelector(".lid-slab")) {
+    if (!topIconEl.querySelector(".lid-cover")) {
       topIconEl.innerHTML = TOP_DOOR_ICON_SVG;
     }
     topIconEl.dataset.mode = topIconMode;
