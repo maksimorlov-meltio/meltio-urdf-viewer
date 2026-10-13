@@ -1,0 +1,36 @@
+/* Geometry. Radii are small and specific — this is a dense instrument panel,
+   not a card-and-pill web page. Do not snap these to a 4/8px grid; they are measured. */
+:root {
+  --radius: 7px;        /* chips, ghost buttons, inputs */
+  --radius-row: 8px;    /* rail rows */
+  --radius-lg: 12px;    /* cards */
+  --radius-pop: 10px;   /* popovers 10-14 */
+  --radius-pill: 999px;
+
+  /* Control sizes */
+  --h-primary: 42px;    /* primary button, rail bottom action */
+  --h-control: 30px;
+  --h-act: 26px;        /* per-row action button */
+  --toggle-w: 30px;
+  --toggle-h: 17px;
+
+  /* Shell layout — fixed, load-bearing widths */
+  --topbar-h: 56px;
+  --rail-w: 240px;          /* slicer / workspace left rail */
+  --subject-index-w: 236px; /* case surface subject index */
+  --copilot-w: 348px;
+  --avatar: 30px;
+
+  /* Spacing steps actually in use */
+  --sp-1: 4px;
+  --sp-2: 6px;
+  --sp-3: 8px;
+  --sp-4: 10px;
+  --sp-5: 14px;
+  --sp-6: 20px;
+  --sp-7: 24px;
+
+  --rail-pad: 20px 14px;
+  --row-pad: 7px 10px;
+  --card-pad: 1.1rem 1.2rem;
+}

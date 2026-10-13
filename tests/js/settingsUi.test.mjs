@@ -60,19 +60,24 @@ test("every click routes through markUserActivity — the idle clock depends on 
   assert.ok(namesOf().includes("markUserActivity"));
 });
 
-test("the light toggle reaches the scene, and its label follows the scene state", () => {
+test("the light toggle reaches the scene, and its switch state follows the scene state", () => {
   reset();
   click("settingsLightToggle");
   assert.deepEqual(namesOf().filter((n) => n === "toggleLight"), ["toggleLight"],
     "exactly one call, no double-wiring");
 
   // The host reports the resulting state back; the button must reflect it.
+  // DS v3: the label ("Light mode") is static markup and the .ds-switch
+  // inside is CSS off aria-pressed, so the sync must not rewrite textContent.
+  const labelBefore = el("settingsLightToggle").textContent;
   settings.syncLightLabel(true);
-  assert.match(el("settingsLightToggle").textContent, /On$/);
+  assert.equal(el("settingsLightToggle").textContent, labelBefore, "label is static");
   assert.equal(el("settingsLightToggle").getAttribute("aria-pressed"), "true");
+  assert.equal(el("settingsLightToggle").getAttribute("aria-checked"), "true");
   settings.syncLightLabel(false);
-  assert.match(el("settingsLightToggle").textContent, /Off$/);
+  assert.equal(el("settingsLightToggle").textContent, labelBefore, "label is static");
   assert.equal(el("settingsLightToggle").getAttribute("aria-pressed"), "false");
+  assert.equal(el("settingsLightToggle").getAttribute("aria-checked"), "false");
 });
 
 test("opening settings closes the notification centre — screens are exclusive", () => {

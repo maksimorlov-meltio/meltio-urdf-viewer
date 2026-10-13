@@ -156,7 +156,7 @@ function setAdvancedModeEnabled(isEnabled) {
 
   if (advancedModeIndicatorEl) {
     advancedModeIndicatorEl.hidden = !isAdvancedModeEnabled;
-    advancedModeIndicatorEl.textContent = "Advanced Mode ON";
+    advancedModeIndicatorEl.textContent = "Advanced mode ON";
   }
   if (settingsAdvancedModeToggleEl) {
     settingsAdvancedModeToggleEl.setAttribute("aria-pressed", isAdvancedModeEnabled ? "true" : "false");
@@ -478,8 +478,9 @@ return {
   isRoleDriven: () => advancedRoleDriven,
   syncLightLabel: (isLightMode) => {
     if (settingsLightToggleEl) {
-      settingsLightToggleEl.textContent = isLightMode ? "Light Mode: On" : "Light Mode: Off";
+      // The label ("Light mode") is static; the .ds-switch inside follows aria-pressed.
       settingsLightToggleEl.setAttribute("aria-pressed", isLightMode ? "true" : "false");
+      settingsLightToggleEl.setAttribute("aria-checked", isLightMode ? "true" : "false");
     }
   },
   handleOutsideClick: (target) => {

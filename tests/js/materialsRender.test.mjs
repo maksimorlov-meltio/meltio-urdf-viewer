@@ -83,7 +83,7 @@ test("every surface shows the same remaining amount", () => {
   materials.updateSpoolSelectionCards();
 
   const shown = textsOf(SURFACES.spool1.amount);
-  assert.deepEqual(new Set(shown), new Set(["1234g"]),
+  assert.deepEqual(new Set(shown), new Set(["1234 g"]),
     `all three surfaces must agree, got ${JSON.stringify(shown)}`);
 });
 
@@ -94,9 +94,9 @@ test("the initial/used breakdown renders where the surface has it", () => {
   state.spoolRemainingAmountGramsByKey.spool2 = 650;
   materials.updateSpoolSelectionCards();
 
-  assert.deepEqual(new Set(textsOf(SURFACES.spool2.initial)), new Set(["900g"]));
-  assert.deepEqual(new Set(textsOf(SURFACES.spool2.used)), new Set(["250g"]));
-  assert.deepEqual(new Set(textsOf(SURFACES.spool2.amount)), new Set(["650g"]));
+  assert.deepEqual(new Set(textsOf(SURFACES.spool2.initial)), new Set(["900 g"]));
+  assert.deepEqual(new Set(textsOf(SURFACES.spool2.used)), new Set(["250 g"]));
+  assert.deepEqual(new Set(textsOf(SURFACES.spool2.amount)), new Set(["650 g"]));
   // Only the hotspot panel carries the breakdown; the Files pane never had it
   // and the Materials popup lost it (see check_dead_lookups.mjs).
   for (const id of ["filesSpool2InitialAmount", "materialsSpool2InitialAmount"]) {
@@ -130,8 +130,8 @@ test("the wire drum renders as the third feedstock card", () => {
   state.setSelectedPrintJobUsage(120, null);
   materials.updateSpoolSelectionCards();
 
-  assert.equal(el("materialsWireDrumMaterial").textContent, "316L Stainless Steel");
-  assert.equal(el("materialsWireDrumAmount").textContent, "15000g");
+  assert.equal(el("materialsWireDrumMaterial").textContent, "316L stainless steel");
+  assert.equal(el("materialsWireDrumAmount").textContent, "15000 g");
   assert.ok(el("materialsWireDrumStatus").classList.contains("status-ready"));
   assert.equal(el("materialsSpoolCardWireDrum").dataset.spoolKey, "wiredrum");
 });

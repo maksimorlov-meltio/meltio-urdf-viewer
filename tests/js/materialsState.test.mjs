@@ -110,8 +110,8 @@ test("getSpoolStatusState: the low band is the greater of 500 g and 1.2x require
 });
 
 test("formatGramsText rounds and floors at zero", () => {
-  assert.equal(formatGramsText(749.6), "750g");
-  assert.equal(formatGramsText(-3), "0g");
+  assert.equal(formatGramsText(749.6), "750 g");
+  assert.equal(formatGramsText(-3), "0 g");
 });
 
 // --- COD-5: the write path must cover the same feedstocks the read path reads -
