@@ -3115,9 +3115,37 @@ function enhanceFeederWheelMaterials() {
   }
 }
 
+// Texture-atlas materials (2026-10-13 test): recognised ONLY by the Blender
+// material name suffix ("Test_Metal_Atlas", "Test_Plastic_Atlas", ...). Name
+// based on purpose: an unrelated re-export that happens to carry a
+// metallicRoughness map must keep the generic flat tuning below, not be
+// reclassified as an atlas part.
+const ATLAS_MATERIAL_NAME_RE = /_atlas$/i;
+const ATLAS_ENV_MAP_INTENSITY = 1.2;
+function isAtlasMaterial(mat) {
+  return Boolean(mat) && ATLAS_MATERIAL_NAME_RE.test(String(mat.name || ""));
+}
+
 function styleMeshTree(object3d) {
   function tuneMaterial(mat) {
     if (!mat) {
+      return;
+    }
+
+    // 2026-10-13 texture atlas test: parts exported with the baked PBR atlas
+    // (materials named "*_Atlas", e.g. Spools Door_atlas.glb / Wire Drum
+    // Door_atlas.glb) carry their own metallic/roughness maps. The flat
+    // overrides below are multipliers once a map is present, so they would cap
+    // the atlas at 24 % metal. Keep the factors at 1 so the maps are used as
+    // delivered, and give these materials the scoped studio reflections (same
+    // texture the feeder wheels use, NOT scene.environment) so fully metallic
+    // texels have something to reflect instead of going black.
+    if (isAtlasMaterial(mat)) {
+      if ("metalness" in mat) mat.metalness = 1;
+      if ("roughness" in mat) mat.roughness = 1;
+      if ("envMap" in mat) mat.envMap = studioEnvironmentTexture;
+      if ("envMapIntensity" in mat) mat.envMapIntensity = ATLAS_ENV_MAP_INTENSITY;
+      mat.needsUpdate = true;
       return;
     }
 
