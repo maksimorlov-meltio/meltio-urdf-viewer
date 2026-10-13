@@ -1,0 +1,34 @@
+/* Two families, two registers. IBM Plex Sans for prose and controls;
+   IBM Plex Mono for EVERY numeral, id, count, timestamp and label.
+   Aim for two type sizes per surface; three is a smell. */
+:root {
+  --font-sans: "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+
+  /* Prose / UI */
+  --fs-body: 13px;          /* shell default */
+  --fs-body-lg: 13.5px;     /* case-surface body copy; summaries AND originals */
+  --fs-ui: 13px;            /* nav, buttons, rows */
+  --fs-ui-sm: 11.5px;       /* row actions, dense tables */
+  --fs-heading: 15px;
+  --fs-display: 22px;       /* the largest type the product uses */
+
+  /* Mono meta */
+  --fs-mono: 11.5px;        /* breadcrumbs, ids, values */
+  --fs-mono-sm: 10px;       /* section labels */
+  --fs-mono-xs: 9px;        /* lane chips, card caps */
+
+  --lh-tight: 1.25;
+  --lh-body: 1.5;
+
+  /* The label style. One recipe, used everywhere a label appears:
+     mono, 600, uppercase, wide tracking, --text-label. */
+  --label-size: 10px;
+  --label-weight: 600;
+  --label-tracking: 0.16em;   /* 0.09em on the densest case-surface chips */
+  --label-color: var(--ws-faint-2);
+
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+}

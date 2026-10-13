@@ -3,11 +3,11 @@
 :root {
   color-scheme: dark;
   /* Meltio Design System (2026-07-20): neutral-black + IBM Plex, orange as accent. */
-  --panel-bg: rgba(22, 22, 22, 0.8);
+  --panel-bg: #0d0f12;
   --panel-border: rgba(255, 255, 255, 0.1);
   --text-main: #ebebeb;
   --text-muted: #929292;
-  --accent: #f0913a;
+  --accent: #e8eaed;
   --title-size: 36px;
   --main-heading-size: 18px;
   --sub-heading-size: 15px;
@@ -51,7 +51,7 @@ body {
   height: 100%;
   overflow: hidden;
   font-family: "IBM Plex Sans", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-  background: radial-gradient(circle at top, #171717 0%, #0c0c0c 45%, #080808 100%);
+  background: #12161a;
   color: var(--text-main);
 }
 
@@ -74,14 +74,14 @@ body {
   margin: 0 0 10px;
   font-size: var(--title-size);
   letter-spacing: 0.04em;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+  text-shadow: none;
 }
 
 .status-panel p {
   margin: 8px 0 0;
   font-size: var(--status-size);
   color: #ffffff;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+  text-shadow: none;
 }
 
 .controls-panel {
@@ -94,7 +94,7 @@ body {
   border: 1px solid var(--panel-border);
   border-radius: 12px;
   background: var(--panel-bg);
-  backdrop-filter: blur(6px);
+  backdrop-filter: none;
 }
 
 .trend-panel {
@@ -109,8 +109,8 @@ body {
   padding: 8px 10px;
   border: 1px solid var(--panel-border);
   border-radius: 12px;
-  background: rgba(16, 16, 16, 0.78);
-  backdrop-filter: blur(6px);
+  background: #0d0f12;
+  backdrop-filter: none;
 }
 
 .color-scale-panel {
@@ -122,8 +122,8 @@ body {
   padding: 6px;
   border: 1px solid var(--panel-border);
   border-radius: 9px;
-  background: rgba(16, 16, 16, 0.78);
-  backdrop-filter: blur(6px);
+  background: #0d0f12;
+  backdrop-filter: none;
 }
 
 .color-scale-wrap {
@@ -135,16 +135,9 @@ body {
 .color-scale-bar {
   width: 12px;
   height: 108px;
-  border-radius: 6px;
-  border: 1px solid rgba(255, 180, 118, 0.35);
-  background: linear-gradient(
-    to top,
-    hsl(281deg 95% 50%) 0%,
-    hsl(248deg 95% 50%) 22%,
-    hsl(215deg 95% 50%) 48%,
-    hsl(182deg 95% 50%) 72%,
-    hsl(22deg 95% 50%) 100%
-  );
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.175);
+  background: none;
 }
 
 .color-scale-labels {
@@ -172,7 +165,7 @@ body {
 }
 
 .control-subpanel {
-  border: 1px solid rgba(255, 180, 118, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 10px;
   padding: var(--subpanel-padding);
   margin-bottom: var(--subpanel-gap);
@@ -239,7 +232,7 @@ body {
   height: 4px;
   transform: translateY(-50%);
   border-radius: 999px;
-  background: rgba(255, 180, 118, 0.2);
+  background: rgba(255, 255, 255, 0.07);
   z-index: 1;
 }
 
@@ -252,7 +245,7 @@ body {
   height: 4px;
   transform: translateY(-50%);
   border-radius: 999px;
-  background: #ffb67a;
+  background: rgba(255, 255, 255, 0.09);
   z-index: 2;
 }
 
@@ -289,7 +282,7 @@ body {
   margin-top: -4px;
   border: 1px solid rgba(255, 255, 255, 0.8);
   border-radius: 50%;
-  background: #fff2e7;
+  background: #f3f3f3;
   pointer-events: auto;
 }
 
@@ -298,7 +291,7 @@ body {
   height: 10px;
   border: 1px solid rgba(255, 255, 255, 0.8);
   border-radius: 50%;
-  background: #fff2e7;
+  background: #f3f3f3;
   pointer-events: auto;
 }
 
@@ -310,11 +303,11 @@ body {
 .controls-panel button {
   width: 100%;
   margin-top: 0;
-  border: 1px solid rgba(255, 180, 118, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 8px;
   padding: 2px 8px;
   height: var(--control-height);
-  background: rgba(16, 16, 16, 0.9);
+  background: #0d0f12;
   color: var(--text-main);
   font-size: var(--control-font-size);
 }
@@ -359,9 +352,9 @@ body {
   align-items: center;
   justify-content: center;
   border: none;
-  box-shadow: inset 0 0 0 1px rgba(255, 180, 118, 0.5);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
   border-radius: 10px;
-  background: rgba(16, 16, 16, 0.92);
+  background: #0d0f12;
   color: var(--text-main);
   cursor: pointer;
   font-weight: 600;
@@ -370,8 +363,8 @@ body {
 }
 
 .settings-button:hover {
-  box-shadow: inset 0 0 0 1px rgba(255, 195, 146, 0.95);
-  background: rgba(29, 29, 29, 0.96);
+  box-shadow: inset 0 0 0 1px rgba(200, 200, 200, 0.95);
+  background: #12161a;
 }
 
 .settings-panel {
@@ -387,8 +380,8 @@ body {
   padding: 12px;
   border: 1px solid var(--panel-border);
   border-radius: 12px;
-  background: rgba(16, 16, 16, 0.95);
-  backdrop-filter: blur(8px);
+  background: #0d0f12;
+  backdrop-filter: none;
 }
 
 .settings-panel.hidden {
@@ -432,8 +425,8 @@ body.settings-modal-open .color-scale-panel {
 .settings-actions #applySettings:hover,
 .settings-group button:hover,
 .controls-panel button:hover {
-  border-color: rgba(255, 195, 146, 0.9);
-  background: rgba(29, 29, 29, 0.96);
+  border-color: rgba(200, 200, 200, 0.9);
+  background: #12161a;
 }
 
 .tab-content {
@@ -441,7 +434,7 @@ body.settings-modal-open .color-scale-panel {
 }
 
 .settings-group {
-  border: 1px solid rgba(255, 180, 118, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 10px;
   padding: var(--subpanel-padding);
   display: grid;
@@ -478,7 +471,7 @@ body.settings-modal-open .color-scale-panel {
   width: 16px;
   height: 16px;
   margin: 0;
-  accent-color: #ffb67a;
+  accent-color: #e8eaed;
 }
 
 .settings-group button {
