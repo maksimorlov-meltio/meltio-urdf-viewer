@@ -9129,20 +9129,29 @@ body.light-mode .topbar-icon[aria-expanded="true"] .ui-img-icon {
 #navDoorToggle[aria-pressed="true"] .door-leaf { transform: none; }
 #navDoorToggle svg { overflow: visible; }
 
-/* Top door "M" (2026-10-13): the top cover band rotates 20° up about the
-   back-left corner (3,7); same duration/easing as the Front door leaf. */
-#annotationNavTopCover .lid-cover {
+/* Top door "M + crane" (2026-10-13): the top cover band is lifted by a crane.
+   Open: the A-sling (.lid-sling) drops in from above and hooks the cover
+   (200 ms), then sling + cover (.lid-lift) rise 4 units straight up (450 ms).
+   Close: the cover lowers first (450 ms), then the sling lifts away (200 ms).
+   Closed = clean machine glyph, no straps visible. */
+#annotationNavTopCover .lid-lift {
   transform-box: view-box;
-  transform-origin: 3px 7px;
-  transition: transform 450ms cubic-bezier(0.34, 1.02, 0.42, 1);
+  transition: transform 450ms cubic-bezier(0.34, 1.02, 0.42, 1) 0ms;
 }
-#annotationNavTopCover[aria-pressed="true"] .lid-cover { transform: rotate(-20deg); }
+#annotationNavTopCover .lid-sling {
+  transform-box: view-box;
+  opacity: 0;
+  transform: translateY(-5px);
+  transition: transform 200ms ease-out 450ms, opacity 200ms ease-out 450ms;
+}
+#annotationNavTopCover[aria-pressed="true"] .lid-sling { opacity: 1; transform: none; transition-delay: 0ms; }
+#annotationNavTopCover[aria-pressed="true"] .lid-lift { transform: translateY(-4px); transition-delay: 200ms; }
 
 @media (prefers-reduced-motion: reduce) {
   #navMaterialsToggle .spool-reel,
   #navFilesToggle .file-s1, #navFilesToggle .file-s2, #navFilesToggle .file-s3,
   #navDoorToggle .door-panel, #navDoorToggle .door-open, #navDoorToggle .door-leaf,
-  #annotationNavTopCover .lid-cover { transition: none; }
+  #annotationNavTopCover .lid-lift, #annotationNavTopCover .lid-sling { transition: none; }
 }
 }
 
