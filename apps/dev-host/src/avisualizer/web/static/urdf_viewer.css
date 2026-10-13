@@ -7972,7 +7972,10 @@ a:not(.btn):not([class*="nav"]):hover {
    ========================================================================== */
 .topbar-utility-settings {
   position: absolute;
-  top: calc(100% + 18px);
+  /* 2026-10-13 (Maksim): leave a visible gap under the topbar instead of
+     butting against its bottom edge (+18px landed flush with it), and lift
+     the card off the scene: control ground + DS strong hairline. */
+  top: calc(100% + 28px);
   left: 0;
   z-index: 260;
   width: 268px;
@@ -7981,9 +7984,9 @@ a:not(.btn):not([class*="nav"]):hover {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  border: 1px solid var(--ui-border-subtle);
+  border: 1px solid rgba(255, 255, 255, 0.30);
   border-radius: var(--ui-radius-md);
-  background: var(--ui-modal-bg);
+  background: var(--ws-control, #12161a);
   box-shadow: var(--ui-shadow-panel);
   backdrop-filter: none;
 }
@@ -8301,8 +8304,8 @@ a:not(.btn):not([class*="nav"]):hover {
    plain <button> children turned white via the blanket light-mode rule.
    ========================================================================== */
 body.light-mode .topbar-utility-settings {
-  background: rgba(255, 253, 249, 0.98);
-  border-color: rgba(33, 33, 33, 0.18);
+  background: #ffffff;
+  border-color: rgba(7, 8, 10, 0.30);
 }
 body.light-mode .topbar-utility-settings-header h3 {
   color: #2e2e2e;
