@@ -26,7 +26,7 @@
     <visual>
       <origin xyz="0 0 0.0017" rpy="1.570796 0 -3.141593"/>
       <geometry>
-        <mesh filename="Spools Door.glb" scale="1 1 1"/>
+        <mesh filename="Spools Door_atlas.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -89,7 +89,7 @@
     <visual>
       <origin xyz="1e-05 7e-05 -0.00028" rpy="-3.141593 0.0 -3.141593"/>
       <geometry>
-        <mesh filename="Wire Drum Door.glb" scale="1 1 1"/>
+        <mesh filename="Wire Drum Door_atlas.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>

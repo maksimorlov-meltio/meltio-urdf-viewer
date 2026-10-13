@@ -14,3 +14,7 @@ contract-dom.json text eol=lf
 # endings cannot make it flap, but a file that flips every byte on checkout
 # makes the release diff unreadable for the consumer tracking it.
 contract-http.json text eol=lf
+
+# Baked PBR texture atlases shipped next to the GLBs (2026-10 atlas test).
+# Scoped to the assets tree: the static icons/brand PNGs stay plain git objects.
+apps/dev-host/assets/**/*.png filter=lfs diff=lfs merge=lfs -text
