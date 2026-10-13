@@ -112,7 +112,7 @@ const STYLE = `
 .ppc-cancel{background:var(--ui-button-disabled-bg,rgba(52,52,52,.6));
   color:var(--ui-text-secondary,#bbbbbb);}
 .ppc-fix{background:var(--ui-button-primary-bg,rgba(255,255,255,.05));
-  color:var(--ui-button-primary-text,#f0913a);}
+  color:var(--ui-button-primary-text,#e8eaed);}
 .ppc-start{background:var(--ui-success,#43b56a);color:var(--ui-bg-canvas,#0a0a0a);}
 /* Override is the deliberately uncomfortable button: warning, not success. */
 .ppc-override{background:var(--ui-warning,#f0b53a);color:var(--ui-bg-canvas,#0a0a0a);}

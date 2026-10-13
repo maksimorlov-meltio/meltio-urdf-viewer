@@ -642,7 +642,7 @@ export function setMaterialsHistoryOpen(open) {
   }
   if (materialsHistoryToggleEl) {
     materialsHistoryToggleEl.setAttribute("aria-pressed", show ? "true" : "false");
-    materialsHistoryToggleEl.textContent = show ? "Back to materials" : "Usage history";
+    materialsHistoryToggleEl.textContent = show ? "Back to materials" : "Usage history…";
   }
   if (show) {
     renderMaterialUsageHistory();
@@ -678,11 +678,11 @@ export function updateHotspotMaterialAssignmentStatus() {
   const requiredGrams = getSelectedPrintJobRequiredGrams();
 
   if (hotspotMaterialAssignmentStatusEl) {
-    hotspotMaterialAssignmentStatusEl.textContent = `${focusedSpoolLabel}: ${assignedMaterialLabel}`;
+    hotspotMaterialAssignmentStatusEl.textContent = `${focusedSpoolLabel} · ${assignedMaterialLabel}`;
   }
 
   if (hotspotMaterialUsageStatusEl) {
-    hotspotMaterialUsageStatusEl.textContent = `Used: ${formatGramsText(usedGrams)} | Left: ${formatGramsText(leftGrams)}`;
+    hotspotMaterialUsageStatusEl.textContent = `Used ${formatGramsText(usedGrams)} · Left ${formatGramsText(leftGrams)}`;
   }
 
   if (hotspotMaterialRequiredStatusEl) {
@@ -692,27 +692,27 @@ export function updateHotspotMaterialAssignmentStatus() {
   if (materialsMenuAssignmentStatusEl) {
     // Materials menu uses "Feeder 1/2" naming (scoped to this popup).
     const feederLabel = focusedSpoolKey === "spool2" ? "Feeder 2" : "Feeder 1";
-    materialsMenuAssignmentStatusEl.textContent = `${feederLabel}: ${assignedMaterialLabel}`;
+    materialsMenuAssignmentStatusEl.textContent = `${feederLabel} · ${assignedMaterialLabel}`;
   }
   if (materialsMenuUsageStatusEl) {
-    materialsMenuUsageStatusEl.textContent = `Used: ${formatGramsText(usedGrams)} | Left: ${formatGramsText(leftGrams)}`;
+    materialsMenuUsageStatusEl.textContent = `Used ${formatGramsText(usedGrams)} · Left ${formatGramsText(leftGrams)}`;
   }
   const hasAssignedMaterial = Boolean(hotspotMaterialAssignments[focusedSpoolKey]);
   const hasNotEnoughMaterial = hasAssignedMaterial && leftGrams < requiredGrams;
   const filesStatusParts = [
-    `${focusedSpoolLabel}: ${assignedMaterialLabel}`,
-    `Left: ${formatGramsText(leftGrams)}`,
-    `Required: ${formatGramsText(requiredGrams)}`,
+    `${focusedSpoolLabel} · ${assignedMaterialLabel}`,
+    `Left ${formatGramsText(leftGrams)}`,
+    `Required ${formatGramsText(requiredGrams)}`,
   ];
   if (hasNotEnoughMaterial) {
-    filesStatusParts.push("Status: Not enough");
+    filesStatusParts.push("Not enough");
   }
 
   if (filesMaterialAssignmentStatusEl) {
-    filesMaterialAssignmentStatusEl.textContent = filesStatusParts.join(" | ");
+    filesMaterialAssignmentStatusEl.textContent = filesStatusParts.join(" · ");
   }
   if (filesMaterialPanelTitleEl) {
-    filesMaterialPanelTitleEl.textContent = "Materials & Feeder";
+    filesMaterialPanelTitleEl.textContent = "Materials & feeder";
   }
   if (filesMaterialCurrentMaterialEl) {
     filesMaterialCurrentMaterialEl.textContent = `Material: ${assignedMaterialLabel}`;

@@ -84,7 +84,7 @@ export function createSceneCore({ canvas, width, height, devicePixelRatio }) {
   });
   renderer.setPixelRatio(Math.min(devicePixelRatio, REST_RENDER_PIXEL_RATIO));
   renderer.setSize(width, height);
-  renderer.setClearColor(0x0b0a09);
+  renderer.setClearColor(0x0b0e12);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.shadowMap.enabled = ENABLE_REALTIME_SHADOWS;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -92,8 +92,8 @@ export function createSceneCore({ canvas, width, height, devicePixelRatio }) {
   renderer.toneMappingExposure = 1.35;
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0b0a09);
-  scene.fog = new THREE.Fog(0x0b0a09, 400, 2200);
+  scene.background = new THREE.Color(0x0b0e12);
+  scene.fog = new THREE.Fog(0x0b0e12, 400, 2200);
 
   const camera = new THREE.PerspectiveCamera(58, width / height, 0.05, 6000);
   camera.up.set(0, 0, 1);
@@ -140,7 +140,7 @@ export function createSceneCore({ canvas, width, height, devicePixelRatio }) {
   // look the gears needed at effectively zero frame cost.
   const studioEnvironmentTexture = buildStudioEnvironmentTexture(renderer);
 
-  const grid = new THREE.GridHelper(2.5, 18, 0x36322e, 0x1c1a17);
+  const grid = new THREE.GridHelper(2.5, 18, 0x2a3037, 0x161a1f);
   grid.rotation.x = Math.PI * 0.5;
   scene.add(grid);
 

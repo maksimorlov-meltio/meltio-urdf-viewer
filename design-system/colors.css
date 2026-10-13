@@ -1,0 +1,81 @@
+/* Shell palette — "Workspace glass".
+   Source of truth: docs/INTERFACE_REDESIGN.md "Design tokens (shared)" + styles.css :root.
+   Dark only. There is no light mode and none is planned. */
+:root {
+  color-scheme: dark;
+
+  /* Grounds. Page is the darkest thing on screen; the rail is one step up; cards
+     one step up again. Never more than these three levels on one surface. */
+  --ws-page: #07080a;
+  --ws-rail: #0a0c0e;
+  --ws-panel: #0d0f12;      /* cards, menus, popovers */
+  --ws-control-bg: #12161a; /* inputs, selects, quiet buttons */
+  --ws-stage-hot: #12171c;  /* 3D stage radial gradient, centre */
+  --ws-stage-cold: #05070a; /* 3D stage radial gradient, edge */
+
+  /* Separation is alpha-on-white, never a lighter grey fill. */
+  --ws-hairline: rgba(255, 255, 255, 0.07);
+  --ws-hairline-soft: rgba(255, 255, 255, 0.045);
+  --ws-hairline-strong: rgba(255, 255, 255, 0.08);
+  --ws-border: rgba(255, 255, 255, 0.14);        /* ghost buttons, chips */
+  --ws-border-hover: rgba(255, 255, 255, 0.3);
+  --ws-tint: rgba(255, 255, 255, 0.025);         /* recessed block fill */
+  --ws-tint-2: rgba(255, 255, 255, 0.09);        /* primary-affordance fill */
+
+  /* Ink ramp. Six steps, used strictly in order of importance — a label two steps
+     brighter than it needs to be is the most common way this palette gets broken. */
+  --ws-text: #e8eaed;
+  --ws-text-2: #c9ced4;
+  --ws-text-3: #aeb4bc;
+  --ws-muted: #7d858e;
+  --ws-muted-2: #8b9198;
+  --ws-faint: #6b737b;
+  --ws-faint-2: #5f676f;
+  --ws-faint-3: #565d65;
+  --ws-disabled: #3a4046;
+  --ws-ghost: #4a5158;
+
+  /* State. Green/red/amber only, and only for machine or case state. */
+  --ws-green: #43b56a;
+  --ws-red: #e5675f;
+  --ws-red-text: #f08c85;
+  --ws-amber: #f0b53a;
+
+  /* Process data series (charts, HUD readouts, colour-by). Not a UI palette. */
+  --ws-data-meltpool: #f0913a;
+  --ws-data-load: #7aa2ff;
+  --ws-data-laser: #e8eaed;
+
+  /* Copilot accent — the AI panel's ONE accent, reserved for genuinely interactive
+     affordances (send, links, focus ring, unread dot, live progress). */
+  --cp-accent: #6f8fb0;
+  --cp-accent-soft: rgba(111, 143, 176, 0.16);
+  --cp-accent-hover: rgba(111, 143, 176, 0.28);
+
+  /* AI markers on the case surface (AI badge, AI DRAFT, suggested actions). */
+  --ai-marker: #c8a26e;
+
+  /* Heat scale, vertical top->bottom = hot->cool. Use as an ordered ramp, never
+     as categorical colours. */
+  --heat-1: #ec4f3d;
+  --heat-2: #f2a52f;
+  --heat-3: #c9d92f;
+  --heat-4: #2fd07a;
+  --heat-5: #27c2c2;
+  --heat-6: #2f80ed;
+  --heat-7: #3b2fb5;
+
+  /* Semantic aliases. Product code should reach for these first. */
+  --bg: var(--ws-page);
+  --surface-rail: var(--ws-rail);
+  --surface-card: var(--ws-panel);
+  --surface-control: var(--ws-control-bg);
+  --text-body: var(--ws-text);
+  --text-secondary: var(--ws-text-2);
+  --text-meta: var(--ws-muted);
+  --text-label: var(--ws-faint-2);
+  --line: var(--ws-hairline);
+  --ok: var(--ws-green);
+  --danger: var(--ws-red);
+  --warn: var(--ws-amber);
+}

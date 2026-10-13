@@ -6,10 +6,10 @@
 // hunt, no framework — localisation is a data change.
 export default {
   // Bottom navigation
-  "nav.openDoor": "Open Door",
-  "nav.doorOpen": "Door Open",
-  "nav.topDoor": "Top Door",
-  "nav.topDoorOpen": "Top Door Open",
+  "nav.openDoor": "Front door",
+  "nav.doorOpen": "Front door open",
+  "nav.topDoor": "Top door",
+  "nav.topDoorOpen": "Top door open",
   "nav.materials": "Materials",
   "nav.files": "Files",
   "nav.play": "Play",

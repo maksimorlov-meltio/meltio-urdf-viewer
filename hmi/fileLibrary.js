@@ -402,16 +402,22 @@ export function renderCloudFileLibrary() {
 
     const materialEl = document.createElement("span");
     materialEl.className = "cloud-file-item-material";
-    materialEl.textContent = `Material: ${getMaterialLabelById(
+    const materialKeyEl = document.createElement("span");
+    materialKeyEl.className = "cloud-file-item-k";
+    materialKeyEl.textContent = "Material";
+    materialEl.append(materialKeyEl, getMaterialLabelById(
       hotspotMaterialAssignments.spool1
         || hotspotMaterialAssignments.spool2
         || hotspotMaterialAssignments.wiredrum,
-    )}`;
+    ));
     detailsEl.appendChild(materialEl);
 
     const sourceEl = document.createElement("span");
     sourceEl.className = "cloud-file-item-source";
-    sourceEl.textContent = `Updated: ${getCloudSourceLabel(entry.source)}`;
+    const sourceKeyEl = document.createElement("span");
+    sourceKeyEl.className = "cloud-file-item-k";
+    sourceKeyEl.textContent = "Updated";
+    sourceEl.append(sourceKeyEl, getCloudSourceLabel(entry.source));
     detailsEl.appendChild(sourceEl);
 
     // Slice-status badge (slicing… / ready), driven by the auto-preslice flow.

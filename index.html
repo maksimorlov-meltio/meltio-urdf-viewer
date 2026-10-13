@@ -164,7 +164,7 @@
             <button id="settingsSetupChangelogButton" type="button">Changelog</button>
             <button id="settingsSetupTimelapseButton" type="button">Timelapse</button>
             <button id="settingsSetupBedMaintenanceButton" type="button">Bed maintenance</button>
-            <button id="settingsLightToggle" type="button" aria-pressed="false">Light Mode: Off</button>
+            <button id="settingsLightToggle" type="button" role="switch" aria-checked="false" aria-pressed="false"><span class="ds-switch-label">Light mode</span><span class="ds-switch" aria-hidden="true"></span></button>
           </div>
         </section>
 
@@ -182,23 +182,23 @@
           <div class="topbar-settings-advanced-actions" role="group" aria-label="Advanced settings actions" data-requires-permission="setup.network" data-perm-hide>
             <button id="settingsFixturesButton" type="button" data-advanced-required="true" disabled>Fixtures</button>
             <button id="settingsSensorsButton" type="button" data-advanced-required="true" disabled>Sensors</button>
-            <button id="settingsSetupApiKeyButton" type="button" data-advanced-required="true" disabled>API Key</button>
+            <button id="settingsSetupApiKeyButton" type="button" data-advanced-required="true" disabled>API key</button>
             <button id="settingsSetupNetworkButton" type="button" data-advanced-required="true" disabled>Network</button>
             <button id="settingsSetupWifiButton" type="button" data-advanced-required="true" disabled>Wi-Fi</button>
             <button id="settingsSetupSslButton" type="button" data-advanced-required="true" disabled>SSL</button>
           </div>
-          <button id="settingsExitAdvancedMode" type="button" hidden>Exit Advanced Mode</button>
+          <button id="settingsExitAdvancedMode" type="button" hidden>Exit advanced mode</button>
         </section>
 
         <section
           id="settingsCalibrateMenu"
           class="topbar-settings-submenu"
-          aria-label="Calibrate Tools"
+          aria-label="Calibrate tools"
           aria-hidden="true"
           hidden
         >
           <header class="topbar-settings-submenu-header">
-            <h4>Calibrate Tools</h4>
+            <h4>Calibrate tools</h4>
             <button id="settingsCalibrateClose" type="button" aria-label="Close calibrate tools">Close</button>
           </header>
           <div class="topbar-settings-calibrate-actions" role="group" aria-label="Calibrate actions" data-requires-permission="setup.calibration" data-perm-hide>
@@ -263,7 +263,7 @@
       </div>
     </div>
 
-    <span id="advancedModeIndicator" class="advanced-mode-indicator" aria-live="polite" hidden>Advanced Mode ON</span>
+    <span id="advancedModeIndicator" class="advanced-mode-indicator" aria-live="polite" hidden>Advanced mode ON</span>
 
     <!-- Model/Mesh load status kept as hidden live-region elements so existing JS
          (setModelStatus/setMeshStatus) still updates them without a visible debug row. -->
@@ -301,7 +301,7 @@
         <option value="/assets/M600_PRO/M600_PRO.urdf" selected>M600_PRO</option>
       </select>
       <button id="reloadModel" type="button">Reload</button>
-      <button id="resetView" type="button">Reset View</button>
+      <button id="resetView" type="button">Reset view</button>
       <button id="lightModeToggle" type="button">Light Mode: Off</button>
     </div>
 
@@ -315,20 +315,20 @@
       </dl>
       <div class="move-jog">
         <div class="move-jog-xy" role="group" aria-label="Jog X and Y">
-          <button class="move-btn move-btn-yplus" type="button" data-move-axis="y" data-move-dir="1" aria-label="Jog +Y">&#9650;</button>
-          <button class="move-btn move-btn-xminus" type="button" data-move-axis="x" data-move-dir="-1" aria-label="Jog -X">&#9664;</button>
+          <button class="move-btn move-btn-yplus" type="button" data-move-axis="y" data-move-dir="1" aria-label="Jog +Y"><svg class="move-chevron" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m18 15-6-6-6 6" /></svg></button>
+          <button class="move-btn move-btn-xminus" type="button" data-move-axis="x" data-move-dir="-1" aria-label="Jog -X"><svg class="move-chevron" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m15 18-6-6 6-6" /></svg></button>
           <button class="move-btn move-jog-hub move-home-btn" type="button" data-move-home="xy" aria-label="Home X and Y axes">
             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 11l8-6 8 6" /><path d="M7 10v8h10v-8" /></svg>
           </button>
-          <button class="move-btn move-btn-xplus" type="button" data-move-axis="x" data-move-dir="1" aria-label="Jog +X">&#9654;</button>
-          <button class="move-btn move-btn-yminus" type="button" data-move-axis="y" data-move-dir="-1" aria-label="Jog -Y">&#9660;</button>
+          <button class="move-btn move-btn-xplus" type="button" data-move-axis="x" data-move-dir="1" aria-label="Jog +X"><svg class="move-chevron" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 18 6-6-6-6" /></svg></button>
+          <button class="move-btn move-btn-yminus" type="button" data-move-axis="y" data-move-dir="-1" aria-label="Jog -Y"><svg class="move-chevron" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m6 9 6 6 6-6" /></svg></button>
         </div>
         <div class="move-jog-z" role="group" aria-label="Jog Z">
-          <button class="move-btn" type="button" data-move-axis="z" data-move-dir="1" aria-label="Jog +Z">+Z &#9650;</button>
+          <button class="move-btn" type="button" data-move-axis="z" data-move-dir="1" aria-label="Jog +Z">+Z <svg class="move-chevron" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m18 15-6-6-6 6" /></svg></button>
           <button class="move-btn move-home-btn move-home-z" type="button" data-move-home="z" aria-label="Home Z axis">
             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 11l8-6 8 6" /><path d="M7 10v8h10v-8" /></svg>
           </button>
-          <button class="move-btn" type="button" data-move-axis="z" data-move-dir="-1" aria-label="Jog -Z">&minus;Z &#9660;</button>
+          <button class="move-btn" type="button" data-move-axis="z" data-move-dir="-1" aria-label="Jog -Z">&minus;Z <svg class="move-chevron" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m6 9 6 6 6-6" /></svg></button>
         </div>
       </div>
       <div class="move-step" role="group" aria-label="Jog step size">
@@ -339,9 +339,9 @@
         <span class="move-step-unit">mm</span>
       </div>
       <div class="control-row actions-row move-presets">
-        <button id="printPositionButton" type="button">Print Position</button>
+        <button id="printPositionButton" type="button">Print position</button>
         <button id="maintenancePositionButton" type="button">Maintenance</button>
-        <button id="palpadorSweepButton" type="button" aria-pressed="false">Palpador Sweep</button>
+        <button id="palpadorSweepButton" type="button" aria-pressed="false">Palpador sweep</button>
       </div>
       <p id="motionStatus" class="control-note">Motion: idle</p>
     </section>
@@ -359,7 +359,7 @@
           <path d="M4 8.2h3.4l1.3-2h6.6l1.3 2H20v11.4H4Z" />
           <circle cx="12" cy="13.6" r="3.6" />
         </svg>
-        <span>Feeder View</span>
+        <span>Feeder view</span>
       </button>
       <div class="feeder-jog-grid" role="group" aria-label="Feeder wheel jog controls">
         <div class="feeder-jog-col">
@@ -378,8 +378,8 @@
     <!-- Appearance + Cloud Viewer removed from the operator panel; elements kept
          hidden so their (partly unguarded) JS wiring still resolves. -->
     <div hidden aria-hidden="true">
-      <button id="wireDrumAppearButton" type="button">Wire Drum</button>
-      <button id="cloudModelMenuOpen" type="button">Open Cloud Menu</button>
+      <button id="wireDrumAppearButton" type="button">Wire drum</button>
+      <button id="cloudModelMenuOpen" type="button">Open cloud menu</button>
       <p id="cloudStlStatus">Cloud: idle</p>
     </div>
 
@@ -395,15 +395,15 @@
       <button id="feederDriveUp" type="button">Up</button>
       <button id="feederDriveStop" type="button" class="active">Stop</button>
       <button id="feederDriveDown" type="button">Down</button>
-      <button id="annotationNavFrontDoor" type="button" aria-pressed="false">Front Door</button>
-      <button id="controlsTopCoverButton" type="button" aria-pressed="false">Top Door</button>
+      <button id="annotationNavFrontDoor" type="button" aria-pressed="false">Front door</button>
+      <button id="controlsTopCoverButton" type="button" aria-pressed="false">Top door</button>
       <button id="annotationNavSpoolsDoor" type="button" aria-pressed="false">Materials</button>
     </div>
 
     <section class="control-subpanel">
       <h3>View</h3>
       <div class="annotation-nav-group annotation-nav-group-row" role="group" aria-label="Assembly transparency toggles">
-        <button id="userStepTransparencyEnabled" class="transparency-toggle" type="button" aria-pressed="false" aria-label="Toggle User Step transparency">User Step</button>
+        <button id="userStepTransparencyEnabled" class="transparency-toggle" type="button" aria-pressed="false" aria-label="Toggle user step transparency">User step</button>
         <button id="displayTransparencyEnabled" class="transparency-toggle" type="button" aria-pressed="false" aria-label="Toggle Display transparency">Display</button>
         <button id="headTransparencyEnabled" class="transparency-toggle" type="button" aria-pressed="false" aria-label="Toggle Head transparency">Head</button>
       </div>
@@ -453,7 +453,7 @@
 
     <div class="cloud-library-shell">
       <section class="cloud-library-list-pane" aria-label="Model source and list">
-        <p class="cloud-section-title">Model Source &amp; List</p>
+        <p class="cloud-section-title">Model source &amp; list</p>
 
         <div class="cloud-source-filters" role="tablist" aria-label="Cloud source filter">
           <button id="cloudSourceUsb" class="cloud-source-filter" type="button" aria-pressed="false">USB</button>
@@ -495,7 +495,7 @@
             <p id="filesMaterialCurrentMaterial" class="cloud-materials-current">Material: Not assigned</p>
           </div>
 
-          <p id="filesMaterialAssignmentStatus" class="control-note">Feeder 1: Not assigned</p>
+          <p id="filesMaterialAssignmentStatus" class="control-note">Feeder 1 · Not assigned</p>
 
           <div id="hotspotContextPanel" class="hotspot-context-panel" aria-hidden="true" hidden>
             <section id="hotspotMaterialsPanel" class="hotspot-context-section" hidden>
@@ -583,7 +583,7 @@
 
               <div id="hotspotFeederCameraPreview" class="feeder-camera-preview" role="img" aria-label="Feeder camera preview">
                 <div id="hotspotFeederCameraViewport" class="feeder-camera-viewport">
-                  <div class="feeder-camera-placeholder">Feeder Camera</div>
+                  <div class="feeder-camera-placeholder">Feeder camera</div>
                 </div>
               </div>
 
@@ -604,8 +604,8 @@
                 </div>
               </div>
 
-              <p id="hotspotMaterialAssignmentStatus" class="control-note">Feeder 1: Not assigned</p>
-              <p id="hotspotMaterialUsageStatus" class="control-note">Used: 0g | Left: 800g</p>
+              <p id="hotspotMaterialAssignmentStatus" class="control-note">Feeder 1 · Not assigned</p>
+              <p id="hotspotMaterialUsageStatus" class="control-note">Used 0 g · Left 800 g</p>
               <p id="hotspotMaterialRequiredStatus" class="control-note">Required: 120g</p>
               <p id="hotspotMaterialPrintWarning" class="control-note hotspot-material-warning" hidden>Not enough material</p>
             </section>
@@ -640,8 +640,8 @@
               <span id="cloudStlOpacityValue" class="transparency-value">100%</span>
               <select id="cloudViewMode" class="control-input" aria-label="Cloud viewer mode">
                 <option value="stl" selected>STL Mesh</option>
-                <option value="point">Point Cloud</option>
-                <option value="voxel">Voxel Cloud</option>
+                <option value="point">Point cloud</option>
+                <option value="voxel">Voxel cloud</option>
                 <option value="both">STL + Point</option>
               </select>
             </div>
@@ -658,7 +658,7 @@
             </div>
 
             <div id="cloudPointSizeRow" class="control-row" hidden>
-              <label class="control-label" for="cloudPointSize">Point Size</label>
+              <label class="control-label" for="cloudPointSize">Point size</label>
               <input
                 id="cloudPointSize"
                 class="control-input"
@@ -673,7 +673,7 @@
             </div>
 
             <div id="cloudPointMaxPointsRow" class="control-row" hidden>
-              <label class="control-label" for="cloudPointMaxPoints">Max Points</label>
+              <label class="control-label" for="cloudPointMaxPoints">Max points</label>
               <input
                 id="cloudPointMaxPoints"
                 class="control-input"
@@ -711,7 +711,7 @@
             </div>
 
             <div id="cloudPrintSimRow" class="control-row" hidden>
-              <label class="control-label" for="cloudPrintSimProgress">Print Sim</label>
+              <label class="control-label" for="cloudPrintSimProgress">Print sim</label>
               <button id="cloudPrintSimPlay" type="button" aria-pressed="false">Print</button>
               <button id="cloudPrintSimReset" type="button">Reset</button>
               <input
@@ -728,7 +728,7 @@
             </div>
 
             <div id="cloudPrintSimSpeedRow" class="control-row" hidden>
-              <label class="control-label" for="cloudPrintSimSpeed">Print Speed</label>
+              <label class="control-label" for="cloudPrintSimSpeed">Print speed</label>
               <input
                 id="cloudPrintSimSpeed"
                 class="control-input"
@@ -742,7 +742,7 @@
             </div>
 
             <div id="cloudPrintSimAxisRow" class="control-row" hidden>
-              <label class="control-label" for="cloudPrintSimAxis">Clip Axis</label>
+              <label class="control-label" for="cloudPrintSimAxis">Clip axis</label>
               <select id="cloudPrintSimAxis" class="control-input" aria-label="Print simulation clipping axis">
                 <option value="z" selected>Z</option>
                 <option value="x">X</option>
@@ -755,7 +755,7 @@
             </div>
 
             <div class="control-row actions-row">
-              <button id="cloudStlClear" type="button">Remove Cloud</button>
+              <button id="cloudStlClear" type="button">Remove cloud</button>
             </div>
           </div>
         </details>
@@ -877,7 +877,7 @@
       <h3>Materials</h3>
       <div class="cloud-model-popup-header-actions">
         <button id="materialsReturnToSlicer" class="materials-return-slicer" type="button" hidden>&#8592; Return to slicer</button>
-        <button id="materialsHistoryToggle" class="btn-quiet" type="button" aria-pressed="false">Usage history</button>
+        <button id="materialsHistoryToggle" class="btn-quiet" type="button" aria-pressed="false">Usage history…</button>
         <button id="materialsMenuClose" class="cloud-header-icon-button" type="button" aria-label="Close materials menu">
           <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
             <path d="M6 6l12 12" />
@@ -889,7 +889,7 @@
 
     <div id="materialsMenuBody" class="materials-menu-body materials-menu-body-single">
     <section class="cloud-materials-panel materials-menu-panel" aria-label="Feeder material controls">
-      <p id="materialsMenuAssignmentStatus" class="control-note">Feeder 1: Not assigned</p>
+      <p id="materialsMenuAssignmentStatus" class="control-note">Feeder 1 · Not assigned</p>
 
       <div class="materials-spool-switch materials-feeder-switch" role="group" aria-label="Select feeder">
         <button id="materialsSpoolCard1" class="spool-select-card" type="button" aria-pressed="true" data-spool-key="spool1">
@@ -985,7 +985,7 @@
       </div>
 
       <p id="materialsConfirmStatus" class="control-note materials-confirm-status" hidden>Materials updated.</p>
-      <p id="materialsMenuUsageStatus" class="control-note">Used: 0g | Left: 800g</p>
+      <p id="materialsMenuUsageStatus" class="control-note">Used 0 g · Left 800 g</p>
       <p id="materialsMenuPrintWarning" class="control-note hotspot-material-warning" hidden>Not enough material</p>
     </section>
     </div>
@@ -1006,7 +1006,7 @@
     type="button"
     aria-pressed="false"
   >
-    Open Front Door
+    Open front door
   </button>
 
   <div id="annotationLayer" class="annotation-layer" aria-hidden="true"></div>
@@ -1034,47 +1034,28 @@
   <nav class="bottom-nav" aria-label="Primary actions">
     <button id="navDoorToggle" class="bottom-nav-item" type="button" aria-pressed="false">
       <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" data-mode="door-closed">
-        <g>
-          <path class="iso-c1" d="M12 3 20 7.5 12 12 4 7.5Z" />
-          <path class="iso-c3" d="M4 7.5 12 12 12 20 4 15.5Z" />
-          <path class="iso-c2" d="M12 12 20 7.5 20 15.5 12 20Z" />
-          <path class="iso-seam" d="M6 9 6 16" />
-        </g>
+        <g class="door-panel"><path d="M19 21V5a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v16"/><path d="M2 21h20"/><path d="M9 12h.01"/></g><g class="door-open"><path d="M10 21H2"/><path d="M10 3H7a2 2 0 0 0-2 2v16"/><path d="M22 21h-3"/><g class="door-leaf"><path d="M14 12h.01"/><path d="M19 21V5a2 2 0 0 0-1.675-1.974l-6.163-1.013A1 1 0 0 0 10 3v18a1 1 0 0 0 1.124.992z"/></g></g>
       </svg>
-      <span data-i18n="nav.openDoor">Open Door</span>
+      <span data-i18n="nav.openDoor">Front door</span>
     </button>
 
     <button id="annotationNavTopCover" class="bottom-nav-item" type="button" aria-pressed="false">
       <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" data-mode="top-closed">
-        <g>
-          <path class="iso-c1" d="M12 3 20 7.5 12 12 4 7.5Z" />
-          <path class="iso-c3" d="M4 7.5 12 12 12 20 4 15.5Z" />
-          <path class="iso-c2" d="M12 12 20 7.5 20 15.5 12 20Z" />
-          <path class="iso-seam" d="M8 5.25 16 9.75" />
-        </g>
+        <g><path d="M3 21V7"/><path d="M21 21V7"/><path d="M3 21h18"/><rect x="7" y="11" width="10" height="6" rx="1"/><g class="lid-cover"><path d="M3 7V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2"/><path d="M3 7h18"/></g></g>
       </svg>
-      <span data-i18n="nav.topDoor">Top Door</span>
+      <span data-i18n="nav.topDoor">Top door</span>
     </button>
 
     <button id="navMaterialsToggle" class="bottom-nav-item" type="button" aria-pressed="false">
       <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" data-mode="materials-idle">
-        <g>
-          <path class="iso-c1" d="M12 3 20 7.5 12 12 4 7.5Z" />
-          <path class="iso-c3" d="M4 7.5 12 12 12 20 4 15.5Z" />
-          <path class="iso-c2" d="M12 12 20 7.5 20 15.5 12 20Z" />
-          <path class="iso-seam" d="M18 9 18 16" />
-        </g>
+        <g class="spool-reel"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/><path d="M12 3v6.5M12 14.5V21M3 12h6.5M14.5 12H21"/></g>
       </svg>
       <span data-i18n="nav.materials">Materials</span>
     </button>
 
     <button id="navFilesToggle" class="bottom-nav-item" type="button" aria-pressed="false">
       <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" data-mode="outline">
-        <g>
-          <path class="iso-c2" d="M12 15 20 11 12 7 4 11Z" />
-          <path class="iso-c1" d="M12 12 18 9 12 6 6 9Z" />
-          <path class="iso-c1" style="opacity:.7" d="M12 9 16 7 12 5 8 7Z" />
-        </g>
+        <g><g class="file-s3"><path d="M8 3.5V2.5A1.5 1.5 0 0 1 9.5 1h8.5L22 5v10.5a1.5 1.5 0 0 1-1.5 1.5h-1"/></g><g class="file-s2"><path d="M5.5 6V5A1.5 1.5 0 0 1 7 3.5h8.5l4 4V18a1.5 1.5 0 0 1-1.5 1.5H17"/></g><g class="file-s1"><path d="M13 6H4.5A1.5 1.5 0 0 0 3 7.5v13A1.5 1.5 0 0 0 4.5 22h11a1.5 1.5 0 0 0 1.5-1.5V10Z"/><path d="M12.5 6v3a1.5 1.5 0 0 0 1.5 1.5H17"/></g></g>
       </svg>
       <span data-i18n="nav.files">Files</span>
     </button>
@@ -1101,8 +1082,8 @@
         <p class="calendar-screen-subtitle">Prints, maintenance, and machine availability planning</p>
       </div>
       <div class="calendar-screen-actions">
-        <button id="calendarReturnViewer" type="button">Return To 3D Viewer</button>
-        <button id="calendarAddEvent" type="button" data-requires-permission="calendar.edit">Add Event</button>
+        <button id="calendarReturnViewer" type="button">Return to 3D viewer</button>
+        <button id="calendarAddEvent" type="button" data-requires-permission="calendar.edit">Add event</button>
       </div>
     </div>
 
@@ -1127,7 +1108,7 @@
       <div id="calendarGrid" class="calendar-grid" aria-live="polite"></div>
 
       <aside class="calendar-event-details" aria-label="Selected event details">
-        <h3>Event Details</h3>
+        <h3>Event details</h3>
         <div id="calendarEventDetailsBody" class="calendar-event-details-body">
           <p class="calendar-empty-state">Select an event to review details.</p>
         </div>
@@ -1138,12 +1119,12 @@
   <section id="notificationHistoryScreen" class="notif-history-screen" aria-hidden="true" hidden>
     <div class="notif-history-header">
       <div class="notif-history-title-wrap">
-        <h2>Notification History</h2>
+        <h2>Notification history</h2>
         <p class="notif-history-subtitle">When each notification was raised and when it was solved</p>
       </div>
       <div class="notif-history-actions">
         <p id="notificationHistoryCount" class="notif-history-count" aria-live="polite">0 entries</p>
-        <button id="notificationHistoryReturn" type="button">Return To 3D Viewer</button>
+        <button id="notificationHistoryReturn" type="button">Return to 3D viewer</button>
       </div>
     </div>
 
@@ -1301,7 +1282,7 @@
   <button id="printMaterialWarning" class="print-material-warning" type="button" aria-hidden="true" hidden>
     <span class="print-material-warning-icon" aria-hidden="true">!</span>
     <span id="printMaterialWarningText" class="print-material-warning-text"></span>
-    <span class="print-material-warning-cta">Open Materials</span>
+    <span class="print-material-warning-cta">Open materials</span>
   </button>
 
   <div id="advancedModeTimeoutWarningModal" class="advanced-timeout-warning-modal" aria-hidden="true" hidden>
@@ -1315,7 +1296,7 @@
       <p id="advancedModeTimeoutWarningMessage" class="control-note">Locking in 60 seconds.</p>
       <div class="advanced-pin-actions">
         <button id="advancedModeStayActiveButton" type="button">Stay in Advanced Mode</button>
-        <button id="advancedModeLockNowButton" type="button">Lock Now</button>
+        <button id="advancedModeLockNowButton" type="button">Lock now</button>
       </div>
     </div>
   </div>
@@ -1323,7 +1304,7 @@
   <div id="notificationDetailsModal" class="notification-details-modal" aria-hidden="true" hidden>
     <div class="notification-details-modal-card" role="dialog" aria-modal="true" aria-labelledby="notificationDetailsTitle">
       <div class="notification-details-header">
-        <h3 id="notificationDetailsTitle">Notification Details</h3>
+        <h3 id="notificationDetailsTitle">Notification details</h3>
         <button id="notificationDetailsClose" class="btn-quiet" type="button" aria-label="Close notification details">Close</button>
       </div>
       <div id="notificationDetailsBody" class="notification-details-body"></div>
@@ -1336,7 +1317,7 @@
 
   <div id="calendarEventModal" class="calendar-event-modal" aria-hidden="true" hidden>
     <div class="calendar-event-modal-card" role="dialog" aria-modal="true" aria-labelledby="calendarEventModalTitle">
-      <h3 id="calendarEventModalTitle">Add Event</h3>
+      <h3 id="calendarEventModalTitle">Add event</h3>
 
       <div class="calendar-event-form-grid">
         <div class="control-row">

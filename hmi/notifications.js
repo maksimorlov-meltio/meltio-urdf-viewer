@@ -75,7 +75,7 @@ const NOTIFICATION_DETAIL_CAUSES = Object.freeze({
 });
 const NOTIFICATION_TYPE_DEFINITIONS = Object.freeze({
   emergency_estop: Object.freeze({
-    title: "Emergency E-Stop",
+    title: "Emergency E-stop",
     description: "Emergency stop is active. Machine operation is blocked until the E-Stop is released.",
     severity: "critical",
     recommendedAction: "Release the E-Stop and confirm machine safety before continuing.",
@@ -88,7 +88,7 @@ const NOTIFICATION_TYPE_DEFINITIONS = Object.freeze({
     priority: 100,
   }),
   arm_machine_required: Object.freeze({
-    title: "Arm Machine Required",
+    title: "Arm machine required",
     description: "The machine must be armed before the process can continue.",
     severity: "warning",
     recommendedAction: "Arm the machine when the working area is safe.",
@@ -101,7 +101,7 @@ const NOTIFICATION_TYPE_DEFINITIONS = Object.freeze({
     priority: 70,
   }),
   inert_gas_filtration_required: Object.freeze({
-    title: "Inert Gas / Filtration Action Required",
+    title: "Inert gas / filtration action required",
     description: "The system is inerted. Activate filtration or close the required condition before continuing.",
     severity: "warning",
     recommendedAction: "Check inerting and filtration status.",
@@ -114,7 +114,7 @@ const NOTIFICATION_TYPE_DEFINITIONS = Object.freeze({
     priority: 65,
   }),
   controller_board_not_connected: Object.freeze({
-    title: "Controller Board Not Connected",
+    title: "Controller board not connected",
     description: "The controller board connection is missing or not detected.",
     severity: "critical",
     recommendedAction: "Check controller board power, cable connection, and communication status.",
@@ -127,7 +127,7 @@ const NOTIFICATION_TYPE_DEFINITIONS = Object.freeze({
     priority: 96,
   }),
   gas_flow_decreasing: Object.freeze({
-    title: "Gas Flow Decreasing",
+    title: "Gas flow decreasing",
     description: "Gas flow is decreasing and may not be sufficient for printing.",
     severity: "warning",
     recommendedAction: "Check gas supply, pressure, valves, and flow sensor.",
@@ -140,8 +140,8 @@ const NOTIFICATION_TYPE_DEFINITIONS = Object.freeze({
     priority: 75,
   }),
   coolant_warning: Object.freeze({
-    title: "Coolant Warning",
-    description: "Coolant flow is decreasing, temperature is increasing, or temperature is above 60 C.",
+    title: "Coolant warning",
+    description: "Coolant flow is decreasing, temperature is increasing, or temperature is above 60 °C.",
     severity: "warning",
     recommendedAction: "Check coolant level, pump, flow path, and temperature before continuing.",
     source: "Cooling",
@@ -153,7 +153,7 @@ const NOTIFICATION_TYPE_DEFINITIONS = Object.freeze({
     priority: 82,
   }),
   external_security_closed_loop_warning: Object.freeze({
-    title: "External Security / Closed Loop Warning",
+    title: "External security / closed loop warning",
     description: "External security condition detected. Closed loop control issue in Engine.",
     severity: "critical",
     recommendedAction: "Check external safety signals and closed loop control state.",
@@ -166,7 +166,7 @@ const NOTIFICATION_TYPE_DEFINITIONS = Object.freeze({
     priority: 93,
   }),
   software_update_available: Object.freeze({
-    title: "Software Update Available",
+    title: "Software update available",
     description: "A new software update is available.",
     severity: "info",
     recommendedAction: "Open update settings to review and install the update.",
@@ -179,7 +179,7 @@ const NOTIFICATION_TYPE_DEFINITIONS = Object.freeze({
     priority: 35,
   }),
   firmware_update_available: Object.freeze({
-    title: "Firmware Update Available",
+    title: "Firmware update available",
     description: "A new firmware update is available.",
     severity: "info",
     recommendedAction: "Open firmware update settings to review compatibility and install.",
@@ -192,7 +192,7 @@ const NOTIFICATION_TYPE_DEFINITIONS = Object.freeze({
     priority: 34,
   }),
   internet_connection_unavailable: Object.freeze({
-    title: "Internet Connection Not Available",
+    title: "Internet connection not available",
     description: "The machine has no internet connection.",
     severity: "warning",
     recommendedAction: "Check network cable, Wi-Fi, router, or IT connection settings.",
@@ -205,7 +205,7 @@ const NOTIFICATION_TYPE_DEFINITIONS = Object.freeze({
     priority: 78,
   }),
   preventive_maintenance_needed: Object.freeze({
-    title: "Preventive Maintenance Needed",
+    title: "Preventive maintenance needed",
     description: "Preventive maintenance is required according to machine schedule or usage.",
     severity: "warning",
     recommendedAction: "Open maintenance calendar or maintenance checklist.",
@@ -879,7 +879,7 @@ function showNotificationToast(notification) {
   closeBtn.type = "button";
   closeBtn.className = "notification-toast-close";
   closeBtn.setAttribute("aria-label", "Dismiss");
-  closeBtn.textContent = "✕";
+  closeBtn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12"/><path d="M18 6L6 18"/></svg>';
   closeBtn.addEventListener("click", dismiss);
 
   toast.append(icon, body, actions, closeBtn);
@@ -1110,7 +1110,7 @@ function mergeSignalNotifications(signalRecords) {
   }
 }
 
-function renderNotificationCard(notification) {
+function renderNotificationCard(notification, isPrimaryFix = false) {
   const statusClass = `status-${notification.status}`;
   const severityClass = `severity-${notification.severity}`;
   const acknowledgeDisabled = !notification.canAcknowledge || notification.status === "resolved";
@@ -1135,7 +1135,7 @@ function renderNotificationCard(notification) {
       <div class="notification-card-actions">
         <button type="button" title="Mark as seen (keeps the issue in the list)" data-notification-action="acknowledge" data-notification-id="${escapeHtml(notification.id)}"${acknowledgeDisabled ? " disabled" : ""}>Acknowledge</button>
         <button type="button" data-notification-action="details" data-notification-id="${escapeHtml(notification.id)}">View details</button>
-        <button type="button" class="notification-resolve-btn" title="Open Settings to fix this" data-notification-action="resolve" data-notification-id="${escapeHtml(notification.id)}">Fix this</button>
+        <button type="button" class="notification-resolve-btn${isPrimaryFix ? " is-primary-fix" : ""}" title="Open Settings to fix this" data-notification-action="resolve" data-notification-id="${escapeHtml(notification.id)}">Fix this</button>
       </div>
     </article>
   `;
@@ -1163,8 +1163,10 @@ function renderNotificationCenter() {
   // rebuilt from current state the moment it becomes visible.
   if (isNotificationCenterOpen) {
     if (notificationListEl) {
+      // Only the first unresolved (most critical, list is severity-sorted) card gets the white primary "Fix this".
+      const primaryFixNotification = filteredNotifications.find((item) => item.status !== "resolved") || null;
       notificationListEl.innerHTML = filteredNotifications.length
-        ? filteredNotifications.map(renderNotificationCard).join("")
+        ? filteredNotifications.map((item) => renderNotificationCard(item, item === primaryFixNotification)).join("")
         : "";
     }
 

@@ -14,9 +14,9 @@ let _onUsageChanged = () => {};
 export function formatGramsText(value) {
   const grams = Number(value);
   if (!Number.isFinite(grams) || grams <= 0) {
-    return "0g";
+    return "0 g";
   }
-  return `${Math.round(grams)}g`;
+  return `${Math.round(grams)} g`;
 }
 
 export const MELTIO_MATERIAL_CHIP_COLORS = Object.freeze({
@@ -39,8 +39,8 @@ export function initMaterialsState({ onUsageChanged, getUiSelection, applyUiSele
 export const MELTIO_MATERIAL_LIBRARY = Object.freeze([
   // Representative physical specs per material, shown in the materials-menu info
   // panel (category, wire diameter, density, thermal conductivity).
-  Object.freeze({ id: "316l-stainless", label: "316L Stainless Steel", category: "Stainless steel", wireDiameterMm: 1.0, densityGCm3: 8.0, thermalWmK: 16.3 }),
-  Object.freeze({ id: "17-4ph-stainless", label: "17-4PH Stainless Steel", category: "Stainless steel", wireDiameterMm: 1.0, densityGCm3: 7.8, thermalWmK: 18.3 }),
+  Object.freeze({ id: "316l-stainless", label: "316L stainless steel", category: "Stainless steel", wireDiameterMm: 1.0, densityGCm3: 8.0, thermalWmK: 16.3 }),
+  Object.freeze({ id: "17-4ph-stainless", label: "17-4PH stainless steel", category: "Stainless steel", wireDiameterMm: 1.0, densityGCm3: 7.8, thermalWmK: 18.3 }),
   Object.freeze({ id: "inconel-718", label: "Inconel 718", category: "Nickel superalloy", wireDiameterMm: 1.0, densityGCm3: 8.19, thermalWmK: 11.4 }),
   Object.freeze({ id: "ti64", label: "Ti6Al4V", category: "Titanium alloy", wireDiameterMm: 1.0, densityGCm3: 4.43, thermalWmK: 6.7 }),
   Object.freeze({ id: "bronze-cu-sn", label: "Bronze CuSn", category: "Bronze", wireDiameterMm: 1.0, densityGCm3: 8.8, thermalWmK: 50.0 }),
@@ -112,7 +112,7 @@ export function normalizeSpoolKey(spoolKey) {
 
 export function getSpoolDisplayLabel(spoolKey) {
   if (spoolKey === "wiredrum") {
-    return "Wire Drum";
+    return "Wire drum";
   }
   return spoolKey === "spool2" ? "Feeder 2" : "Feeder 1";
 }

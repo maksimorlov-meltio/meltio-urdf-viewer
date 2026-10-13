@@ -142,7 +142,7 @@ function seedCalendarEventsIfNeeded() {
       endTime: inHours(5),
       status: "scheduled",
       relatedPrintFile: "Small Torture Test.stl",
-      material: "316L Stainless Steel",
+      material: "316L stainless steel",
       estimatedPrintTime: 3,
       materialUsedGrams: 120,
       notes: "Priority queue",
@@ -154,7 +154,7 @@ function seedCalendarEventsIfNeeded() {
       endTime: inHours(-6),
       status: "completed",
       relatedPrintFile: "0110908_Filter Neck Printing.stl",
-      material: "17-4PH Stainless Steel",
+      material: "17-4PH stainless steel",
       estimatedPrintTime: 4,
       actualPrintTime: 3.8,
       materialUsedGrams: 95,
@@ -297,7 +297,7 @@ function openCalendarEventModal(eventId = null, anchorDate = null) {
   editingCalendarEventId = event ? event.id : null;
 
   if (calendarEventModalTitleEl) {
-    calendarEventModalTitleEl.textContent = event ? "Edit Event" : "Add Event";
+    calendarEventModalTitleEl.textContent = event ? "Edit event" : "Add event";
   }
 
   const startDate = event
