@@ -99,8 +99,9 @@ Home XY, Home Z, and a palpador deploy/retract toggle.
 
 **Accounts and permissions.** Username and password sign-in against
 `POST /api/auth/login`. Credentials are PBKDF2 hashes stored in
-`apps/dev-host/database/permissions.json` (created on first run; manage
-passwords with `apps/dev-host/tools/set_password.py`). Sign-in resolves a level
+`apps/dev-host/database/permissions.json` (built-in defaults are served until
+that file is first saved; manage passwords with
+`apps/dev-host/tools/set_password.py`). Sign-in resolves a level
 (Operator, Operator+, Support, God); motion controls and machine commands are
 gated to it, and idle sessions sign out. Browser gating is a convenience only.
 Machine commands are authorised again server-side against `contract.json`.
@@ -132,15 +133,19 @@ slicer share one palette.
 The launcher expects exactly these two folder names.
 
 ```powershell
-# 1. Slicer environment
+# 1. Slicer environment (its requirements.txt installs the package in place, so run from its folder)
 py -3.11 -m venv venv311
 .\venv311\Scripts\python.exe -m pip install --upgrade pip
-.\venv311\Scripts\python.exe -m pip install -r _slicer_branch\requirements.txt
+Push-Location _slicer_branch
+..\venv311\Scripts\python.exe -m pip install -r requirements.txt
+Pop-Location
 
 # 2. Viewer environment
 py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -r apps\dev-host\requirements.txt
+Push-Location apps\dev-host
+..\..\.venv\Scripts\python.exe -m pip install -r requirements.txt
+Pop-Location
 
 # 3. Frontend tooling (developers only)
 npm ci
