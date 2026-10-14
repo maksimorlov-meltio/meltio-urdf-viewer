@@ -415,6 +415,9 @@ const dustExhaust = createDustExhaust({ THREE, scene, camera, renderer });
 // (see updateChamberInertSimulation / the animate loop). Cosmetic.
 const chamberInert = createChamberInert({ THREE, scene });
 
+// Fetch cache: the atlas GLBs reference the same PNGs; without this each GLB
+// downloads them again (2026-10-13 perf pass).
+THREE.Cache.enabled = true;
 const gltfLoader = new GLTFLoader();
 const objLoader = new OBJLoader();
 const stlLoader = new STLLoader();
@@ -3122,6 +3125,36 @@ function enhanceFeederWheelMaterials() {
 // reclassified as an atlas part.
 const ATLAS_MATERIAL_NAME_RE = /_atlas$/i;
 const ATLAS_ENV_MAP_INTENSITY = 1.2;
+// One GPU copy per atlas (2026-10-13 perf pass): every GLB that uses
+// "Test_Metal_Atlas" decodes and uploads its own copy of the same PNGs
+// (GLTFLoader caches per file, not across files). The first material of a
+// given atlas name registers its textures; later ones adopt them and drop
+// their duplicates. Saves ~255 MB of texture memory per extra GLB at 4K.
+const atlasTextureRegistry = new Map();
+const ATLAS_TEXTURE_SLOTS = ["map", "normalMap", "roughnessMap", "metalnessMap", "aoMap", "emissiveMap"];
+function shareAtlasTextures(mat) {
+  const key = String(mat.name || "");
+  if (!key) return;
+  const shared = atlasTextureRegistry.get(key);
+  if (!shared) {
+    const entry = {};
+    for (const slot of ATLAS_TEXTURE_SLOTS) {
+      if (mat[slot]) entry[slot] = mat[slot];
+    }
+    atlasTextureRegistry.set(key, entry);
+    return;
+  }
+  for (const slot of ATLAS_TEXTURE_SLOTS) {
+    const own = mat[slot];
+    const theirs = shared[slot];
+    if (own && theirs && own !== theirs) {
+      mat[slot] = theirs;
+      own.dispose();
+    }
+  }
+  mat.needsUpdate = true;
+}
+
 function isAtlasMaterial(mat) {
   return Boolean(mat) && ATLAS_MATERIAL_NAME_RE.test(String(mat.name || ""));
 }
@@ -3141,6 +3174,7 @@ function styleMeshTree(object3d) {
     // texture the feeder wheels use, NOT scene.environment) so fully metallic
     // texels have something to reflect instead of going black.
     if (isAtlasMaterial(mat)) {
+      shareAtlasTextures(mat);
       if ("metalness" in mat) mat.metalness = 1;
       if ("roughness" in mat) mat.roughness = 1;
       if ("envMap" in mat) mat.envMap = studioEnvironmentTexture;

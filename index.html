@@ -943,8 +943,20 @@
       </div>
 
       <div class="control-row">
-        <label class="control-label" for="materialsFeedTypeSelect">Feed type</label>
-        <select id="materialsFeedTypeSelect" class="control-input" aria-label="Change feed type for the focused feeder">
+        <span class="control-label" id="materialsFeedTypeLabel">Feed type</span>
+        <!-- Feed type = two icon buttons (Maksim, 2026-10-13), not a dropdown. The
+             hidden <select> keeps the value + change event the app already uses. -->
+        <div class="feed-type-switch" id="materialsFeedTypeSwitch" role="radiogroup" aria-labelledby="materialsFeedTypeLabel">
+          <button type="button" class="feed-type-option" data-feed-type="spool" role="radio" aria-checked="true">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/><path d="M12 3v6.5M12 14.5V21M3 12h6.5M14.5 12H21"/></svg>
+            <span>Spool</span>
+          </button>
+          <button type="button" class="feed-type-option" data-feed-type="drum" role="radio" aria-checked="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/></svg>
+            <span>Drum</span>
+          </button>
+        </div>
+        <select id="materialsFeedTypeSelect" class="control-input" aria-label="Change feed type for the focused feeder" hidden aria-hidden="true" tabindex="-1">
           <option value="spool">Spool</option>
           <option value="drum">Drum</option>
         </select>

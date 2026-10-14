@@ -1,3 +1,4 @@
+import { enhanceSelect } from "./ui/dsSelect.js";
 // Materials UI domain (hmi/): every materials surface — the hotspot Materials
 // panel, the Files-menu materials pane and the bottom-nav Materials popup — is
 // rendered by the shared functions below, on top of the pure data core in
@@ -123,6 +124,9 @@ const materialsWireDrumMaterialEl = document.getElementById("materialsWireDrumMa
 const materialsWireDrumAmountEl = document.getElementById("materialsWireDrumAmount");
 const materialsWireDrumStatusEl = document.getElementById("materialsWireDrumStatus");
 const materialsMaterialSelectEl = document.getElementById("materialsMaterialSelect");
+// DS listbox instead of the native dropdown (Maksim, 2026-10-13). The <select>
+// stays the value owner; only its popup is replaced.
+enhanceSelect(materialsMaterialSelectEl, { placeholder: "No material" });
 const materialsSpoolAmountInputEl = document.getElementById("materialsSpoolAmountInput");
 const materialsSpoolAmountValidationEl = document.getElementById("materialsSpoolAmountValidation");
 const materialsConfirmStatusEl = document.getElementById("materialsConfirmStatus");
@@ -256,6 +260,20 @@ export function updateMaterialsFeederTypeUI() {
     if (feedTypeSelectEl.value !== focusedType) {
       feedTypeSelectEl.value = focusedType;
     }
+    syncMaterialsFeedTypeSwitch();
+  }
+}
+
+// Feed type icon switch (Maksim, 2026-10-13): two radio buttons (Spool reel /
+// Drum) drive the hidden <select>, which keeps owning the value + change path.
+function syncMaterialsFeedTypeSwitch() {
+  const switchEl = document.getElementById("materialsFeedTypeSwitch");
+  const selectEl = document.getElementById("materialsFeedTypeSelect");
+  if (!switchEl || !selectEl) return;
+  const value = selectEl.value === "drum" ? "drum" : "spool";
+  for (const button of switchEl.querySelectorAll("[data-feed-type]")) {
+    const on = button.dataset.feedType === value;
+    button.setAttribute("aria-checked", on ? "true" : "false");
   }
 }
 
@@ -1161,6 +1179,20 @@ function wireMaterialsUi() {
       // Reveal/hide spools + drum right away to match the new feed type.
       deps.refreshFeedstockVisibility();
     });
+    const switchEl = document.getElementById("materialsFeedTypeSwitch");
+    if (switchEl) {
+      switchEl.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-feed-type]");
+        if (!button) return;
+        const next = button.dataset.feedType === "drum" ? "drum" : "spool";
+        if (materialsFeedTypeSelectEl.value !== next) {
+          materialsFeedTypeSelectEl.value = next;
+          materialsFeedTypeSelectEl.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+        syncMaterialsFeedTypeSwitch();
+      });
+      syncMaterialsFeedTypeSwitch();
+    }
   }
 
   if (materialsMenuCloseEl) {
