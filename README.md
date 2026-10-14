@@ -1,218 +1,291 @@
 # Meltio URDF Viewer
 
-A web-based 3D **operator HMI** for the Meltio M600-PRO metal-printing system. It
-renders the live machine (URDF + meshes), drives the machine and its peripherals
-through a touch-first control surface, embeds a **slicer**, and plays a slice back
-as an **in-scene print simulation** on the real gantry motion — all in the browser.
+Browser-based 3D operator HMI for the **Meltio M600-PRO** metal printer.
+It renders the machine from its URDF and meshes, lets the operator drive doors,
+feeders, utilities and axis jogs from a touch-first interface, embeds the
+Meltio slicer, and plays a sliced job back as an in-scene print simulation on
+the real gantry motion.
 
 ![Interface overview](docs/ui-overview.svg)
 
-> The overview above is a schematic of the current UI. A live capture of the 3D
-> scene is in [`docs/screenshot-viewer.png`](docs/screenshot-viewer.png).
+A live capture of the 3D scene: [`docs/screenshot-viewer.png`](docs/screenshot-viewer.png).
 
 ---
 
-## What's inside
+## Contents
 
-The app is **two local services** that run together:
-
-| Service | Package | Port | Runtime |
-|---------|---------|------|---------|
-| **Viewer** (`avisualizer`) | `apps/dev-host` (frontend at repo-root `hmi/`, `viewer/`) | `8090` | Python ≥ 3.10 |
-| **Slicer** (`meltio-platform`) | `_slicer_branch/projects/platform` | `8765` | Python 3.11 |
-
-The viewer embeds the slicer (via the `AVIS_SLICER_URL` environment variable) so
-the Files-menu **slice** and the in-scene **Start print** flow work end to end.
-The front-end is a single-page **vanilla-JS + Three.js** app served from
-`apps/dev-host/src/avisualizer/web/static/` plus the repo-root `hmi/` and
-`viewer/` partitions. **Nothing to build to run it**: the shipped app entry is
-the raw source and the launcher never invokes `npm` (esbuild is used only as a
-CI gate and to bundle the `release` branch for the C# host). The Python side is
-a small FastAPI backend (auth, permissions, error codes, slicer proxy,
-machine-link transport).
+1. [Quick start](#quick-start)
+2. [What the app is](#what-the-app-is)
+3. [The operator interface](#the-operator-interface)
+4. [Setup](#setup)
+5. [Running](#running)
+6. [Developing](#developing)
+7. [Repository layout](#repository-layout)
+8. [Troubleshooting](#troubleshooting)
+9. [Further reading](#further-reading)
 
 ---
 
-## Operator interface
+## Quick start
 
-Everything is tuned for a **vertical 1080×1920 HMI touch panel**, with a full-bleed
-top bar and bottom navigation.
+Already set up (see [Setup](#setup))? Double-click **`Start-Viewer.bat`**.
+It starts the slicer and the viewer if they are not already running, waits
+until both answer, and opens the viewer maximised in Edge or Chrome.
 
-**3D scene** — full URDF render of the M600-PRO with procedural image-based
-lighting, framed resting/overview cameras, and motion presets (maintenance /
-print / palpador). Optional chiller (HRS050) model toggles in beside the machine.
+Stop both services with **`Stop-Viewer.bat`**.
 
-**Top bar (right)** — flat, frameless utility controls, each tinting accent when
-active:
-- **Fan** and **Chiller** — tap to toggle; long-press / double-tap opens a settings
-  popover (fan speed & mode, chiller target/current).
-- **Notifications** — a bell with a live count badge; opens the notification centre
-  (raised/solved machine events from the error-code catalog) with a dated,
-  persisted **history** view. New critical/warning events also arrive as toasts.
-- **Settings** and an **account chip** showing the signed-in user's initials.
-
-**Bottom navigation** — icon-forward tabs whose glyphs reflect their action:
-- **Open Door** / **Top Door** — the door/roof icons animate open on the real
-  machine state (the door swings from the right; the top-cover "house" roof lifts
-  with rise-arrows).
-- **Materials** — per-feeder loading (Feeder 1 / 2, spool or drum feed), load /
-  unload and amount loaded; the spool icon spins and pays out filament when open.
-- **Files** — browse & slice STLs, then **Start print** to dock the job.
-- During a docked print the bar becomes **Stop / Pause / Slicer**.
-
-**Controls · Move** — an operator jog panel (permission-gated): X/Y/Z jog with a
-constant-velocity glide (no snapping), **Home XY** and **Home Z**, and a smooth
-**palpador** deploy/retract toggle.
-
-**Accounts & permissions** — credential sign-in (username + password) via
-`POST /api/auth/login`, validated against per-user PBKDF2 credentials stored
-inside the roles/users document (`database/permissions.json`, passwords managed
-with `apps/dev-host/tools/set_password.py`). Sign-in resolves a
-permission level (Operator, Operator+, Support, God); motion-bearing controls
-(the Move panel, machine commands) are gated to the appropriate level, and the
-session auto-signs-out when idle. The gating is a UI convenience, not a security
-boundary — a real machine must enforce authorization for physical commands.
-
-**Print flow** — Files → slice an STL → **Start print**: pre-print homing/probe
-routine, 3-axis bead tracing at real speed, pause/stop, plus a material gate and
-usage tracking. A docked **Slicer** panel and a fullscreen embedded slicer share
-one palette.
+Viewer URL: **http://127.0.0.1:8090/urdf**
 
 ---
 
-## Prerequisites
+## What the app is
+
+Two independent local services, glued at runtime:
+
+| Service | Code | Port | Python env |
+|---------|------|------|------------|
+| **Viewer** (`avisualizer`) | `apps/dev-host` + repo-root `hmi/` and `viewer/` | 8090 | `.venv` (3.11) |
+| **Slicer** (`meltio-platform`) | `_slicer_branch/projects/platform` | 8765 | `venv311` (3.11) |
+
+- The viewer backend is a small **FastAPI** app: sign-in and permissions,
+  machine error-code catalogue, slicer proxy, machine-link transport.
+- The frontend is a **vanilla JavaScript + Three.js** single-page app. It is
+  served as raw ES modules, so **nothing has to be built to run it**. esbuild is
+  used only as a CI gate and to bundle the `release` branch for the C# host.
+- The viewer talks to the slicer over HTTP (same-origin proxy, configured by
+  `AVIS_SLICER_URL`) and browser `postMessage`. Neither service imports the
+  other's Python.
+- The live-machine link is **off by default**. Add `?machine=1` to the URL to
+  enable it; otherwise the scene runs against a mock machine state.
+
+---
+
+## The operator interface
+
+The layout targets a **vertical 1080 × 1920 touch panel** and follows the
+Meltio Platform Design System v3: white primary, solid dark grounds, hairline
+borders, no orange chrome, 44 px touch targets, with a light mode in Settings.
+
+**3D scene.** Full URDF render of the M600-PRO with image-based lighting,
+framed overview and resting cameras, and motion presets. Two door assemblies
+ship with baked PBR texture atlases; the optional HRS050 chiller model appears
+beside the machine when the chiller is on.
+
+**Top bar.** Flat utility controls. Active ones read as "on" in white with an
+underline, like the bottom navigation.
+
+- **Chiller**, **Fan**, **Controls**. Tap toggles. Double tap or long press on
+  Fan or Chiller opens a settings card (fan speed and mode, chiller target and
+  current temperature).
+- **Notifications.** Bell with a live count. Opens the notification centre
+  (raised and solved machine events from the error-code catalogue) and a dated,
+  persisted history. New critical and warning events also arrive as toasts.
+- **Settings** and the **account chip** with the signed-in user's initials.
+  Tapping the chip, or "Sign in" in Settings, opens the sign-in form.
+
+**Bottom navigation.** Lucide-style glyphs that animate with the machine state.
+
+- **Open Door** swings the front door; **Top door** shows the chamber cover
+  being lifted by a crane sling while the real cover opens, and reverses on
+  close.
+- **Materials** opens per-feeder loading: Feeder 1 and 2, spool or drum feed
+  chosen with two icon buttons, material picked from a design-system listbox,
+  load and unload, amount loaded.
+- **Files** browses and slices STL files, then **Start print** docks the job.
+  During a docked print the bar becomes **Stop / Pause / Slicer**.
+
+**Controls · Move.** Permission-gated jog panel: X/Y/Z jog with a smooth glide,
+Home XY, Home Z, and a palpador deploy/retract toggle.
+
+**Accounts and permissions.** Username and password sign-in against
+`POST /api/auth/login`. Credentials are PBKDF2 hashes stored in
+`apps/dev-host/database/permissions.json` (built-in defaults are served until
+that file is first saved; manage passwords with
+`apps/dev-host/tools/set_password.py`). Sign-in resolves a level
+(Operator, Operator+, Support, God); motion controls and machine commands are
+gated to it, and idle sessions sign out. Browser gating is a convenience only.
+Machine commands are authorised again server-side against `contract.json`.
+
+**Print flow.** Files → slice → Start print: pre-print homing and probe
+routine, bead tracing at real speed in three axes, pause and stop, material
+gate and usage tracking. The docked slicer panel and the fullscreen embedded
+slicer share one palette.
+
+---
+
+## Setup
+
+### Prerequisites
 
 - **Windows 10/11**
-- **Git LFS** (`git lfs install`) — the GLB meshes are LFS objects; without it a
-  clone gets text pointers and the 3D scene loads nothing.
-- **Long paths enabled** — the slicer tree exceeds Windows' 260-char `MAX_PATH`
-  in deep folders; a plain `git clone` fails with "Filename too long". Run
-  `git config --global core.longpaths true` once (or clone with
-  `git clone -c core.longpaths=true …`).
-- **Python 3.11** on the `PATH` (the `py -3.11` launcher is used below).
-  3.11 satisfies both services and has prebuilt wheels for the heavy deps
-  (`open3d`, `trimesh`, `scipy`, …).
-- A **Chromium browser** (Microsoft Edge or Google Chrome) — the launcher opens
-  the app in one. (Any browser works if you open the URL manually.)
-- ~1 GB free disk for the two virtual environments.
+- **Git LFS** (`git lfs install`). Meshes and texture PNGs are LFS objects;
+  without it a clone gets text pointers and the scene is empty.
+- **Long paths enabled.** Run once:
+  `git config --global core.longpaths true`
+  (the slicer tree exceeds the 260-character Windows path limit).
+- **Python 3.11** on `PATH` (the `py -3.11` launcher is used below).
+- **Node.js 22** and **npm**, only if you develop (gate, tests, bundle).
+- **Microsoft Edge** or **Google Chrome**.
+- About 1 GB of disk for the two virtual environments.
 
----
+### Install (one time, PowerShell, repo root)
 
-## Setup (one time)
+The launcher expects exactly these two folder names.
 
-Run these from the repository root in **PowerShell**. Two isolated environments
-are created — the launcher expects these exact folder names (`.venv`, `venv311`).
-
-**1. Slicer environment (`venv311`)**
 ```powershell
+# 1. Slicer environment (its requirements.txt installs the package in place, so run from its folder)
 py -3.11 -m venv venv311
 .\venv311\Scripts\python.exe -m pip install --upgrade pip
 Push-Location _slicer_branch
 ..\venv311\Scripts\python.exe -m pip install -r requirements.txt
 Pop-Location
-```
 
-**2. Viewer environment (`.venv`)**
-```powershell
+# 2. Viewer environment
 py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 Push-Location apps\dev-host
 ..\..\.venv\Scripts\python.exe -m pip install -r requirements.txt
 Pop-Location
+
+# 3. Frontend tooling (developers only)
+npm ci
 ```
 
-> The first install pulls large native wheels (`open3d`, `trimesh`, `scipy`,
-> `shapely`, `rtree`) and can take several minutes.
+The first install pulls large native wheels (`open3d`, `trimesh`, `scipy`,
+`shapely`, `rtree`) and can take several minutes.
 
 ---
 
 ## Running
 
-### The easy way — one click
-Double-click **`Start-Viewer.bat`** (or the *Meltio Viewer* desktop shortcut).
-It starts both services if they aren't already running, waits until they answer,
-then opens the viewer **maximized** in your browser with a fresh cache-bust.
+### One click
 
-Stop everything with **`Stop-Viewer.bat`**.
+```
+Start-Viewer.bat
+```
+
+Idempotent: a service that is already up is left alone. The browser opens with
+a fresh cache-bust. `Stop-Viewer.bat` shuts both services down.
 
 ### Manual (two terminals)
+
 ```powershell
-# Terminal 1 — slicer
+# Terminal 1: slicer
 $env:PYTHONPATH = "$PWD\_slicer_branch\projects\platform\src"
 .\venv311\Scripts\python.exe -m uvicorn meltio_platform.slicer.web.app:create_app --factory --host 127.0.0.1 --port 8765
 
-# Terminal 2 — viewer
-$env:PYTHONPATH       = "$PWD\apps\dev-host\src"
-$env:AVIS_SLICER_URL  = "http://127.0.0.1:8765"
+# Terminal 2: viewer
+$env:PYTHONPATH        = "$PWD\apps\dev-host\src"
+$env:AVIS_SLICER_URL   = "http://127.0.0.1:8765"
 $env:AVIS_SLICER_UI_URL = "http://127.0.0.1:8765"
 .\.venv\Scripts\python.exe -m uvicorn avisualizer.web.app:create_app --factory --host 127.0.0.1 --port 8090
 ```
-Then open **http://127.0.0.1:8090/urdf**.
 
-> **Machine link** — the live-machine transport is **off by default**; append
-> `?machine=1` to the URL to enable it (otherwise the scene runs against the mock
-> machine state).
+Then open http://127.0.0.1:8090/urdf.
 
----
+### Kiosk display
 
-## Display — vertical 1080×1920 panel
-
-The standard target is a **1920×1080 screen mounted vertically** (a 1080×1920
-portrait viewport), e.g. an HMI touch panel. The layout, bottom navigation, and
-slicer dock bar are tuned for that.
-
-- The top and bottom bars span the full width of the frame (edge-to-edge).
-- For a true kiosk look (taskbar hidden, no wasted space), run the browser
-  fullscreen: press **F11**, or launch with `--kiosk` /
-  `--app=http://127.0.0.1:8090/urdf`. (To make the launcher do this by default,
-  change `--start-maximized` to `--kiosk` in `launch-viewer.ps1`.)
+For a taskbar-free panel run the browser fullscreen: press **F11**, or launch
+with `--kiosk` or `--app=http://127.0.0.1:8090/urdf`. To make the launcher do
+this, change `--start-maximized` to `--kiosk` in `launch-viewer.ps1`.
 
 ---
 
-## Project layout
+## Developing
+
+Read [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`AGENTS.md`](AGENTS.md) before
+your first change. The short version:
+
+- **Where code goes.** What the scene shows → `viewer/` (Three.js, no DOM
+  except under `viewer/overlays/`). Hardware or UI state → `hmi/` (DOM, never
+  imports `three`). Nothing new goes into the legacy `urdf_viewer.js`.
+- **Every frontend PR must pass the gate.** CI runs the same nine checks and
+  `main` is protected.
+
+  ```bash
+  bash gate.sh
+  ```
+
+  Syntax, import resolution, machine-command contract, partition boundaries,
+  ESLint, unit tests plus build proof, entry check, DOM contract, dead lookups.
+  If gate 8 regenerates `contract-dom.json`, review and commit it.
+- **Backend tests.**
+
+  ```powershell
+  .\.venv\Scripts\python.exe -m pytest apps\dev-host\tests
+  .\venv311\Scripts\python.exe -m pytest _slicer_branch\projects\platform\tests
+  ```
+- **Boot check.** With the viewer running, load the page in a real browser
+  and fail on any console error:
+
+  ```bash
+  node tools/check_boot.mjs
+  ```
+- **Contracts.** `contract.json` (machine commands, host-owned, enforced
+  server-side), `contract-dom.json` and `contract-http.json` (generated, never
+  hand-edited). The `release` branch is published by a workflow; never commit
+  to it.
+- **Assets.** URDF and GLB meshes live in `apps/dev-host/assets/M600_PRO`,
+  texture atlases in its `Textures/` folder (2K in use, 4K originals in
+  `Textures/4k/`). Python edits need a server restart; static edits only need
+  a hard reload.
+
+---
+
+## Repository layout
 
 ```
 .
-├─ Start-Viewer.bat        # one-click launcher (double-click this)
-├─ Stop-Viewer.bat         # stops both services
-├─ launch-viewer.ps1       # launcher logic (starts servers, opens browser)
-├─ docs/                   # README assets (ui-overview.svg, screenshot-viewer.png)
-├─ hmi/                    # UI-side frontend partition (DOM, host state) — repo root
-├─ viewer/                 # scene-side frontend partition (Three.js) — repo root
-├─ apps/dev-host/          # the viewer app (avisualizer): FastAPI backend,
-│   ├─ src/                #   remaining static shell (urdf_viewer.js, html, css)
-│   └─ assets/             #   M600-PRO URDF + meshes (.glb)
-├─ urdf_viewer/            # legacy docs & scripts (project moved to apps/dev-host)
-└─ _slicer_branch/         # the slicer backend (meltio-platform)
-    └─ projects/platform/
-        └─ src/meltio_platform/
-            ├─ slicer/     # slicer web app + engine — this is what runs locally
-            └─ web/        # multi-tenant cloud shell (Postgres/S3/admin) — DORMANT
+├─ Start-Viewer.bat / Stop-Viewer.bat   one-click start and stop
+├─ launch-viewer.ps1                    launcher logic
+├─ hmi/                                 UI-side frontend partition (DOM, state, i18n, ui/)
+├─ viewer/                              scene-side partition (core, robot, sim, effects, overlays, toolpath)
+├─ apps/dev-host/                       viewer app: FastAPI backend, static shell, assets, tests
+│   ├─ src/avisualizer/web/static/        urdf.html, urdf_viewer.js, urdf_viewer.css
+│   ├─ assets/M600_PRO/                   URDF + GLB meshes + Textures/
+│   ├─ database/                          error_codes.json, permissions.json (runtime)
+│   └─ ARCHITECTURE.md                    map of both apps
+├─ _slicer_branch/                      slicer backend (meltio-platform)
+├─ tools/                               JS gates, DOM/HTTP contract generators, boot check
+├─ tests/js, tests/smoke                frontend unit tests and full-stack smoke
+├─ contract*.json                       UI↔host contracts
+├─ gate.sh, build.mjs, eslint.config.js frontend gate and bundle
+├─ docs/                                README assets and quality evaluation
+└─ urdf_viewer/                         legacy docs and scripts
 ```
 
-> The local HMI launches only `meltio_platform.slicer.web.app`. The rest of
-> `meltio_platform` (the `web/` cloud shell, plus the `frontend/` React SPA and
-> `render-service/`) is a separate cloud product that is **not started** by the
-> launcher; ignore it unless you are working on that deployment.
+Only `meltio_platform.slicer.web.app` runs locally. The rest of
+`meltio_platform` (the cloud `web/` shell, `frontend/` React SPA,
+`render-service/`) is a dormant cloud product the launcher never starts.
 
-The virtual environments (`.venv`, `venv311`) and large local datasets are **not**
-tracked — they are created by the setup steps above.
+`.venv`, `venv311` and `node_modules` are not tracked.
 
 ---
 
 ## Troubleshooting
 
-- **Port already in use** — a previous instance is still running. Run
-  `Stop-Viewer.bat`, then start again. The launcher is idempotent: if a service
-  is already up it just opens the browser.
-- **Bottom buttons cut off** — the browser isn't fullscreen and the taskbar
-  overlaps the bar. Run fullscreen (F11 / `--kiosk`).
-- **I don't see my CSS/JS change** — the static assets are cache-busted with a
-  `?v=` query on every UI change; the launcher also appends a `?cb=` on the URL.
-  If opening the URL by hand, hard-reload (Ctrl+F5).
-- **`open3d` fails to install** — make sure the environment is Python **3.11**
-  (newer/older versions may lack prebuilt wheels).
+| Symptom | Fix |
+|---------|-----|
+| Port already in use | A previous instance is running. `Stop-Viewer.bat`, then start again. |
+| Empty 3D scene | Git LFS is missing. `git lfs install`, then `git lfs pull`. |
+| "Filename too long" on clone | `git config --global core.longpaths true`, then clone again. |
+| Bottom buttons cut off | The browser is not fullscreen and the taskbar overlaps. Use F11 or `--kiosk`. |
+| CSS or JS change not visible | Assets are cache-busted with `?v=`; hard-reload with Ctrl+F5. |
+| `open3d` fails to install | The environment must be Python 3.11. |
+| Slow first load | Texture PNGs download once per browser profile; subsequent loads are cached. |
 
 ---
 
-*Internal / proprietary — Meltio. Not for public distribution.*
+## Further reading
+
+- [`apps/dev-host/ARCHITECTURE.md`](apps/dev-host/ARCHITECTURE.md). Both apps,
+  the load → slice → print flow, endpoints and the postMessage bridge.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md). Exact commands and conventions.
+- [`AGENTS.md`](AGENTS.md). Partition rules and extraction patterns.
+- [`TODO.md`](TODO.md). Per-change checklist (Spanish).
+- [`_slicer_branch/projects/platform/STYLEGUIDE.md`](_slicer_branch/projects/platform/STYLEGUIDE.md). UI tokens and component classes.
+- [`CLAUDE.md`](CLAUDE.md). Guidance for AI coding agents.
+
+---
+
+*Internal / proprietary. Meltio. Not for public distribution.*
