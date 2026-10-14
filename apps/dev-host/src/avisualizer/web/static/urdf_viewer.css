@@ -9929,3 +9929,140 @@ body.light-mode .cloud-file-item-name { color: #07080a; }
 body.light-mode .cloud-list-tags span,
 body.light-mode .cloud-list-tag-button { color: #3a4046; }
 body.light-mode .cloud-source-filter:disabled { background: #f0f1f3; color: #565d65; border-color: rgba(7, 8, 10, 0.18); }
+
+/* Feed type icon switch in Materials (2026-10-13, Maksim): Spool reel / Drum
+   as two radio buttons instead of the dropdown. Ghost buttons per DS (rest
+   .14 hairline, hover .30), the chosen one carries the ink border + full-ink
+   glyph; 44 px targets, 7 px radius. */
+.feed-type-switch {
+  display: flex;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.feed-type-option {
+  flex: 1 1 0;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 12px;
+  border: 1px solid var(--ws-border, rgba(255, 255, 255, 0.14));
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ui-text-secondary, #9aa0a6);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+.feed-type-option svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.72;
+}
+.feed-type-option:hover { border-color: var(--ws-border-hover, rgba(255, 255, 255, 0.30)); }
+.feed-type-option[aria-checked="true"] {
+  color: var(--ui-text-primary);
+  border-color: var(--ui-accent);
+  background: rgba(255, 255, 255, 0.06);
+}
+.feed-type-option[aria-checked="true"] svg { opacity: 1; }
+body.light-mode .feed-type-option { border-color: rgba(7, 8, 10, 0.14); color: #5f676f; }
+body.light-mode .feed-type-option:hover { border-color: rgba(7, 8, 10, 0.30); }
+body.light-mode .feed-type-option[aria-checked="true"] { color: #07080a; border-color: #07080a; background: rgba(7, 8, 10, 0.05); }
+
+/* DS listbox (ui/dsSelect.js) — replaces the native <select> popup
+   (2026-10-13, Maksim). Trigger = DS input look; panel = control ground card. */
+.ds-select-trigger {
+  flex: 1 1 160px;
+  min-width: 0;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 12px 0 14px;
+  border: 1px solid var(--ws-border, rgba(255, 255, 255, 0.14));
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ui-text-primary);
+  font-family: "IBM Plex Mono", Consolas, monospace;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: border-color 0.15s ease;
+}
+.ds-select-trigger:hover,
+.ds-select-trigger[aria-expanded="true"] { border-color: var(--ws-border-hover, rgba(255, 255, 255, 0.30)); }
+.ds-select-trigger:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
+.ds-select-trigger:disabled { opacity: 0.45; cursor: not-allowed; }
+.ds-select-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ds-select-label.is-placeholder { color: var(--ui-text-secondary, #9aa0a6); }
+.ds-select-trigger svg {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.72;
+  transition: transform 0.15s ease;
+}
+.ds-select-trigger[aria-expanded="true"] svg { transform: rotate(180deg); opacity: 1; }
+.ds-select-panel {
+  position: fixed;
+  z-index: 320;
+  box-sizing: border-box;
+  padding: 4px;
+  overflow-y: auto;
+  border: 1px solid rgba(255, 255, 255, 0.30);
+  border-radius: 7px;
+  background: #12161a;
+  box-shadow: none;
+  scrollbar-width: thin;
+}
+.ds-select-panel[hidden] { display: none !important; }
+.ds-select-option {
+  width: 100%;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ui-text-primary);
+  font-family: "IBM Plex Mono", Consolas, monospace;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.ds-select-option:hover { background: rgba(255, 255, 255, 0.04); }
+.ds-select-option[aria-selected="true"] { background: rgba(255, 255, 255, 0.06); border-color: rgba(255, 255, 255, 0.14); }
+.ds-select-option:disabled { opacity: 0.45; cursor: not-allowed; }
+.ds-select-option svg { flex: none; width: 18px; height: 18px; fill: none; stroke: var(--ui-accent); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+body.light-mode .ds-select-trigger { border-color: rgba(7, 8, 10, 0.14); color: #07080a; }
+body.light-mode .ds-select-trigger:hover,
+body.light-mode .ds-select-trigger[aria-expanded="true"] { border-color: rgba(7, 8, 10, 0.30); }
+body.light-mode .ds-select-label.is-placeholder { color: #5f676f; }
+body.light-mode .ds-select-panel { background: #ffffff; border-color: rgba(7, 8, 10, 0.30); }
+body.light-mode .ds-select-option { color: #07080a; }
+body.light-mode .ds-select-option:hover { background: rgba(7, 8, 10, 0.04); }
+body.light-mode .ds-select-option[aria-selected="true"] { background: rgba(7, 8, 10, 0.06); border-color: rgba(7, 8, 10, 0.14); }
+body.light-mode .ds-select-option svg { stroke: #07080a; }
