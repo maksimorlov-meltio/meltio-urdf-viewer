@@ -17,7 +17,7 @@
     <visual>
       <origin xyz="-0.0002 -0.0011 0" rpy="1.570796 0 -3.141593"/>
       <geometry>
-        <mesh filename="Front Door.glb" scale="1 1 1"/>
+        <mesh filename="Front Door_2210.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -26,7 +26,7 @@
     <visual>
       <origin xyz="0 0 0.0017" rpy="1.570796 0 -3.141593"/>
       <geometry>
-        <mesh filename="Spools Door_atlas.glb" scale="1 1 1"/>
+        <mesh filename="Spools Door_2210.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -35,7 +35,7 @@
     <visual>
       <origin xyz="0.0006 0 0.0002" rpy="-3.141593 0 -3.141593"/>
       <geometry>
-        <mesh filename="Top Cover.glb" scale="1 1 1"/>
+        <mesh filename="Top Cover_2210.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -44,7 +44,7 @@
     <visual>
       <origin xyz="0 -0.0047 0" rpy="1.570796 0 -3.141593"/>
       <geometry>
-        <mesh filename="Gas Spring Main Part Left.glb" scale="1 1 1"/>
+        <mesh filename="Gas Spring Main Part_2210.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -53,7 +53,7 @@
     <visual>
       <origin xyz="0 -0.0047 0" rpy="1.570796 0 -3.141593"/>
       <geometry>
-        <mesh filename="Gas Spring Main Part Right.glb" scale="1 1 1"/>
+        <mesh filename="Gas Spring Main Part_2210.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -62,7 +62,7 @@
     <visual>
       <origin xyz="0 0.0068 0" rpy="1.570796 0 -3.141593"/>
       <geometry>
-        <mesh filename="Gas Spring Secondary Part Left.glb" scale="1 1 1"/>
+        <mesh filename="Gas Spring Secondary Part_2210.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -71,7 +71,7 @@
     <visual>
       <origin xyz="0 0.0068 0" rpy="1.570796 0 -3.141593"/>
       <geometry>
-        <mesh filename="Gas Spring Secondary Part Right.glb" scale="1 1 1"/>
+        <mesh filename="Gas Spring Secondary Part_2210.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -89,7 +89,7 @@
     <visual>
       <origin xyz="1e-05 7e-05 -0.00028" rpy="-3.141593 0.0 -3.141593"/>
       <geometry>
-        <mesh filename="Wire Drum Door_atlas.glb" scale="1 1 1"/>
+        <mesh filename="Wire Drum Door_2210.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -98,7 +98,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 3.141593 0"/>
       <geometry>
-        <mesh filename="Wire Drum.glb" scale="1 1 1"/>
+        <mesh filename="Wire Drum_2210.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -107,7 +107,7 @@
     <visual>
       <origin xyz="-0.002 0.009 0.0001" rpy="1.570796 0 -3.141593"/>
       <geometry>
-        <mesh filename="Handle.glb" scale="1 1 1"/>
+        <mesh filename="Handle_2210.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -172,7 +172,7 @@
     <visual>
       <origin xyz="0 0.0005 0.0001" rpy="1.570796 0 -3.141593"/>
       <geometry>
-        <mesh filename="Display.glb" scale="1 1 1"/>
+        <mesh filename="Display_2210.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
