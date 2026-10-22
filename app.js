@@ -3123,7 +3123,8 @@ function enhanceFeederWheelMaterials() {
 // based on purpose: an unrelated re-export that happens to carry a
 // metallicRoughness map must keep the generic flat tuning below, not be
 // reclassified as an atlas part.
-const ATLAS_MATERIAL_NAME_RE = /_atlas$/i;
+// 2026-10-22: Blender now also emits numbered variants ("Test_Metal_Atlas_02").
+const ATLAS_MATERIAL_NAME_RE = /_atlas(?:_\d+)?$/i;
 const ATLAS_ENV_MAP_INTENSITY = 1.2;
 // One GPU copy per atlas (2026-10-13 perf pass): every GLB that uses
 // "Test_Metal_Atlas" decodes and uploads its own copy of the same PNGs
