@@ -185,8 +185,14 @@
     const info = { signedIn: isSignedIn(), user: currentUser, roleId: currentUser?.roleId, roleName: currentLevelName(), isGod: isGod() };
     for (const fn of listeners) { try { fn(info); } catch (_e) {} }
   }
+  // Only push a CHANGE into the viewer: apply() runs on DOM mutations, and
+  // MeltioAdvanced.set() rewrites a dozen Settings buttons each time.
+  let lastAdvancedDriven = null;
   function driveAdvanced() {
-    if (window.MeltioAdvanced && typeof window.MeltioAdvanced.set === "function") window.MeltioAdvanced.set(hasPermission(ADVANCED_KEY));
+    const advanced = hasPermission(ADVANCED_KEY);
+    if (advanced === lastAdvancedDriven) return;
+    lastAdvancedDriven = advanced;
+    if (window.MeltioAdvanced && typeof window.MeltioAdvanced.set === "function") window.MeltioAdvanced.set(advanced);
   }
 
   // ---- Gating ---------------------------------------------------------------

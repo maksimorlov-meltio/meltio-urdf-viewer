@@ -7,7 +7,7 @@
   <!-- Inline SVG data-URI: no extra file, no extra route, and it stops the
        /favicon.ico 404 the browser fires on every load. -->
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230f1216'/%3E%3Cpath d='M8 23V9l8 6 8-6v14' fill='none' stroke='%234da3ff' stroke-width='3' stroke-linejoin='round' stroke-linecap='round'/%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="/static/urdf_viewer.css?v=270" />
+  <link rel="stylesheet" href="/static/urdf_viewer.css?v=271" />
 </head>
 <body class="controls-panel-collapsed">
   <div class="status-panel app-topbar">
@@ -1085,6 +1085,14 @@
       <span data-i18n="nav.slicer">Slicer</span>
     </button>
   </nav>
+
+  <!-- Reset view: appears under the model once the operator has moved the camera
+       away from the main view; a tap glides back. Hidden at home and while a panel
+       or a print owns the camera (urdf_viewer.js updateResetViewFab). -->
+  <button id="resetViewFab" class="reset-view-fab" type="button" aria-hidden="true" aria-label="Reset view">
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 12a9 9 0 1 0 2.64-6.36"/><path d="M3 3v6h6"/></svg>
+    <span>Reset view</span>
+  </button>
 
   <section id="calendarScreen" class="calendar-screen" aria-hidden="true" hidden>
     <div class="calendar-screen-header">
