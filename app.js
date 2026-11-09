@@ -470,12 +470,12 @@ const WIRE_SPOOL_DOOR_OPEN_SPEED_RAD_PER_SEC = THREE.MathUtils.degToRad(45);
 const WIRE_SPOOL_DOOR_OPEN_TARGET_RAD = THREE.MathUtils.degToRad(35);
 const WIRE_SPOOL_DOOR_CLOSED_TARGET_RAD = 0;
 const RESET_VIEW_TRANSITION_MS = 1700;
-const RESET_VIEW_EXTRA_ZOOM_OUT_FACTOR = 1.25;
+const RESET_VIEW_EXTRA_ZOOM_OUT_FACTOR = 1.06; // thin margin: the fit already targets the visible band (2026-10-30, "make it bigger")
 const RESET_VIEW_EXTRA_YAW_Z_RAD = THREE.MathUtils.degToRad(8);
 const RESET_VIEW_EXTRA_TILT_X_RAD = THREE.MathUtils.degToRad(5);
 const FILES_MENU_OPEN_ZOOM_OUT_FACTOR = 1.25;
 const FILES_MENU_OPEN_TILT_X_RAD = THREE.MathUtils.degToRad(4);
-const IDLE_RESET_TIMEOUT_MS = 50000;
+const IDLE_RESET_TIMEOUT_MS = 15000; // Maksim 2026-10-30: 15 s after the last touch, glide back to the main view
 const IDLE_RESET_TRANSITION_MS = 1900;
 const FRONT_DOOR_OPEN_DURATION_SEC = 1.3;
 const TOP_COVER_OPEN_DURATION_SEC = 1.3;
@@ -1114,8 +1114,12 @@ function easeInOutCubic(value) {
     : 1 - (Math.pow((-2 * clamped) + 2, 3) / 2);
 }
 
+// `boostInteractionQuality` is opt-in (2026-10-30): only continuous camera
+// gestures lower the render resolution. A button tap used to do it too, which
+// meant two drawing-buffer reallocations (down, then back up 220 ms later) and a
+// visible resolution pop on EVERY tap -- the "laggy buttons".
 function markUserActivity(nowMs = performance.now(), options = {}) {
-  const { boostInteractionQuality = true } = options;
+  const { boostInteractionQuality = false } = options;
   lastUserActivityMs = nowMs;
   advancedModeLastActivityMs = nowMs;
   if (boostInteractionQuality) {
@@ -1702,20 +1706,23 @@ function updateIdleReset(nowMs) {
     return;
   }
 
+  // Materials / Controls / Files / hotspot panels frame the scene their own
+  // way and glide back by themselves; the idle return is for the main screen.
+  if (isMainViewOwnedElsewhere()) {
+    return;
+  }
+
   if ((nowMs - lastUserActivityMs) < IDLE_RESET_TIMEOUT_MS) {
     return;
   }
 
-  const baseCameraState = fitCameraToRobot();
-  if (!baseCameraState) {
+  if (cameraTransitionState || isUserCameraGestureActive) {
     return;
   }
 
-  if (cameraTransitionState) {
-    return;
-  }
-
-  if (isCameraCloseToState(baseCameraState)) {
+  // Already home (within tolerance): nothing to do, check again after another
+  // idle period.
+  if (isCameraAtMainView()) {
     lastUserActivityMs = nowMs;
     return;
   }
@@ -3515,11 +3522,13 @@ function setCloudPrintSimulationProgress(progress, options = {}) {
   cloudPrintSimProgress = clamp(progress, 0, 1);
 
   if (syncUi) {
-    if (cloudPrintSimProgressEl) {
-      cloudPrintSimProgressEl.value = String(Math.round(cloudPrintSimProgress * CLOUD_PRINT_SIM_PROGRESS_STEPS));
+    const nextValue = String(Math.round(cloudPrintSimProgress * CLOUD_PRINT_SIM_PROGRESS_STEPS));
+    if (cloudPrintSimProgressEl && cloudPrintSimProgressEl.value !== nextValue) {
+      cloudPrintSimProgressEl.value = nextValue;
     }
-    if (cloudPrintSimProgressValueEl) {
-      cloudPrintSimProgressValueEl.textContent = `${Math.round(cloudPrintSimProgress * 100)}%`;
+    const nextText = `${Math.round(cloudPrintSimProgress * 100)}%`;
+    if (cloudPrintSimProgressValueEl && cloudPrintSimProgressValueEl.textContent !== nextText) {
+      cloudPrintSimProgressValueEl.textContent = nextText;
     }
   }
 
@@ -7051,7 +7060,7 @@ async function loadMeshObject(meshPath, urdfUrl) {
 // of the URDF robot tree (it is a separate external unit), so it lives directly
 // in the scene and is positioned from the machine's live bounding box each time
 // it is shown. The mesh is loaded lazily on first activation.
-const CHILLER_MODEL_URL = "/assets/M600_PRO/HRS050-AF-20.glb";
+const CHILLER_MODEL_URL = "/assets/M600_PRO/HRS050-AF-20_2611.glb"; // 2026-11 textured delivery (Metal/Plastic atlas + Display_Screen)
 // HRS050-AF-20.glb is authored in metres like the machine GLBs (the 2026-09
 // re-export; the earlier file was millimetres and needed 0.001). Same frame
 // as before, so only the unit changed: raw bounds ~0.61×1.0×0.38 m.
@@ -7144,6 +7153,10 @@ async function setChillerVisible(visible) {
   if (!visible) {
     if (chillerObject) {
       chillerObject.visible = false;
+      // The chiller belongs to the framed set (2026-10-30): re-centre the
+      // default view on the new layout (no-op while a panel or a print owns it).
+      invalidateCachedResetViewState();
+      resetViewAfterLayoutChange();
     }
     return;
   }
@@ -7153,6 +7166,8 @@ async function setChillerVisible(visible) {
   }
   positionChillerBesideMachine();
   object.visible = true;
+  invalidateCachedResetViewState();
+  resetViewAfterLayoutChange();
 }
 
 function clearRobot() {
@@ -7225,7 +7240,39 @@ function clearRobot() {
 // closed here makes every reset land on the same view as the idle/button reset.
 // The joint values are restored synchronously before the next render, so the
 // in-flight close animations continue untouched and nothing flickers.
-function measureRobotBoundsAtRest() {
+// World-space bounds of the VISIBLE meshes under `root`. `collect` (optional
+// array) receives one world Box3 per mesh: the per-mesh boxes trace the
+// silhouette far more tightly than the corners of the single union box, which
+// is what the on-screen centring and the band fit need.
+const visibleBoundsScratchBox = new THREE.Box3();
+function measureVisibleBounds(root, collect = null) {
+  const bounds = new THREE.Box3();
+  root.updateMatrixWorld(true);
+  const walk = (object) => {
+    if (object.visible === false) {
+      return;
+    }
+    if (object.isMesh && object.geometry) {
+      if (!object.geometry.boundingBox) {
+        object.geometry.computeBoundingBox();
+      }
+      if (object.geometry.boundingBox) {
+        visibleBoundsScratchBox.copy(object.geometry.boundingBox).applyMatrix4(object.matrixWorld);
+        bounds.union(visibleBoundsScratchBox);
+        if (collect) {
+          collect.push(visibleBoundsScratchBox.clone());
+        }
+      }
+    }
+    for (const child of object.children) {
+      walk(child);
+    }
+  };
+  walk(root);
+  return bounds;
+}
+
+function measureRobotBoundsAtRest(collect = null) {
   const restorers = [];
 
   const frontDoor = getFrontDoorControlData();
@@ -7248,8 +7295,7 @@ function measureRobotBoundsAtRest() {
     });
   }
 
-  robotRoot.updateMatrixWorld(true);
-  const bounds = new THREE.Box3().setFromObject(robotRoot);
+  const bounds = measureVisibleBounds(robotRoot, collect);
 
   for (let i = restorers.length - 1; i >= 0; i -= 1) {
     restorers[i]();
@@ -7259,14 +7305,89 @@ function measureRobotBoundsAtRest() {
   return bounds;
 }
 
+const FIT_VIEW_FILL = 1.0; // the set touches the viewport side edges here; RESET_VIEW_EXTRA_ZOOM_OUT_FACTOR adds the margin
+// Fraction of the viewport height that is actually visible between the top bar
+// and the bottom nav. The default view fits the set into THIS band vertically
+// (and the full width horizontally); centerCameraStateOnBounds() then places it.
+function getVisibleBandFraction() {
+  const viewHeightPx = (renderer.domElement && renderer.domElement.clientHeight) || window.innerHeight || 0;
+  if (viewHeightPx <= 50) {
+    return 1;
+  }
+  const topBarEl = document.querySelector(".app-topbar");
+  const bottomNavEl = document.querySelector(".bottom-nav");
+  const topBarPx = topBarEl ? topBarEl.getBoundingClientRect().height : 0;
+  const bottomNavPx = bottomNavEl ? bottomNavEl.getBoundingClientRect().height : 0;
+  return THREE.MathUtils.clamp((viewHeightPx - topBarPx - bottomNavPx) / viewHeightPx, 0.3, 1);
+}
+
+// Distance along `direction` from `center` at which the framed set (one world
+// box per mesh -- the union box's corners overshoot the real outline) spans
+// `fillX` of the viewport width and `fillY` of its height, whichever binds.
+// Measures the projected RANGE (max - min), not the extent about the centre:
+// the on-screen centring slides the set afterwards, so only the size matters.
+function fitDistanceForBounds(boxes, center, direction, startDistance, fillX = FIT_VIEW_FILL, fillY = FIT_VIEW_FILL) {
+  const list = Array.isArray(boxes) ? boxes : [boxes];
+  const probe = camera.clone();
+  probe.aspect = (Number.isFinite(camera.aspect) && camera.aspect > 0) ? camera.aspect : 1;
+  probe.up.set(0, 0, 1);
+  let distance = Math.max(startDistance, 0.1);
+  const corner = new THREE.Vector3();
+  for (let pass = 0; pass < 4; pass += 1) {
+    probe.position.copy(center).addScaledVector(direction, distance);
+    probe.lookAt(center);
+    probe.updateProjectionMatrix();
+    probe.updateMatrixWorld(true);
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const box of list) {
+      if (!box || box.isEmpty()) {
+        continue;
+      }
+      for (let i = 0; i < 8; i += 1) {
+        corner.set(
+          (i & 1) ? box.max.x : box.min.x,
+          (i & 2) ? box.max.y : box.min.y,
+          (i & 4) ? box.max.z : box.min.z,
+        ).project(probe);
+        minX = Math.min(minX, corner.x);
+        maxX = Math.max(maxX, corner.x);
+        minY = Math.min(minY, corner.y);
+        maxY = Math.max(maxY, corner.y);
+      }
+    }
+    if (![minX, maxX, minY, maxY].every(Number.isFinite)) {
+      break;
+    }
+    const factor = Math.max((maxX - minX) / (2 * fillX), (maxY - minY) / (2 * fillY));
+    if (!Number.isFinite(factor) || factor <= 1e-6) {
+      break;
+    }
+    if (Math.abs(factor - 1) < 0.005) {
+      break;
+    }
+    distance *= factor;
+  }
+  return distance;
+}
+
 function fitCameraToRobot(options = {}) {
   if (!robotRoot) {
     return null;
   }
 
+  const framedBoxes = []; // one world box per framed mesh, for the band fit + centring
   const bounds = options.restingPose
-    ? measureRobotBoundsAtRest()
-    : new THREE.Box3().setFromObject(robotRoot);
+    ? measureRobotBoundsAtRest(framedBoxes)
+    : measureVisibleBounds(robotRoot, framedBoxes);
+  // The chiller is a separate scene object (not under robotRoot). While it is
+  // shown it is part of what the operator looks at, so it is part of the framed
+  // set (Maksim, 2026-10-30: the view follows what is active).
+  if (chillerObject && chillerObject.visible) {
+    bounds.union(measureVisibleBounds(chillerObject, framedBoxes));
+  }
   if (bounds.isEmpty()) {
     return null;
   }
@@ -7276,24 +7397,25 @@ function fitCameraToRobot(options = {}) {
   const radius = Math.max(size.length() * 0.5, 0.5);
 
   const direction = new THREE.Vector3(-0.82, 1.62, 0.34).normalize();
-  const position = center.clone().add(direction.multiplyScalar(radius * 1.4));
+  // Fit the set into the full width and the visible band height (top bar to
+  // bottom nav): as big as the screen allows, then the reset view's small
+  // zoom-out margin and the centring pass finish the composition.
+  const fitBoxes = framedBoxes.length ? framedBoxes : bounds;
+  const position = center.clone().add(direction.clone().multiplyScalar(
+    fitDistanceForBounds(fitBoxes, center, direction, radius * 1.4, FIT_VIEW_FILL, getVisibleBandFraction()),
+  ));
+  // Centred both ways (Maksim, 2026-10-13): no side shift of the framed set.
+  const target = center.clone();
 
-  const forward = center.clone().sub(position).normalize();
-  const cameraRight = new THREE.Vector3().crossVectors(forward, camera.up).normalize();
-  const framingOffset = radius * 0.24;
-  const target = center.clone().addScaledVector(cameraRight, -framingOffset);
-
-  // Centre the model in the VISIBLE band (viewport minus the top bar and bottom
-  // nav) so the gaps above and below match. The bottom nav is taller than the
-  // top bar, so the band centre sits above the viewport centre — lowering the
-  // look-at point in Z lifts the model up on screen to compensate.
+  // Approximate band centring (kept for the callers that use this state
+  // directly); the reset view refines it with centerCameraStateOnBounds().
   const viewHeightPx = (renderer.domElement && renderer.domElement.clientHeight) || window.innerHeight || 1;
   const topBarEl = document.querySelector(".app-topbar");
   const bottomNavEl = document.querySelector(".bottom-nav");
   const topBarPx = topBarEl ? topBarEl.getBoundingClientRect().height : 0;
   const bottomNavPx = bottomNavEl ? bottomNavEl.getBoundingClientRect().height : 0;
   const bandOffsetPx = (topBarPx - bottomNavPx) / 2; // + => band centre below viewport centre
-  if (Math.abs(bandOffsetPx) > 0.5) {
+  if (viewHeightPx > 50 && Math.abs(bandOffsetPx) > 0.5) {
     const framingDistance = position.distanceTo(target) * RESET_VIEW_EXTRA_ZOOM_OUT_FACTOR;
     const worldPerPixel = (2 * framingDistance * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)) / viewHeightPx;
     target.z += bandOffsetPx * worldPerPixel;
@@ -7305,24 +7427,93 @@ function fitCameraToRobot(options = {}) {
     up: new THREE.Vector3(0, 0, 1),
     near: Math.max(radius / 400, 0.02),
     far: radius * 25,
+    bounds,
+    framedBoxes,
   };
 }
 
-function resetCameraToRobotView(options = {}) {
-  const smooth = Boolean(options.smooth);
-  const forceExactView = Boolean(options.forceExactView);
-  const durationMs = Number.isFinite(options.durationMs)
-    ? options.durationMs
-    : RESET_VIEW_TRANSITION_MS;
-  const zoomOutFactor = Number.isFinite(options.zoomOutFactor)
-    ? options.zoomOutFactor
-    : RESET_VIEW_EXTRA_ZOOM_OUT_FACTOR;
+// Centre the FRAMED SET on screen, not its 3-D box centre. Under perspective the
+// projected silhouette is asymmetric about the look-at point (and the reset
+// view's extra yaw/tilt/zoom shift it further), so the machine sat a little
+// off-centre (Maksim, 2026-10-30). Slides position + target together, keeping the
+// view direction, until the projected per-mesh boxes are centred horizontally
+// and sit at the centre of the band between the top bar and the bottom nav.
+function centerCameraStateOnBounds(state, boxes) {
+  const list = Array.isArray(boxes) ? boxes : (boxes ? [boxes] : []);
+  if (!state || !list.length) {
+    return;
+  }
+  const viewHeightPx = (renderer.domElement && renderer.domElement.clientHeight) || window.innerHeight || 0;
+  if (viewHeightPx <= 50) {
+    return; // hidden tab / collapsed pane: no usable viewport to centre in
+  }
+  const topBarEl = document.querySelector(".app-topbar");
+  const bottomNavEl = document.querySelector(".bottom-nav");
+  const topBarPx = topBarEl ? topBarEl.getBoundingClientRect().height : 0;
+  const bottomNavPx = bottomNavEl ? bottomNavEl.getBoundingClientRect().height : 0;
+  // Band centre in NDC (y up): a taller bottom nav puts it ABOVE the viewport centre.
+  const desiredY = (bottomNavPx - topBarPx) / viewHeightPx;
+
+  const probe = camera.clone();
+  probe.aspect = (Number.isFinite(camera.aspect) && camera.aspect > 0) ? camera.aspect : 1;
+  probe.up.copy(state.up);
+  const corner = new THREE.Vector3();
+  const right = new THREE.Vector3();
+  const upVec = new THREE.Vector3();
+  for (let pass = 0; pass < 3; pass += 1) {
+    probe.position.copy(state.position);
+    probe.lookAt(state.target);
+    probe.updateProjectionMatrix();
+    probe.updateMatrixWorld(true);
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const box of list) {
+      if (!box || box.isEmpty()) {
+        continue;
+      }
+      for (let i = 0; i < 8; i += 1) {
+        corner.set(
+          (i & 1) ? box.max.x : box.min.x,
+          (i & 2) ? box.max.y : box.min.y,
+          (i & 4) ? box.max.z : box.min.z,
+        ).project(probe);
+        minX = Math.min(minX, corner.x);
+        maxX = Math.max(maxX, corner.x);
+        minY = Math.min(minY, corner.y);
+        maxY = Math.max(maxY, corner.y);
+      }
+    }
+    if (![minX, maxX, minY, maxY].every(Number.isFinite)) {
+      return;
+    }
+    const errX = (minX + maxX) / 2;            // where the set's centre is (NDC)
+    const errY = (minY + maxY) / 2 - desiredY; // vs. where it should be
+    if (Math.abs(errX) < 0.002 && Math.abs(errY) < 0.002) {
+      break;
+    }
+    const distance = state.position.distanceTo(state.target);
+    const halfH = distance * Math.tan(THREE.MathUtils.degToRad(probe.fov) / 2);
+    const halfW = halfH * probe.aspect;
+    right.setFromMatrixColumn(probe.matrixWorld, 0).normalize();
+    upVec.setFromMatrixColumn(probe.matrixWorld, 1).normalize();
+    // Move the camera the way the set is off; the content slides the other way.
+    const delta = right.multiplyScalar(errX * halfW).add(upVec.multiplyScalar(errY * halfH));
+    state.position.add(delta);
+    state.target.add(delta);
+  }
+}
+
+// The canonical main view: settled machine (+ chiller when shown), yaw/tilt/zoom
+// applied, centred in the visible band.
+function computeResetViewState(zoomOutFactor = RESET_VIEW_EXTRA_ZOOM_OUT_FACTOR) {
   // Frame the settled machine (doors closed), not a door caught mid-close, so
   // resets triggered while a panel is still swinging shut still land on the
   // canonical reset view. See measureRobotBoundsAtRest().
   const targetState = fitCameraToRobot({ restingPose: true });
   if (!targetState) {
-    return;
+    return null;
   }
 
   const offset = targetState.position.clone().sub(targetState.target);
@@ -7336,6 +7527,117 @@ function resetCameraToRobotView(options = {}) {
 
     targetState.position.copy(targetState.target).add(offset.multiplyScalar(zoomOutFactor));
   }
+  centerCameraStateOnBounds(targetState, targetState.framedBoxes || targetState.bounds);
+  return targetState;
+}
+
+// Cached main view for the cheap per-frame "is the camera away from home?"
+// test (the reset button + the idle return). Valid until invalidated (reset
+// view, chiller toggle, model load); measuring the rest pose walks the whole
+// mesh tree, so it must not run every frame.
+let cachedResetViewState = null;
+function getCachedResetViewState() {
+  if (!cachedResetViewState) {
+    cachedResetViewState = computeResetViewState();
+  }
+  return cachedResetViewState;
+}
+function invalidateCachedResetViewState() {
+  cachedResetViewState = null;
+}
+const RESET_VIEW_AT_HOME_TOLERANCE_M = 0.03;
+function isCameraAtMainView() {
+  const home = getCachedResetViewState();
+  return Boolean(home) && isCameraCloseToState(home, RESET_VIEW_AT_HOME_TOLERANCE_M, RESET_VIEW_AT_HOME_TOLERANCE_M);
+}
+
+// Whether some other surface currently owns the camera (its own framing, its
+// own return-to-view rules): the main-view affordances stay out of the way.
+function isMainViewOwnedElsewhere() {
+  const printState = printSim?.getState?.();
+  const printOwnsView =
+    printState === "playing" || printState === "paused" || filesListCollapsedForPrint;
+  const panelOwnsView = isMaterialsMenuOpen || isControlsPanelOpen
+    || document.body.classList.contains("cloud-menu-open")
+    || Boolean(activeHotspotPanelId);
+  return printOwnsView || panelOwnsView || Boolean(printSim?.isActive?.()) || isAnyAssemblyActionActive();
+}
+
+// Re-centre the default view after the framed set changed shape (chiller shown
+// or hidden) unless another surface owns the camera right now.
+function resetViewAfterLayoutChange() {
+  if (!robotRoot) {
+    return;
+  }
+  if (isMainViewOwnedElsewhere()) {
+    return;
+  }
+  resetCameraToRobotView({ smooth: true, forceExactView: true });
+}
+
+// Small "Reset view" button under the model: shows once the operator has
+// orbited / zoomed / panned away from the main view, hides again at home or
+// while another surface owns the camera (Maksim, 2026-10-30).
+const resetViewFabEl = document.getElementById("resetViewFab");
+let resetViewFabVisible = false;
+let resetViewFabLastCheckMs = -Infinity;
+const resetViewFabLastCamPos = new THREE.Vector3(NaN, NaN, NaN);
+const resetViewFabLastTarget = new THREE.Vector3(NaN, NaN, NaN);
+let resetViewFabLastAtHome = true;
+function updateResetViewFab(nowMs) {
+  if (!resetViewFabEl) {
+    return;
+  }
+  if ((nowMs - resetViewFabLastCheckMs) < 150) {
+    return;
+  }
+  resetViewFabLastCheckMs = nowMs;
+  let show = false;
+  if (robotRoot && !cameraTransitionState && !isUserCameraGestureActive && !isMainViewOwnedElsewhere()) {
+    // Measuring the home view walks the mesh tree; only redo it when the camera
+    // has actually moved since the last answer (or the cache was invalidated).
+    const cameraMoved = !camera.position.equals(resetViewFabLastCamPos)
+      || !controls.target.equals(resetViewFabLastTarget);
+    if (cameraMoved || !cachedResetViewState) {
+      resetViewFabLastAtHome = isCameraAtMainView();
+      resetViewFabLastCamPos.copy(camera.position);
+      resetViewFabLastTarget.copy(controls.target);
+    }
+    show = !resetViewFabLastAtHome;
+  }
+  if (show !== resetViewFabVisible) {
+    resetViewFabVisible = show;
+    resetViewFabEl.classList.toggle("is-visible", show);
+    resetViewFabEl.setAttribute("aria-hidden", show ? "false" : "true");
+    if (show) {
+      // Sit just above the bottom nav whatever height the active profile gives it.
+      const navEl = document.querySelector(".bottom-nav");
+      const navPx = navEl ? navEl.getBoundingClientRect().height : 0;
+      resetViewFabEl.style.bottom = `${Math.round(navPx + 18)}px`;
+    }
+  }
+}
+if (resetViewFabEl) {
+  resetViewFabEl.addEventListener("click", () => {
+    markUserActivity();
+    resetCameraToRobotView({ smooth: true, forceExactView: true });
+  });
+}
+
+function resetCameraToRobotView(options = {}) {
+  const smooth = Boolean(options.smooth);
+  const forceExactView = Boolean(options.forceExactView);
+  const durationMs = Number.isFinite(options.durationMs)
+    ? options.durationMs
+    : RESET_VIEW_TRANSITION_MS;
+  const zoomOutFactor = Number.isFinite(options.zoomOutFactor)
+    ? options.zoomOutFactor
+    : RESET_VIEW_EXTRA_ZOOM_OUT_FACTOR;
+  const targetState = computeResetViewState(zoomOutFactor);
+  if (!targetState) {
+    return;
+  }
+  invalidateCachedResetViewState();
 
   if (!smooth) {
     cameraTransitionState = null;
@@ -7723,7 +8025,34 @@ function setFrontDoorOpenState(targetIsOpen) {
 // the DOM is only written when the derived state changes.
 let lastQuickFrontDoorIsOpen = null;
 
+// Runs every frame from animate(). It used to call updateBottomNavState()
+// (~40 attribute / class / text writes) 60 times a second, so the browser
+// recalculated style and layout on every frame even with nothing changing --
+// the UI felt heavy and button taps stuttered (2026-10-30). Now the nav is only
+// rewritten when one of its inputs changed; the event-driven callers of
+// updateBottomNavState() are untouched.
+let lastBottomNavSignature = null;
+function getBottomNavStateSignature() {
+  const simState = printSim && typeof printSim.getState === "function" ? printSim.getState() : "idle";
+  return [
+    isFrontDoorOpen() ? 1 : 0,
+    filesListCollapsedForPrint ? 1 : 0,
+    simState,
+    isPrePrintSequenceActive ? 1 : 0,
+    isControlsPanelOpen ? 1 : 0,
+    isCloudModelMenuOpen ? 1 : 0,
+    isMaterialsMenuOpen ? 1 : 0,
+    (typeof isChamberInertLocked === "function" && isChamberInertLocked()) ? 1 : 0,
+    getLocale(),
+  ].join("|");
+}
 function updateQuickFrontDoorToggleButton() {
+  const signature = getBottomNavStateSignature();
+  if (signature === lastBottomNavSignature) {
+    return;
+  }
+  lastBottomNavSignature = signature;
+
   if (!quickFrontDoorToggleEl) {
     updateBottomNavState();
     return;
@@ -10364,12 +10693,14 @@ function runBottomNavMaterialsAction() {
       closeFilesOnOpen: false,
     });
     const didCloseSpoolsDoor = setSpoolsDoorOpenState(false);
-    if (didCloseSpoolsDoor) {
-      resetCameraToRobotView({
-        smooth: true,
-        durationMs: SPOOLS_DOOR_BUTTON_CLOSE_RESET_DURATION_MS,
-      });
-    }
+    // Always the exact default view on close (Maksim, 2026-10-13): re-fit to
+    // the machine regardless of how far the user had zoomed.
+    resetCameraToRobotView({
+      smooth: true,
+      durationMs: SPOOLS_DOOR_BUTTON_CLOSE_RESET_DURATION_MS,
+      forceExactView: true,
+    });
+    void didCloseSpoolsDoor;
     updateBottomNavState();
     return false;
   }
@@ -10386,10 +10717,8 @@ function runBottomNavMaterialsAction() {
     setCloudModelMenuOpen(false, { skipResetOnClose: true });
   }
 
-  if (isFrontDoorOpen()) {
-    setFrontDoorOpenState(false);
-    updateQuickFrontDoorToggleButton();
-  }
+  // The front door and the top door stay in the state the operator chose when
+  // Materials opens (Maksim, 2026-10-30); only the spools door is driven here.
 
   const pairPoint = getSpoolsPairWorldPoint(controls.target);
   const cameraState = buildSpoolsDoorButtonCameraState(pairPoint);
@@ -10541,6 +10870,7 @@ function animate(nowMs = performance.now()) {
   updateMaterialsModelLift(deltaSeconds);
   updateCameraTransition(nowMs);
   updateIdleReset(nowMs);
+  updateResetViewFab(nowMs);
   settingsUi.tick(nowMs);
   updateAdaptiveRenderQuality(rawDeltaSeconds, nowMs);
   updateInteractionQuality(nowMs);
@@ -11373,7 +11703,7 @@ if (controlsTopCoverButtonEl) {
 }
 
 controls.addEventListener("start", () => {
-  markUserActivity();
+  markUserActivity(performance.now(), { boostInteractionQuality: true });
   isUserCameraGestureActive = true;
 });
 
@@ -11385,8 +11715,16 @@ controls.addEventListener("change", () => {
     return;
   }
 
+  // Only the operator's own gesture counts as activity. OrbitControls keeps
+  // emitting "change" while its damping coasts after the finger lifts; letting
+  // that extend the idle timer would push the 15 s return-to-main-view out by
+  // the coast time. Rendering is unaffected (controlsChanged still redraws).
+  if (!isUserCameraGestureActive) {
+    return;
+  }
+
   lastControlsChangeActivityMs = nowMs;
-  markUserActivity(nowMs);
+  markUserActivity(nowMs, { boostInteractionQuality: true });
   // Rotating auto-closes the Files browser so it's out of the way — but NOT
   // while a print is docked, where the same menu hosts the print/slicer
   // controls (Play, speed, etc.). Those must stay visible while orbiting.
@@ -11510,6 +11848,9 @@ updateFeederWheelFloatingControls();
 // hooks, so boot only restores persistence afterwards (as before).
 initMaterialsUi({
   markUserActivity: () => markUserActivity(),
+  // The popup's X behaves like the bottom-nav Materials button (Maksim,
+  // 2026-10-30): menu closed, spools door shut, camera back to the main view.
+  closeMaterialsFromPopup: () => runBottomNavMaterialsAction(),
   clamp,
   OVERLAY_MENU_SAFE_MARGIN_PX,
   setModelLift: (isRaised) => { materialsModelLiftTargetM = isRaised ? MATERIALS_MENU_MODEL_LIFT_M : 0; },
@@ -11856,11 +12197,15 @@ function initializePrintSimulation() {
       return;
     }
     const pct = Math.round(printSim.getProgress() * 100);
-    if (progressEl && document.activeElement !== progressEl) {
-      progressEl.value = String(pct * 10);
+    // Called from a 120 ms timer: only write when the value changed (an
+    // identical textContent write still replaces the text node).
+    const nextValue = String(pct * 10);
+    if (progressEl && document.activeElement !== progressEl && progressEl.value !== nextValue) {
+      progressEl.value = nextValue;
     }
-    if (progressValueEl) {
-      progressValueEl.textContent = `${pct}%`;
+    const nextText = `${pct}%`;
+    if (progressValueEl && progressValueEl.textContent !== nextText) {
+      progressValueEl.textContent = nextText;
     }
   }
 

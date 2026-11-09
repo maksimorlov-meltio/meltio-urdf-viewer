@@ -7489,15 +7489,23 @@ body.files-collapsed-for-print #navDoorToggle { order: 3; }
   border-color: rgba(236, 191, 102, 0.65);
   box-shadow: inset 0 0 0 1px rgba(255, 222, 151, 0.14), 0 0 10px rgba(230, 167, 61, 0.22);
 }
-.topbar-notification-toggle.has-critical-notifications {
+/* 2026-10-30: the pulse used to animate box-shadow, which the compositor cannot
+   accelerate -- the top bar repainted 60x a second for as long as a critical
+   notification existed (on the mock: always). Pulse the glyph's scale instead
+   (transform-only, no shadow -- DS v3). ID selector so it outranks the one-shot
+   `#topbarNotificationsToggle.bell-ring svg` only once the ring has ended. */
+#topbarNotificationsToggle.has-critical-notifications:not(.bell-ring) .ui-img-icon,
+#topbarNotificationsToggle.has-critical-notifications:not(.bell-ring) svg {
   animation: notif-bell-pulse 1.6s ease-in-out infinite;
+  transform-origin: 50% 50%;
 }
 @keyframes notif-bell-pulse {
-  0%, 100% { box-shadow: inset 0 0 0 1px rgba(255, 220, 220, 0.12), 0 0 8px rgba(214, 86, 86, 0.22); }
-  50% { box-shadow: inset 0 0 0 1px rgba(255, 220, 220, 0.2), 0 0 18px rgba(218, 95, 95, 0.55); }
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.1); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .topbar-notification-toggle.has-critical-notifications { animation: none; }
+  #topbarNotificationsToggle.has-critical-notifications .ui-img-icon,
+  #topbarNotificationsToggle.has-critical-notifications svg { animation: none; }
 }
 
 /* Badge colour by highest unacknowledged severity. */
@@ -10066,3 +10074,48 @@ body.light-mode .ds-select-option { color: #07080a; }
 body.light-mode .ds-select-option:hover { background: rgba(7, 8, 10, 0.04); }
 body.light-mode .ds-select-option[aria-selected="true"] { background: rgba(7, 8, 10, 0.06); border-color: rgba(7, 8, 10, 0.14); }
 body.light-mode .ds-select-option svg { stroke: #07080a; }
+
+/* Reset-view button (2026-10-30): a small white pill centred under the model,
+   just above the bottom nav (its `bottom` is set from the live nav height).
+   DS v3: solid ground, no shadow/blur, 48 px touch target. Fades in once the
+   camera has left the main view, out again at home. */
+.reset-view-fab {
+  position: fixed;
+  left: 50%;
+  bottom: 196px;
+  transform: translateX(-50%);
+  z-index: 18;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 0 22px;
+  border-radius: 999px;
+  border: 1px solid var(--ui-border-strong);
+  background: var(--ui-button-primary-bg);
+  color: var(--ui-button-primary-text);
+  font-family: var(--ui-font-family);
+  font-size: 18px;
+  font-weight: var(--ui-font-weight-semibold);
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease;
+}
+.reset-view-fab.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+.reset-view-fab:active {
+  transform: translateX(-50%) scale(0.97);
+}
+.reset-view-fab svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}

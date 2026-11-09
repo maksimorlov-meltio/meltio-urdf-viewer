@@ -81,9 +81,11 @@ function getAdvancedRequiredControls() {
 
 function updateAdvancedRequiredControls() {
   const allowAdvanced = isAdvancedModeEnabled;
+  const ariaValue = allowAdvanced ? "false" : "true";
   for (const controlEl of getAdvancedRequiredControls()) {
-    controlEl.disabled = !allowAdvanced;
-    controlEl.setAttribute("aria-disabled", allowAdvanced ? "false" : "true");
+    // Idempotent: reached from the permissions pass, which runs on DOM changes.
+    if (controlEl.disabled !== !allowAdvanced) controlEl.disabled = !allowAdvanced;
+    if (controlEl.getAttribute("aria-disabled") !== ariaValue) controlEl.setAttribute("aria-disabled", ariaValue);
   }
 }
 

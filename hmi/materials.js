@@ -1198,6 +1198,12 @@ function wireMaterialsUi() {
   if (materialsMenuCloseEl) {
     materialsMenuCloseEl.addEventListener("click", () => {
       deps.markUserActivity();
+      // Same exit as the bottom-nav Materials button when the host provides it
+      // (menu closed + spools door shut + main view), else just close the popup.
+      if (isMaterialsMenuOpen && typeof deps.closeMaterialsFromPopup === "function") {
+        deps.closeMaterialsFromPopup();
+        return;
+      }
       setMaterialsMenuOpen(false);
     });
   }

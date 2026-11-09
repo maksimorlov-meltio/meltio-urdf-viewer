@@ -23,11 +23,11 @@ export const ANNOTATION_OCCLUSION_TOLERANCE = 0.025;
 export const MIN_DYNAMIC_RENDER_PIXEL_RATIO = 1.0;
 export const DYNAMIC_QUALITY_SAMPLE_ALPHA = 0.08;
 export const DYNAMIC_QUALITY_DOWN_FRAME_MS = 24;
-export const DYNAMIC_QUALITY_UP_FRAME_MS = 16.8;
+export const DYNAMIC_QUALITY_UP_FRAME_MS = 15.0; // wider hysteresis vs. DOWN (24): no up/down oscillation while orbiting
 export const DYNAMIC_QUALITY_DOWN_STEP = 0.1;
 export const DYNAMIC_QUALITY_UP_STEP = 0.05;
-export const DYNAMIC_QUALITY_DOWN_COOLDOWN_MS = 260;
-export const DYNAMIC_QUALITY_UP_COOLDOWN_MS = 900;
+export const DYNAMIC_QUALITY_DOWN_COOLDOWN_MS = 400;
+export const DYNAMIC_QUALITY_UP_COOLDOWN_MS = 2500; // was 900: the ratio stepped up/down several times per orbit, each step a buffer reallocation
 
 // --- Image-based lighting (IBL) --------------------------------------------
 // The PBR materials throughout the model set envMapIntensity (see
