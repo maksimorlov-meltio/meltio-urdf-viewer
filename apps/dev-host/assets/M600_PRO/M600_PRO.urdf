@@ -6,18 +6,28 @@
   <!-- Base / anchor component -->
   <link name="chassis_link">
     <visual>
-      <origin xyz="0 0 0" rpy="0 3.141592653589793 0"/>
+      <origin xyz="0 0 0" rpy="1.5707963 0 -3.1415927"/>
       <geometry>
-        <mesh filename="Chassis.glb" scale="0.001 0.001 0.001"/>
+        <mesh filename="Chassis_2611.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
 
+  <!-- Light door, with the chamber window baked back in. The CAD Light Version
+       export welded all 32 primitives into ONE primitive with ZERO materials,
+       so the glass pane stopped existing as separable geometry and the door
+       rendered as a solid slab: you could no longer see into the chamber with
+       the door closed. The window GEOMETRY survived, it just lost its material,
+       so scratchpad/bake_door_glass.py splits those 1048 triangles into their
+       own primitive with a transmissive green material (the original pane's
+       colour). tuneMaterial turns that into a cheap alpha-blended pane, exactly
+       as it did for the original door. RE-RUN THAT SCRIPT after any fresh CAD
+       export of Front Door_light.glb, or the window goes solid again. -->
   <link name="front_door_link">
     <visual>
       <origin xyz="-0.0002 -0.0011 0" rpy="1.570796 0 -3.141593"/>
       <geometry>
-        <mesh filename="Front Door_2210.glb" scale="1 1 1"/>
+        <mesh filename="Front Door_2611.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -26,7 +36,7 @@
     <visual>
       <origin xyz="0 0 0.0017" rpy="1.570796 0 -3.141593"/>
       <geometry>
-        <mesh filename="Spools Door_2210.glb" scale="1 1 1"/>
+        <mesh filename="Spools Door_2611.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -35,7 +45,7 @@
     <visual>
       <origin xyz="0.0006 0 0.0002" rpy="-3.141593 0 -3.141593"/>
       <geometry>
-        <mesh filename="Top Cover_2210.glb" scale="1 1 1"/>
+        <mesh filename="Top Cover_2611.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -44,7 +54,7 @@
     <visual>
       <origin xyz="0 -0.0047 0" rpy="1.570796 0 -3.141593"/>
       <geometry>
-        <mesh filename="Gas Spring Main Part_2210.glb" scale="1 1 1"/>
+        <mesh filename="Gas Spring Main Part_2611.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -53,7 +63,7 @@
     <visual>
       <origin xyz="0 -0.0047 0" rpy="1.570796 0 -3.141593"/>
       <geometry>
-        <mesh filename="Gas Spring Main Part_2210.glb" scale="1 1 1"/>
+        <mesh filename="Gas Spring Main Part_2611.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -62,7 +72,7 @@
     <visual>
       <origin xyz="0 0.0068 0" rpy="1.570796 0 -3.141593"/>
       <geometry>
-        <mesh filename="Gas Spring Secondary Part_2210.glb" scale="1 1 1"/>
+        <mesh filename="Gas Spring Secondary Part_2611.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -71,7 +81,7 @@
     <visual>
       <origin xyz="0 0.0068 0" rpy="1.570796 0 -3.141593"/>
       <geometry>
-        <mesh filename="Gas Spring Secondary Part_2210.glb" scale="1 1 1"/>
+        <mesh filename="Gas Spring Secondary Part_2611.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -80,7 +90,7 @@
     <visual>
       <origin xyz="0.0667 0.0325 0.0152" rpy="-3.141593 0 -1.570796"/>
       <geometry>
-        <mesh filename="Palpador PRO.glb" scale="1 1 1"/>
+        <mesh filename="Palpador PRO_2611.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -89,7 +99,7 @@
     <visual>
       <origin xyz="1e-05 7e-05 -0.00028" rpy="-3.141593 0.0 -3.141593"/>
       <geometry>
-        <mesh filename="Wire Drum Door_2210.glb" scale="1 1 1"/>
+        <mesh filename="Wire Drum Door_2611.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -98,7 +108,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 3.141593 0"/>
       <geometry>
-        <mesh filename="Wire Drum_2210.glb" scale="1 1 1"/>
+        <mesh filename="Wire Drum_2611.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -107,7 +117,7 @@
     <visual>
       <origin xyz="-0.002 0.009 0.0001" rpy="1.570796 0 -3.141593"/>
       <geometry>
-        <mesh filename="Handle_2210.glb" scale="1 1 1"/>
+        <mesh filename="Handle_2611.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -118,7 +128,7 @@
     <visual>
       <origin xyz="-0.0007 0.0007 -0.0001" rpy="-3.141593 0 -3.141593"/>
       <geometry>
-        <mesh filename="User Step.glb" scale="1 1 1"/>
+        <mesh filename="User Step_2611.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -127,7 +137,7 @@
     <visual>
       <origin xyz="-0.3066 -0.1623 0.1094" rpy="1.570796 0 1.570796"/>
       <geometry>
-        <mesh filename="Z axis.glb" scale="1 1 1"/>
+        <mesh filename="Z axis_2611.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -136,7 +146,7 @@
     <visual>
       <origin xyz="0.0002 0 -0.0013" rpy="1.570796 0 -3.141593"/>
       <geometry>
-        <mesh filename="Eje X.glb" scale="1 1 1"/>
+        <mesh filename="Eje X_2611.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -145,7 +155,7 @@
     <visual>
       <origin xyz="0.5851 0.3988 -0.1768" rpy="1.570796 0 1.570796"/>
       <geometry>
-        <mesh filename="Eje Y.glb" scale="1 1 1"/>
+        <mesh filename="Eje Y_2611.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -154,7 +164,7 @@
     <visual>
       <origin xyz="-0.102 0.0001 -0.0001" rpy="1.570796 0 0"/>
       <geometry>
-        <mesh filename="Spool Cooper.glb" scale="1 1 1"/>
+        <mesh filename="Spool Cooper_2611.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -163,7 +173,7 @@
     <visual>
       <origin xyz="-0.102 0.0001 -0.0001" rpy="1.570796 0 0"/>
       <geometry>
-        <mesh filename="Spool Stainless Steel.glb" scale="1 1 1"/>
+        <mesh filename="Spool Stainless Steel_2611.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -172,7 +182,7 @@
     <visual>
       <origin xyz="0 0.0005 0.0001" rpy="1.570796 0 -3.141593"/>
       <geometry>
-        <mesh filename="Display_2210.glb" scale="1 1 1"/>
+        <mesh filename="Display_2611.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -181,7 +191,7 @@
     <visual>
       <origin xyz="-0.0001 -0.0101 0" rpy="1.570796 0 -3.141593"/>
       <geometry>
-        <mesh filename="Head.glb" scale="1 1 1"/>
+        <mesh filename="Head_2611.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -190,7 +200,7 @@
     <visual>
       <origin xyz="0.0764 0.0037 0.059" rpy="3.141593 1.570796 0"/>
       <geometry>
-        <mesh filename="Feeder.glb" scale="1 1 1"/>
+        <mesh filename="Feeder_2611.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -199,7 +209,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="-3.141593 0 -3.141593"/>
       <geometry>
-        <mesh filename="Central Feeder Wheel.glb" scale="1 1 1"/>
+        <mesh filename="Central Feeder Wheel_2611.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -208,7 +218,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="-3.141593 0 -3.141593"/>
       <geometry>
-        <mesh filename="Left Feeder Wheel.glb" scale="1 1 1"/>
+        <mesh filename="Central Feeder Wheel_2611.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -217,7 +227,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="-3.141593 0 -3.141593"/>
       <geometry>
-        <mesh filename="Right Feeder Wheel.glb" scale="1 1 1"/>
+        <mesh filename="Central Feeder Wheel_2611.glb" scale="1 1 1"/>
       </geometry>
     </visual>
   </link>
@@ -228,12 +238,14 @@
   <!-- Parent reference: X=515 mm, Y=162.25 mm, Z=-546 mm -->
   <!-- Child reference:  X=0 mm,   Y=0 mm,      Z=0 mm -->
   <!-- Revolute about Y axis, limits 0 to 120 degrees -->
+  <!-- Front door swing: 135 deg (was 120) so the open chamber reads more
+       clearly in the viewer — Maksim, 2026-09-16. -->
   <joint name="front_door_joint" type="revolute">
     <parent link="chassis_link"/>
     <child link="front_door_link"/>
     <origin xyz="0.515 0.16225 -0.546" rpy="0 0 0"/>
     <axis xyz="0 -1 0"/>
-    <limit lower="0" upper="2.0943951023931953" effort="1000" velocity="1.0"/>
+    <limit lower="0" upper="2.356194490192345" effort="1000" velocity="1.0"/>
   </joint>
 
   <!-- Chassis -> Spools Door -->

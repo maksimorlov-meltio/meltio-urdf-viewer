@@ -4,7 +4,7 @@
   "totals": {
     "modules": 28,
     "domIds": 216,
-    "assemblyDomIds": 125,
+    "assemblyDomIds": 126,
     "globals": 8
   },
   "domIds": [
@@ -337,6 +337,7 @@
     "quickFrontDoorToggle",
     "reloadModel",
     "resetView",
+    "resetViewFab",
     "scene",
     "slicerLoadToViewer",
     "startPrintPreviewBar",
@@ -603,6 +604,7 @@
         "SPOOL_HIGHLIGHT_DURATION_MS",
         "clamp",
         "closeFilesOnOpen",
+        "closeMaterialsFromPopup",
         "escapeHtml",
         "feederFeedType",
         "getActiveSpoolHighlightKey",
