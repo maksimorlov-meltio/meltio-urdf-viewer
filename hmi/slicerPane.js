@@ -62,6 +62,11 @@ export function createSlicerPaneUi({
   // is the "prepare a slice" phase; "Load to viewer" leaves it and drops the
   // part into the 3D scene.
   let isFullscreen = false;
+  // True while the pane was opened by the bottom-nav Files button itself (not
+  // from inside the Files list). The Files button is a plain toggle of THIS
+  // pane: pressed = the slicer takes the view, unpressed = it goes away. The
+  // local file list is not involved and no door or camera moves.
+  let openedFromNav = false;
 
   function showFallback(message) {
     if (frameEl) {
@@ -340,15 +345,17 @@ export function createSlicerPaneUi({
     return true;
   }
 
-  // Platform mode: pressing Files IS the hand-off. The host calls this right
-  // after opening the Files menu; in platform mode the pane takes the full view
-  // with the platform slicer (its own part picker lists the org's parts) and
-  // the local file list waits behind the pane's close button. Returns whether
-  // it took over, so legacy mode is untouched.
-  function openForFilesMenu() {
-    if (embedMode !== "platform") {
+  // The bottom-nav Files button: a pure toggle of the slicer pane. Pressed →
+  // the pane takes the full view and frames whatever slicer the backend
+  // reports (the Meltio platform slicer in platform mode, the fallback text
+  // when none is configured); pressed again → it closes. Nothing else: no
+  // local file list, no door, no camera move. Returns the new open state.
+  function toggleFromNav() {
+    if (isMenuOpen) {
+      setMenuOpen(false);
       return false;
     }
+    openedFromNav = true;
     setMenuOpen(true);
     refreshEmbed().catch(() => {});
     return isMenuOpen;
@@ -440,7 +447,11 @@ export function createSlicerPaneUi({
     // The slicer flyout makes sense while the Files menu is open OR while a
     // print is docked (where it's the upward Slicer-button flyout of print
     // controls).
-    isMenuOpen = Boolean(isOpen) && (isCloudModelMenuOpen() || filesListCollapsedForPrint);
+    isMenuOpen = Boolean(isOpen)
+      && (openedFromNav || isCloudModelMenuOpen() || filesListCollapsedForPrint);
+    if (!isMenuOpen) {
+      openedFromNav = false;
+    }
     if (paneEl) {
       paneEl.hidden = !isMenuOpen;
       paneEl.setAttribute("aria-hidden", isMenuOpen ? "false" : "true");
@@ -461,7 +472,7 @@ export function createSlicerPaneUi({
     // lookup, its aria-expanded update and its click listener were dead code
     // hidden inside the host, where tools/check_dead_lookups.mjs does not
     // reach; moving the domain into hmi/ is what surfaced them.
-    if (isMenuOpen && !filesListCollapsedForPrint) {
+    if (isMenuOpen && !filesListCollapsedForPrint && !openedFromNav) {
       positionMenu();
     } else if (isMenuOpen && filesListCollapsedForPrint) {
       positionMenuDocked();
@@ -520,7 +531,8 @@ export function createSlicerPaneUi({
     refreshEmbed,
     loadStatus,
     loadPlatformPartForFile,
-    openForFilesMenu,
+    toggleFromNav,
+    isOpenedFromNav: () => openedFromNav,
     handleFrameMessage,
     getMode: () => embedMode,
     getLastPlatformSlice: () => lastPlatformSlice,

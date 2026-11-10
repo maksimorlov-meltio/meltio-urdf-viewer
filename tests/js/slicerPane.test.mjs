@@ -408,32 +408,52 @@ test("legacy status without a mode keeps the dock=1 embed", async () => {
   assert.match(el("slicerFrame").getAttribute("src"), /^\/slicer\?dock=1/);
 });
 
-test("in platform mode, opening Files hands off to the platform slicer at once", async () => {
-  reset({ cloudOpen: true });
+test("the Files button is a pure toggle of the pane: open takes the view, press again closes", async () => {
+  // No Files list is involved: the pane must open with the cloud menu CLOSED.
+  reset({ cloudOpen: false });
   globalThis.fetch = async (url) => {
     if (url === "/api/slicer/status") return platformStatus();
     throw new Error(`unexpected fetch ${url}`);
   };
   await pane.loadStatus({ force: true });
 
-  assert.equal(pane.openForFilesMenu(), true);
+  assert.equal(pane.toggleFromNav(), true);
+  assert.equal(pane.isOpenedFromNav(), true);
   assert.equal(pane.isMenuOpen(), true);
-  assert.equal(pane.isFullscreen(), true, "Files IS the hand-off: the slicer takes the view");
+  assert.equal(pane.isFullscreen(), true, "pressed: the platform slicer takes the view");
+  assert.equal(el("slicerPane").style.left, "", "never anchored to the (closed) Files popup");
   await tick(); await tick();
-  assert.match(el("slicerFrame").getAttribute("src"), /^\/slicer\/\?embed=1/,
-    "the platform slicer (with its own part picker) is framed without waiting for a row");
+  assert.match(el("slicerFrame").getAttribute("src"), /^\/slicer\/\?embed=1/);
 
-  // ...and the pane's close button is the way back to the local file list.
-  pane.setMenuOpen(false);
+  assert.equal(pane.toggleFromNav(), false, "pressed again: it goes away");
+  assert.equal(pane.isOpenedFromNav(), false);
+  assert.equal(pane.isMenuOpen(), false);
   assert.equal(pane.isFullscreen(), false);
+  assert.equal(el("slicerFrame").getAttribute("src"), "about:blank");
 });
 
-test("in legacy mode, opening Files does NOT auto-open the slicer", async () => {
-  reset({ cloudOpen: true });
-  globalThis.fetch = async () => ({ ok: true, json: async () => ({ configured: true, url: "/slicer" }) });
+test("the pane's own close button also releases the Files button", async () => {
+  reset({ cloudOpen: false });
+  globalThis.fetch = async () => platformStatus();
   await pane.loadStatus({ force: true });
-  assert.equal(pane.openForFilesMenu(), false);
-  assert.equal(pane.isMenuOpen(), false, "the Files list opens as it always did");
+  pane.toggleFromNav();
+  assert.equal(pane.isOpenedFromNav(), true);
+
+  el("slicerMenuClose").click();
+  assert.equal(pane.isMenuOpen(), false);
+  assert.equal(pane.isOpenedFromNav(), false, "the nav button must read unpressed again");
+  assert.ok(calls.includes("bottomNav"), "the bottom nav is told to re-evaluate");
+});
+
+test("without a configured slicer the toggle still opens and shows the fallback text", async () => {
+  reset({ cloudOpen: false });
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ configured: false }) });
+  await pane.loadStatus({ force: true });
+  assert.equal(pane.toggleFromNav(), true);
+  await tick(); await tick();
+  assert.equal(el("slicerFallback").hidden, false);
+  assert.match(el("slicerFallback").textContent, /AVIS_PLATFORM_URL/);
+  pane.toggleFromNav();
 });
 
 test("in platform mode, Load to slicer does not warm the legacy slice or badge 'slicing'", async () => {

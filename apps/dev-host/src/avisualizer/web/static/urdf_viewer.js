@@ -4949,10 +4949,9 @@ function setCloudModelMenuOpen(isOpen, options = {}) {
   if (isCloudModelMenuOpen) {
     applyFilesMenuOpenDoorAndCameraBehavior();
     // The embedded full slicer loads lazily when the operator opens it from the
-    // Slicer flyout (see setSlicerEmbedOpen), not eagerly on every Files open -
-    // EXCEPT in platform mode, where Files is the hand-off to the Meltio
-    // platform slicer and the pane takes over at once (hmi/slicerPane.js).
-    slicerPaneUi.openForFilesMenu();
+    // Slicer flyout (see setSlicerEmbedOpen), not eagerly on every list open.
+    // The bottom-nav Files button no longer opens this list at all: it toggles
+    // the slicer pane directly (runBottomNavFilesToggleAction).
     window.requestAnimationFrame(() => {
       syncCloudModelPopupVerticalGap();
     });
@@ -10514,7 +10513,7 @@ function updateBottomNavState() {
   if (navFilesToggleEl) {
     const navFilesIconEl = navFilesToggleEl.querySelector("svg");
     const navFilesLabelEl = navFilesToggleEl.querySelector("span");
-    const isFilesModeActive = isCloudModelMenuOpen;
+    const isFilesModeActive = isCloudModelMenuOpen || slicerPaneUi.isOpenedFromNav();
 
     // Hidden while a print is docked (the bar becomes Stop/Pause/Slicer).
     navFilesToggleEl.hidden = dockedPrint;
@@ -10800,30 +10799,26 @@ function runBottomNavFilesToggleAction() {
     showPrintNotice("Stop the print to open Files.");
     return false;
   }
-  // If the list was collapsed after a slice (part revealed), tapping Files just
-  // brings the list back — it does not close the menu.
-  if (isCloudModelMenuOpen && filesListCollapsedForPrint) {
-    expandFilesListForPrint();
-    updateBottomNavState();
-    return true;
-  }
-
-  const nextIsOpen = !isCloudModelMenuOpen;
-  if (!nextIsOpen) {
-    closeFilesMenuAndResetView({ gentle: true });
+  // The Files button is a plain toggle of the slicer pane (hmi/slicerPane.js):
+  // pressed = the Meltio platform slicer takes the view, unpressed = it goes
+  // away. It no longer opens the local file list, moves the camera or the
+  // door; the pressed state (and the icon's fan animation off aria-pressed) is
+  // the whole of its own behaviour. The local list is still reachable from
+  // inside the app (cloudModelMenuOpenEl), not from this button.
+  if (slicerPaneUi.isOpenedFromNav()) {
+    slicerPaneUi.toggleFromNav();
     return false;
   }
-
-  if (nextIsOpen && isControlsPanelOpen) {
+  if (isControlsPanelOpen) {
     setControlsPanelOpen(false);
   }
-
-  if (nextIsOpen && isMaterialsMenuOpen) {
+  if (isMaterialsMenuOpen) {
     setMaterialsMenuOpen(false, { skipBottomNavUpdate: true });
   }
-
-  setCloudModelMenuOpen(nextIsOpen);
-  return nextIsOpen;
+  if (isCloudModelMenuOpen) {
+    setCloudModelMenuOpen(false, { skipResetOnClose: true });
+  }
+  return slicerPaneUi.toggleFromNav();
 }
 
 // Read-only performance snapshot for diagnosing lag on a given machine:

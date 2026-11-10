@@ -58,9 +58,9 @@ Two independent local services, glued at runtime:
 - The live-machine link is **off by default**. Add `?machine=1` to the URL to
   enable it; otherwise the scene runs against a mock machine state.
 - **Platform mode (optional).** Set `AVIS_PLATFORM_URL` (plus
-  `AVIS_PLATFORM_TOKEN` or `AVIS_PLATFORM_DEV_EMAIL`) and **Files** embeds the
-  *current* Meltio platform slicer instead of the vendored one: the viewer
-  reverse-proxies it same-origin and hands STL files over as platform parts.
+  `AVIS_PLATFORM_TOKEN` or `AVIS_PLATFORM_DEV_EMAIL`) and the **Files** toggle
+  shows the *current* Meltio platform slicer instead of the vendored one: the
+  viewer reverse-proxies it same-origin and can hand STL files over as parts.
   The local `:8765` slicer is then not needed. Analysis, env table and the
   parts not yet bridged (print simulation from a platform slice):
   [`docs/platform-slicer-integration.md`](docs/platform-slicer-integration.md).
@@ -98,8 +98,11 @@ underline, like the bottom navigation.
 - **Materials** opens per-feeder loading: Feeder 1 and 2, spool or drum feed
   chosen with two icon buttons, material picked from a design-system listbox,
   load and unload, amount loaded.
-- **Files** browses and slices STL files, then **Start print** docks the job.
-  During a docked print the bar becomes **Stop / Pause / Slicer**.
+- **Files** is a toggle for the Meltio platform slicer: pressed, the slicer
+  takes the view; pressed again, it goes away. It does nothing else. (The local
+  STL list and **Start print** docking remain in the app for the legacy flow
+  but are no longer behind this button.) During a docked print the bar becomes
+  **Stop / Pause / Slicer**.
 
 **Controls · Move.** Permission-gated jog panel: X/Y/Z jog with a smooth glide,
 Home XY, Home Z, and a palpador deploy/retract toggle.

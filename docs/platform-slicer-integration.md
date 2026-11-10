@@ -107,24 +107,28 @@ Routes (all in `apps/dev-host/src/avisualizer/web/app.py`, recorded in `contract
 | `POST /api/slice/proxy` | 503 (no sync-JSON slice exists any more → client's clip-plane fallback) | legacy (unchanged) |
 
 Frontend (`hmi/slicerPane.js`, `hmi/fileLibrary.js`): the pane learns the mode
-from `/api/slicer/status` at creation. In platform mode **pressing Files is the
-hand-off**: the pane takes the full view with `/slicer/?embed=1` at once (the
-platform slicer's own part picker lists the org's parts), and the pane's close
-button returns to the local file list. From that list, **Load to slicer** first
-POSTs `part-from-file` and then frames `/slicer/?embed=1&part=<id>`; the
-slicer's `slice-saved` (sender-checked: `event.source === iframe.contentWindow`
-**and** same origin) badges the Files row **"Saved to platform"**. The host
-`urdf_viewer.js` changes by one call (`slicerPaneUi.openForFilesMenu()` when the
-Files menu opens); everything else lives in `hmi/`.
+from `/api/slicer/status` at creation. **The Files button is now a pure toggle
+of the slicer pane** — pressed, the pane takes the full view with
+`/slicer/?embed=1` (the platform slicer's own part picker lists the org's
+parts); pressed again, or the pane's X, it goes away. The button no longer
+opens the local file list, opens the front door or moves the camera; its own
+behaviour is the pressed state and the icon's fan animation that CSS drives
+off `aria-pressed`. With no slicer configured the pane shows its fallback text.
+The local STL list (`hmi/fileLibrary.js`) is still in the app for the legacy
+print flow but is not reachable from the Files button; from that list, **Load
+to slicer** POSTs `part-from-file` and frames `/slicer/?embed=1&part=<id>`,
+and the slicer's `slice-saved` (sender-checked: `event.source ===
+iframe.contentWindow` **and** same origin) badges the row **"Saved to
+platform"**. Host changes in `urdf_viewer.js`: the Files toggle action and the
+nav pressed-state read the pane; everything else lives in `hmi/`.
 
-The Files flow in platform mode:
+The Files flow:
 
 ```
-operator taps Files
-  → slicer pane fullscreen: iframe /slicer/?embed=1   (platform slicer, own part picker)
-  → close (X) → the HMI's local/USB file list
+operator taps Files            → pane fullscreen: iframe /slicer/?embed=1 (platform slicer)
+operator taps Files again / X  → pane closes, button unpressed, scene as it was
 
-operator taps a row's "Load to slicer"
+(legacy list, not on the Files button) a row's "Load to slicer"
   → viewer POST /api/slicer/part-from-file {name}
       → viewer backend POST <platform>/api/parts (multipart, Bearer token)   ← HMI identity
       ← {id} (or 409 → reuse candidate)
@@ -242,11 +246,12 @@ Done on this branch (2026-11-10):
 * **Flag on, in a browser (Chromium against the fake platform, DOM-level):**
   Files → slicer pane fullscreen framing `/slicer/?embed=1` (the frame's own
   relative `api/health` and absolute `/api/me` resolved through the proxy, same
-  origin); close → local list; close + reopen Files → framed again; a row's Load
-  to slicer → `/slicer/?embed=1&part=<id>` after the real multipart upload; a
-  `slice-saved` from the frame → row badge "Saved to platform", still there
-  seconds later. Driven with programmatic clicks and read from the DOM in a
-  hidden pane — **not inspected visually**.
+  origin), button pressed; Files again → pane closed, button unpressed, no file
+  list, door or camera change; the pane's X does the same; a row's Load to
+  slicer (from the legacy list) → `/slicer/?embed=1&part=<id>` after the real
+  multipart upload; a `slice-saved` from the frame → row badge "Saved to
+  platform". Driven with programmatic clicks and read from the DOM in a hidden
+  pane — **not inspected visually**.
 * **Flag on, compression and large bodies over real HTTP:** a 356 000-byte
   bundle file fetched through the viewer is byte-identical to a direct fetch both
   as identity and as gzip (upstream's 11 521 compressed bytes passed through with
