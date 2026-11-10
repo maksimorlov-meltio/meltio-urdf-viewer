@@ -198,7 +198,12 @@ operator taps a row's "Load to slicer"
    (`docker compose … -f` override with `"8091:8090"`) or move the viewer.
 5. **HMI layout.** `?embed=1` hides the platform header but the slicer's
    workspace is a desktop 240 px-rail layout; on the 1080 × 1920 portrait panel
-   it will be cramped until Lukas ships an HMI/dock variant (§6).
+   it will be cramped until Lukas ships an HMI/dock variant (§6). Nothing in
+   this branch has been looked at visually on the panel.
+6. **WebSockets are not proxied.** The platform's live print monitor and the
+   remote pixel-streaming render speak WebSocket; the proxy forwards HTTP only,
+   so those surfaces of the embedded slicer will not work until a WS pass-through
+   is added (same allow-list idea, `/slicer/ws/*` only).
 
 ## 6. Asks for Lukas (platform side)
 
@@ -234,10 +239,23 @@ Done on this branch (2026-11-10):
   `/api/me`, `/api/parts`, `/api/slicer/profiles` forwarded with the Bearer
   token and `X-Slicer-Session`, cookie stripped, `X-Org-Id` defaulted; denied
   paths 404 without reaching upstream; `check_boot` clean in platform mode.
-* **Flag on, in a browser (headless Chrome against the fake platform):** Files →
-  slicer pane fullscreen framing `/slicer/?embed=1`; close → local list; a row's
-  Load to slicer → `/slicer/?embed=1&part=<id>` after the real multipart upload;
-  a `slice-saved` from the frame → row badge "Saved to platform".
+* **Flag on, in a browser (Chromium against the fake platform, DOM-level):**
+  Files → slicer pane fullscreen framing `/slicer/?embed=1` (the frame's own
+  relative `api/health` and absolute `/api/me` resolved through the proxy, same
+  origin); close → local list; close + reopen Files → framed again; a row's Load
+  to slicer → `/slicer/?embed=1&part=<id>` after the real multipart upload; a
+  `slice-saved` from the frame → row badge "Saved to platform", still there
+  seconds later. Driven with programmatic clicks and read from the DOM in a
+  hidden pane — **not inspected visually**.
+* **Flag on, compression and large bodies over real HTTP:** a 356 000-byte
+  bundle file fetched through the viewer is byte-identical to a direct fetch both
+  as identity and as gzip (upstream's 11 521 compressed bytes passed through with
+  `Content-Encoding: gzip`, not re-encoded); a 12 MB `POST /slicer/api/load`
+  streamed through the viewer arrived upstream with the same SHA-256 and its
+  `Content-Length` intact (no chunked re-encoding), in 0.16 s.
+* **Legacy mode after the pane changes** is covered by the unit tests and the
+  no-slicer boot only; the vendored slicer was not driven end to end again (the
+  two slicer smoke journeys skip without its venv).
 
 **Not verified: a live Meltio platform.** No Docker on this machine and no
 token; the platform's auth, 409 body and framing headers are asserted from its
