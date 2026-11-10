@@ -229,9 +229,13 @@ export function createSlicerPaneUi({
         }
       } else {
         // Leaving full view: stop the slicer iframe so it isn't polling in the
-        // background, and hide its area.
+        // background, and hide its area. The embed is no longer "ready" once
+        // its frame is blank - without this the next refreshEmbed() would
+        // short-circuit on the stale state and platform mode would reopen
+        // Files onto an empty frame.
         frameEl.src = "about:blank";
         frameEl.hidden = true;
+        embedState = "idle";
         if (embedWrapEl) {
           embedWrapEl.hidden = true;
         }
@@ -334,6 +338,20 @@ export function createSlicerPaneUi({
       setCloudFileRowSliceStatus(fileName, "saved");
     }
     return true;
+  }
+
+  // Platform mode: pressing Files IS the hand-off. The host calls this right
+  // after opening the Files menu; in platform mode the pane takes the full view
+  // with the platform slicer (its own part picker lists the org's parts) and
+  // the local file list waits behind the pane's close button. Returns whether
+  // it took over, so legacy mode is untouched.
+  function openForFilesMenu() {
+    if (embedMode !== "platform") {
+      return false;
+    }
+    setMenuOpen(true);
+    refreshEmbed().catch(() => {});
+    return isMenuOpen;
   }
 
   // "Load to slicer" from a Files-list row: open the full slicer (all its tools)
@@ -493,6 +511,7 @@ export function createSlicerPaneUi({
     refreshEmbed,
     loadStatus,
     loadPlatformPartForFile,
+    openForFilesMenu,
     handleFrameMessage,
     getMode: () => embedMode,
     getLastPlatformSlice: () => lastPlatformSlice,

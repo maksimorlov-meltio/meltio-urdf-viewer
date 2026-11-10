@@ -407,3 +407,31 @@ test("legacy status without a mode keeps the dock=1 embed", async () => {
   await pane.refreshEmbed({ force: true });
   assert.match(el("slicerFrame").getAttribute("src"), /^\/slicer\?dock=1/);
 });
+
+test("in platform mode, opening Files hands off to the platform slicer at once", async () => {
+  reset({ cloudOpen: true });
+  globalThis.fetch = async (url) => {
+    if (url === "/api/slicer/status") return platformStatus();
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  await pane.loadStatus({ force: true });
+
+  assert.equal(pane.openForFilesMenu(), true);
+  assert.equal(pane.isMenuOpen(), true);
+  assert.equal(pane.isFullscreen(), true, "Files IS the hand-off: the slicer takes the view");
+  await tick(); await tick();
+  assert.match(el("slicerFrame").getAttribute("src"), /^\/slicer\/\?embed=1/,
+    "the platform slicer (with its own part picker) is framed without waiting for a row");
+
+  // ...and the pane's close button is the way back to the local file list.
+  pane.setMenuOpen(false);
+  assert.equal(pane.isFullscreen(), false);
+});
+
+test("in legacy mode, opening Files does NOT auto-open the slicer", async () => {
+  reset({ cloudOpen: true });
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ configured: true, url: "/slicer" }) });
+  await pane.loadStatus({ force: true });
+  assert.equal(pane.openForFilesMenu(), false);
+  assert.equal(pane.isMenuOpen(), false, "the Files list opens as it always did");
+});

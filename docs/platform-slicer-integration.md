@@ -77,9 +77,13 @@ Two consequences follow directly:
 
 ## 3. What this branch implements (phase 1)
 
-**Off by default.** With `AVIS_PLATFORM_URL` unset the app is byte-for-byte the
-same behaviour (footprint-checked, §7); the legacy `AVIS_SLICER_URL` embed keeps
-working. When set, platform mode wins.
+**Off by default.** With `AVIS_PLATFORM_URL` unset the app boots to the same DOM
+footprint as `main` (§7) and the legacy `AVIS_SLICER_URL` embed keeps working.
+What does change with the flag off: `/api/slicer/status` carries two extra
+fields (`mode`, `embedQuery`), the "slicer not connected" text also names
+`AVIS_PLATFORM_URL`, the CSS cache-buster moved, and the route table grew (the
+new routes answer 404 — or 405 for a wrong method on an existing route, exactly
+as before). When set, platform mode wins over the legacy embed.
 
 | Env | Meaning |
 |---|---|
@@ -103,16 +107,24 @@ Routes (all in `apps/dev-host/src/avisualizer/web/app.py`, recorded in `contract
 | `POST /api/slice/proxy` | 503 (no sync-JSON slice exists any more → client's clip-plane fallback) | legacy (unchanged) |
 
 Frontend (`hmi/slicerPane.js`, `hmi/fileLibrary.js`): the pane learns the mode
-from `/api/slicer/status` at creation; in platform mode the frame is
-`/slicer/?embed=1`, **Load to slicer** first POSTs `part-from-file` and then
-frames `/slicer/?embed=1&part=<id>`; the slicer's `slice-saved` (sender-checked:
-`event.source === iframe.contentWindow` **and** same origin) badges the Files row
-**"Saved to platform"**. The host `urdf_viewer.js` is untouched.
+from `/api/slicer/status` at creation. In platform mode **pressing Files is the
+hand-off**: the pane takes the full view with `/slicer/?embed=1` at once (the
+platform slicer's own part picker lists the org's parts), and the pane's close
+button returns to the local file list. From that list, **Load to slicer** first
+POSTs `part-from-file` and then frames `/slicer/?embed=1&part=<id>`; the
+slicer's `slice-saved` (sender-checked: `event.source === iframe.contentWindow`
+**and** same origin) badges the Files row **"Saved to platform"**. The host
+`urdf_viewer.js` changes by one call (`slicerPaneUi.openForFilesMenu()` when the
+Files menu opens); everything else lives in `hmi/`.
 
 The Files flow in platform mode:
 
 ```
-operator taps Files → row "Load to slicer"
+operator taps Files
+  → slicer pane fullscreen: iframe /slicer/?embed=1   (platform slicer, own part picker)
+  → close (X) → the HMI's local/USB file list
+
+operator taps a row's "Load to slicer"
   → viewer POST /api/slicer/part-from-file {name}
       → viewer backend POST <platform>/api/parts (multipart, Bearer token)   ← HMI identity
       ← {id} (or 409 → reuse candidate)
@@ -146,6 +158,21 @@ operator taps Files → row "Load to slicer"
 * **Streaming, not buffering.** Slices are tens of MB; bodies stream both ways,
   `Content-Length` is preserved (the platform's upload cap relies on it),
   hop-by-hop headers are dropped, upstream `Location` is rewritten onto our origin.
+* **Paths are judged as sent.** The allow-list and the upstream URL both use
+  the raw, still-encoded path, and any segment that decodes to `.`/`..` or hides
+  a separator (`%2f`, `%5c`, NUL) is refused before the allow-list runs.
+  Otherwise `/api/parts/%2e%2e/printers/p1/commands` passes the parts rule and
+  httpx collapses it to the printer-command route upstream (found and pinned by
+  `test_dot_segments_and_hidden_separators_never_reach_the_platform`).
+* **No viewer-side authentication on the proxy routes.** Anyone who can reach
+  the viewer acts as the HMI's platform token. That is the same trust the
+  console already extends to its LAN (its sign-in is a convenience, see
+  CLAUDE.md), but it means: in platform mode keep the viewer bound to
+  localhost / the kiosk, never on an open interface.
+* **Standalone upstream (`AVIS_PLATFORM_SLICER_PREFIX=""`)** maps `/slicer/api/*`
+  onto the upstream's `/api/*` — the offline bundle's slicer-plus-local-routes,
+  which has no printers, devices or admin. The `/api/*` allow-list still applies
+  to the slicer frontend's absolute calls.
 * **Routes exist regardless of env** so `contract-http.json` is deterministic.
   Note for the C# host: these routes are now part of the published contract.
 
@@ -191,10 +218,14 @@ operator taps Files → row "Load to slicer"
 
 Done on this branch (2026-11-10):
 
-* `pytest apps/dev-host/tests`: 151 passed (50 new in `tests/web/test_platform_proxy.py`
-  against a fake platform on `httpx.MockTransport`).
-* `node --test tests/js`: 231 passed (6 new platform-mode tests in
-  `slicerPane.test.mjs`, 1 badge test in `fileLibrary.test.mjs`); eslint 0 errors.
+* `pytest apps/dev-host/tests`: 162 passed (61 new in `tests/web/test_platform_proxy.py`
+  against a fake platform on `httpx.MockTransport`); `pytest tests/smoke` viewer-only mode.
+* `node --test tests/js`: 233 passed (8 new platform-mode tests in
+  `slicerPane.test.mjs`, 1 badge test in `fileLibrary.test.mjs`); eslint 0 errors;
+  `bash gate.sh` all nine gates green.
+* Mutation-verified (each change broken on purpose, its test died, code
+  restored): allow-list, token injection, cookie stripping, dot-segment guard,
+  iframe sender check, platform branch of Load to slicer, badge state.
 * `contract-http.json` / `contract-dom.json` regenerated (41 routes).
 * **Flag off:** `tools/check_boot.mjs --expect-footprint` against a footprint
   captured from `main` — identical DOM footprint, 0 console errors.
@@ -203,6 +234,10 @@ Done on this branch (2026-11-10):
   `/api/me`, `/api/parts`, `/api/slicer/profiles` forwarded with the Bearer
   token and `X-Slicer-Session`, cookie stripped, `X-Org-Id` defaulted; denied
   paths 404 without reaching upstream; `check_boot` clean in platform mode.
+* **Flag on, in a browser (headless Chrome against the fake platform):** Files →
+  slicer pane fullscreen framing `/slicer/?embed=1`; close → local list; a row's
+  Load to slicer → `/slicer/?embed=1&part=<id>` after the real multipart upload;
+  a `slice-saved` from the frame → row badge "Saved to platform".
 
 **Not verified: a live Meltio platform.** No Docker on this machine and no
 token; the platform's auth, 409 body and framing headers are asserted from its

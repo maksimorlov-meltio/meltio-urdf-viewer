@@ -372,3 +372,60 @@ def test_part_from_file_surfaces_platform_refusals(
     assert "403" in response.json()["detail"]
 
     assert client.post("/api/slicer/part-from-file", json={}).status_code == 400
+
+
+# --- The path the allow-list judges is the path the platform routes ------------
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/parts/%2e%2e/printers/p1/commands",   # decodes to .., httpx would collapse it
+        "/api/parts/x%2fy",                           # an encoded slash hides a segment
+        "/api/parts/x%5cy",
+        "/api/parts/%2e/placement",
+        "/slicer/%2e%2e/api/admin/users",
+        "/slicer/..%2fapi%2fadmin",
+        "/slicer/api/%00",
+    ],
+)
+def test_dot_segments_and_hidden_separators_never_reach_the_platform(
+    configured: None, platform: FakePlatform, path: str,
+) -> None:
+    client = TestClient(app_module.create_app())
+    for method in ("GET", "POST"):
+        response = client.request(method, path)
+        assert response.status_code == 404, (method, path, response.status_code)
+    assert platform.requests == [], f"{path} was forwarded as {[str(r.url) for r in platform.requests]}"
+
+
+def test_the_raw_encoding_is_what_gets_forwarded(configured: None, platform: FakePlatform) -> None:
+    client = TestClient(app_module.create_app())
+    client.get("/slicer/api/hardware/plate%20screw/mesh?x=a%26b")
+    assert str(platform.last.url) == "http://platform.test/slicer/api/hardware/plate%20screw/mesh?x=a%26b"
+
+
+def test_wrong_methods_on_the_consoles_own_routes_stay_405(
+    unconfigured: None, platform: FakePlatform, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = TestClient(app_module.create_app())
+    response = client.post("/api/me")
+    assert response.status_code == 405
+    assert "GET" in response.headers["allow"]
+    assert client.delete("/api/permissions/config").status_code == 405
+    # ...with the flag on too: the catch-all never shadows a 405 with a forward.
+    monkeypatch.setenv("AVIS_PLATFORM_URL", "http://platform.test")
+    assert client.post("/api/me").status_code == 405
+    assert client.delete("/api/permissions/config").status_code == 405
+    assert platform.requests == []
+
+
+def test_part_upload_and_profiles_carry_the_default_org(
+    configured: None, platform: FakePlatform, stl_file: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AVIS_PLATFORM_ORG_ID", "org-default")
+    client = TestClient(app_module.create_app())
+    platform.respond = lambda req: httpx.Response(201, json={"id": "p1"})
+
+    client.post("/api/slicer/part-from-file", json={"name": "Bracket.stl"})
+    assert platform.last.headers["x-org-id"] == "org-default", \
+        "the part must land in the org the iframe will look in"

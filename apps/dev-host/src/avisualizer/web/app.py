@@ -14,6 +14,7 @@ import secrets
 import threading
 from typing import AsyncIterator, Literal
 import urllib.error
+import urllib.parse
 import urllib.request
 from urllib.parse import urlsplit
 
@@ -239,7 +240,12 @@ def _platform_slicer_prefix() -> str:
 
 
 def _platform_auth_headers() -> dict[str, str]:
-    """The identity the HMI presents to the platform. Server-side only."""
+    """The identity (and default org scope) the HMI presents to the platform.
+
+    Server-side only, and the ONE place it is assembled: the proxy, the part
+    upload and the profile lookup all go through here, so a part cannot land
+    in the token's home org while the iframe looks in AVIS_PLATFORM_ORG_ID.
+    """
     headers: dict[str, str] = {}
     token = os.environ.get("AVIS_PLATFORM_TOKEN", "").strip()
     if token:
@@ -247,7 +253,30 @@ def _platform_auth_headers() -> dict[str, str]:
     email = os.environ.get("AVIS_PLATFORM_DEV_EMAIL", "").strip()
     if email:
         headers["Cf-Access-Authenticated-User-Email"] = email
+    org = os.environ.get("AVIS_PLATFORM_ORG_ID", "").strip()
+    if org:
+        headers["X-Org-Id"] = org
     return headers
+
+
+def _platform_proxy_path(request: Request) -> str | None:
+    """The request path to forward, exactly as the browser encoded it - or None.
+
+    The allow-list and the upstream URL must see the SAME path the platform
+    will route. Two things break that if the decoded `{path:path}` parameter is
+    used: Starlette decodes `%2e%2e` to `..` and `%2f` to `/`, and httpx then
+    collapses dot segments, so `/api/parts/%2e%2e/printers/p1/commands` passes
+    the parts rule and reaches `/api/printers/p1/commands` upstream. So: work on
+    the RAW path, and refuse any segment that decodes to `.` or `..`, or that
+    hides a separator (`/`, `\\`, NUL) behind percent-encoding.
+    """
+    raw = request.scope.get("raw_path") or request.url.path.encode("utf-8")
+    path = raw.decode("latin-1") if isinstance(raw, bytes) else str(raw)
+    for segment in path.split("/"):
+        decoded = urllib.parse.unquote(segment)
+        if decoded in {".", ".."} or any(ch in decoded for ch in "/\\\x00"):
+            return None
+    return path
 
 
 _READ_METHODS = frozenset({"GET", "HEAD"})
@@ -324,10 +353,11 @@ async def _platform_forward(request: Request, upstream_path: str) -> Response:
         for key, value in request.headers.items()
         if key.lower() not in _REQUEST_DROP
     }
-    headers.update(_platform_auth_headers())
-    default_org = os.environ.get("AVIS_PLATFORM_ORG_ID", "").strip()
-    if default_org and "x-org-id" not in {k.lower() for k in headers}:
-        headers["X-Org-Id"] = default_org
+    identity = _platform_auth_headers()
+    if "x-org-id" in {k.lower() for k in headers}:
+        # The slicer frontend chose a workspace; the env value is only a default.
+        identity.pop("X-Org-Id", None)
+    headers.update(identity)
 
     has_body = request.method.upper() not in {"GET", "HEAD"} and (
         request.headers.get("content-length", "0") != "0"
@@ -1274,7 +1304,11 @@ def create_app() -> FastAPI:
         """
         if not _platform_base_url():
             raise HTTPException(status_code=404, detail="Not Found")
-        return await _platform_forward(request, f"{_platform_slicer_prefix()}/{path}")
+        raw_path = _platform_proxy_path(request)
+        if raw_path is None or not raw_path.startswith("/slicer/"):
+            raise HTTPException(status_code=404, detail="Not Found")
+        del path  # the decoded form is not what gets forwarded (see _platform_proxy_path)
+        return await _platform_forward(request, _platform_slicer_prefix() + raw_path[len("/slicer"):])
 
     @app.post("/api/slicer/part-from-file")
     async def slicer_part_from_file(payload: dict | None = Body(default=None)) -> dict:
@@ -1622,12 +1656,29 @@ def create_app() -> FastAPI:
     )
     async def platform_api_proxy(path: str, request: Request) -> Response:
         """Allow-listed same-origin proxy to the platform API the slicer frontend calls."""
+        # A wrong METHOD on one of the viewer's own routes used to be a 405 from
+        # the router; this catch-all would turn it into a 404. Keep the 405 (and
+        # its Allow header) so the flag changes nothing for the console's own API.
+        own_methods: set[str] = set()
+        for route in request.app.routes:
+            methods = getattr(route, "methods", None)
+            if not methods or getattr(route, "endpoint", None) is platform_api_proxy:
+                continue
+            if route.path_regex.match(request.url.path):
+                own_methods |= set(methods)
+        if own_methods:
+            raise HTTPException(
+                status_code=405,
+                detail="Method Not Allowed",
+                headers={"Allow": ", ".join(sorted(own_methods))},
+            )
         if not _platform_base_url():
             raise HTTPException(status_code=404, detail="Not Found")
-        full_path = f"/api/{path}"
-        if not _platform_api_allowed(request.method, full_path):
+        raw_path = _platform_proxy_path(request)
+        if raw_path is None or not _platform_api_allowed(request.method, raw_path):
             raise HTTPException(status_code=404, detail="Not Found")
-        return await _platform_forward(request, full_path)
+        del path  # the decoded form is not what gets forwarded (see _platform_proxy_path)
+        return await _platform_forward(request, raw_path)
 
     return app
 

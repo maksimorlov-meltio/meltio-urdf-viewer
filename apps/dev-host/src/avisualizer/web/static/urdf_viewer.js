@@ -4949,7 +4949,10 @@ function setCloudModelMenuOpen(isOpen, options = {}) {
   if (isCloudModelMenuOpen) {
     applyFilesMenuOpenDoorAndCameraBehavior();
     // The embedded full slicer loads lazily when the operator opens it from the
-    // Slicer flyout (see setSlicerEmbedOpen), not eagerly on every Files open.
+    // Slicer flyout (see setSlicerEmbedOpen), not eagerly on every Files open -
+    // EXCEPT in platform mode, where Files is the hand-off to the Meltio
+    // platform slicer and the pane takes over at once (hmi/slicerPane.js).
+    slicerPaneUi.openForFilesMenu();
     window.requestAnimationFrame(() => {
       syncCloudModelPopupVerticalGap();
     });
