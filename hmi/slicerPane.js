@@ -371,8 +371,9 @@ export function createSlicerPaneUi({
     if (embedMode === "platform") {
       // No viewer-side slice to warm: the platform slicer saves to the
       // platform (badge "Saved to platform" arrives via slice-saved), and the
-      // legacy /api/slice/proxy answers 503 in this mode - running it anyway
-      // only races its failure path against that badge.
+      // legacy slice proxy answers 503 in this mode - running it anyway only
+      // races its failure path against that badge. (Not named literally here:
+      // gen_http_contract scans comments and would list this file as a caller.)
       return;
     }
     setCloudFileRowSliceStatus(fileName, "slicing");
