@@ -522,10 +522,19 @@ export function applyCloudFileSliceBadge(badgeEl, status) {
   if (!badgeEl) {
     return;
   }
-  const normalized = status === "slicing" || status === "ready" ? status : "";
+  // "saved": the slice lives in the Meltio platform (platform mode), not in
+  // this viewer - the row says so, but gets no in-scene "Start print" (that
+  // needs a toolpath here; see docs/platform-slicer-integration.md).
+  const normalized = status === "slicing" || status === "ready" || status === "saved" ? status : "";
   badgeEl.dataset.status = normalized;
   badgeEl.hidden = normalized === "";
-  badgeEl.textContent = normalized === "slicing" ? "Slicing…" : normalized === "ready" ? "Ready" : "";
+  badgeEl.textContent = normalized === "slicing"
+    ? "Slicing…"
+    : normalized === "ready"
+      ? "Ready"
+      : normalized === "saved"
+        ? "Saved to platform"
+        : "";
 }
 
 // Set the slice status for a file and update its row badge in place (no full

@@ -129,6 +129,14 @@ the browser doesn't hit cross-origin problems.
     string** (`?stl=…&dock=1`).
   - `GET /api/slicer/profiles`, `POST /api/slice/proxy` — same-origin proxies to
     the slicer.
+- **Platform mode (optional, off by default):** `AVIS_PLATFORM_URL` points the
+  viewer at the **Meltio platform** (Lukas's `process-intelligence-repo`), whose
+  current slicer is a sub-app at `/slicer` that frames only same-origin pages.
+  The viewer then reverse-proxies `/slicer/*` and a default-deny allow-list of
+  `/api/*` to the platform, injecting the HMI's token (`AVIS_PLATFORM_TOKEN`)
+  server-side, and `POST /api/slicer/part-from-file` turns an HMI STL into a
+  platform part the iframe opens (`/slicer/?embed=1&part=<id>`). Full analysis,
+  env table and what is NOT yet bridged: `docs/platform-slicer-integration.md`.
 
 ### 3.2 Frontend core — `static/urdf_viewer.js` (~16,500 lines)
 This is the whole viewer UI in one big file. It is **not** cleanly sectioned, so
@@ -377,6 +385,16 @@ All cross-app communication is browser `postMessage`. Messages are tagged
 The `?dock=1` flag is what puts the slicer into "embedded" layout (bottom dock
 bar instead of its own header/side panel). The viewer's `/slicer` route forwards
 the whole query string so `stl`, `dock`, etc. survive the redirect.
+
+**Platform mode has a different, smaller bridge.** The current platform slicer
+knows none of the messages above. It posts `{type:"slice-saved", partId,
+version}` to `location.origin` when a slice is saved to the platform, and
+accepts `load-part` / `ws-command` from its parent — both ends drop any
+`event.origin !== location.origin`, which is why the viewer proxies it
+same-origin instead of redirecting. `hmi/slicerPane.js` consumes `slice-saved`
+(sender-checked against the iframe's window) and badges the Files row "Saved to
+platform"; a toolpath for the in-scene print sim is not yet part of that
+exchange (`docs/platform-slicer-integration.md` §5).
 
 ---
 

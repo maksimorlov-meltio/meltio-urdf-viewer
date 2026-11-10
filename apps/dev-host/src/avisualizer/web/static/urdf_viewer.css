@@ -7024,6 +7024,14 @@ body.slicer-fullscreen #slicerLoadToViewer {
   color: var(--ui-success);
 }
 
+/* Platform mode: the slice was saved to the Meltio platform (it is not a
+   print-ready toolpath in this viewer, so it is not green). */
+.cloud-file-item-slice-badge[data-status="saved"] {
+  background: var(--ui-state-selected-bg);
+  border: 1px solid var(--ui-state-selected-border);
+  color: var(--ui-state-selected-text);
+}
+
 /* When a slice is ready, hide the Files list panel to reveal the printed part.
    The cloud menu stays open (STL + camera untouched); the Slicer flyout detaches
    to a fixed corner so its progress + Play stay reachable. */

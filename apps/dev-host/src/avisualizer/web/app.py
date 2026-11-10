@@ -12,17 +12,26 @@ from pathlib import Path
 import re
 import secrets
 import threading
-from typing import Literal
+from typing import AsyncIterator, Literal
 import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
 
+import httpx
 import uvicorn
 from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
+from starlette.background import BackgroundTask
 
 from .services.atomic_file import write_text_atomic
 from .services.machine_controlservice import ControlServiceMachine
@@ -189,6 +198,185 @@ def _slicer_ui_url() -> str | None:
     if explicit:
         return explicit.rstrip("/")
     return _slicer_base_url()
+
+
+# --- Meltio platform slicer (process-intelligence-repo) ---------------------
+# The CURRENT slicer no longer runs standalone: it is a sub-app mounted at
+# `/slicer` inside the Meltio platform shell (Postgres + object store + SSO),
+# and its frontend calls the platform's own `/api/*` routes with ABSOLUTE paths
+# (`/api/me`, `/api/parts/...`, `/api/slices/...`). The shell also answers
+# `X-Frame-Options: SAMEORIGIN` and both sides of its `postMessage` bridge check
+# `event.origin === location.origin`. So the only way to put it inside this HMI
+# is to make it SAME-ORIGIN: the viewer becomes the browser's single origin and
+# reverse-proxies `/slicer/*` plus an allow-listed slice of `/api/*` to the
+# platform, injecting the HMI's own identity on the way out. The browser never
+# sees the platform URL or its token.
+#
+# Disabled unless AVIS_PLATFORM_URL is set (then it takes precedence over the
+# legacy AVIS_SLICER_URL embed). See docs/platform-slicer-integration.md.
+#
+#   AVIS_PLATFORM_URL            platform base, e.g. http://127.0.0.1:8091
+#   AVIS_PLATFORM_TOKEN          `Authorization: Bearer mlt_...` service token
+#                                (read+write; slicing is POST). Never logged,
+#                                never sent to the browser.
+#   AVIS_PLATFORM_DEV_EMAIL      local/on-prem stacks without Cloudflare Access:
+#                                sent as Cf-Access-Authenticated-User-Email.
+#   AVIS_PLATFORM_ORG_ID         default X-Org-Id when the request carries none.
+#   AVIS_PLATFORM_SLICER_PREFIX  where the slicer lives on the upstream:
+#                                "/slicer" (platform shell, default) or "" for
+#                                a standalone offline bundle, where it is root.
+PLATFORM_SLICER_MOUNT = "/slicer"
+
+
+def _platform_base_url() -> str | None:
+    url = os.environ.get("AVIS_PLATFORM_URL", "").strip()
+    return url.rstrip("/") if url else None
+
+
+def _platform_slicer_prefix() -> str:
+    raw = os.environ.get("AVIS_PLATFORM_SLICER_PREFIX", PLATFORM_SLICER_MOUNT).strip().strip("/")
+    return f"/{raw}" if raw else ""
+
+
+def _platform_auth_headers() -> dict[str, str]:
+    """The identity the HMI presents to the platform. Server-side only."""
+    headers: dict[str, str] = {}
+    token = os.environ.get("AVIS_PLATFORM_TOKEN", "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    email = os.environ.get("AVIS_PLATFORM_DEV_EMAIL", "").strip()
+    if email:
+        headers["Cf-Access-Authenticated-User-Email"] = email
+    return headers
+
+
+_READ_METHODS = frozenset({"GET", "HEAD"})
+_WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+# Default-deny allow-list for the platform API the embedded slicer frontend
+# calls (derived from its fetch() sites, 2026-11). Everything not matched is a
+# 404 here, exactly as if the route did not exist. Deliberately ABSENT: printer
+# commands (`POST /api/printers/*/commands` would bypass the rank check on
+# `POST /api/machine/command`), `/api/devices`, `/api/admin`, API-token minting,
+# and writes to the shared libraries (profiles, machines, materials) - an HMI
+# operator slices with certified recipes, they do not edit them.
+PLATFORM_API_ALLOW: tuple[tuple[frozenset[str], re.Pattern[str]], ...] = tuple(
+    (frozenset(methods), re.compile(pattern))
+    for methods, pattern in (
+        (_READ_METHODS, r"/api/me"),
+        (_READ_METHODS, r"/api/system-types"),
+        (_READ_METHODS, r"/api/(profiles|machines|materials|printers|prints)(/.*)?"),
+        (_READ_METHODS | {"POST"}, r"/api/parts"),
+        (_READ_METHODS | {"POST", "PUT", "PATCH"}, r"/api/parts/[^/]+(/.*)?"),
+        (_READ_METHODS | {"POST"}, r"/api/slices/[^/]+(/.*)?"),
+        ({"DELETE"}, r"/api/slices/[^/]+/draft"),
+        (_READ_METHODS | _WRITE_METHODS, r"/api/batches(/.*)?"),
+        (_READ_METHODS | {"POST", "DELETE"}, r"/api/slice-jobs(/.*)?"),
+        (_READ_METHODS | {"POST"}, r"/api/simulations(/.*)?"),
+        ({"POST"}, r"/api/notifications/read"),
+    )
+)
+
+
+def _platform_api_allowed(method: str, path: str) -> bool:
+    method = method.upper()
+    return any(method in methods and pattern.fullmatch(path) for methods, pattern in PLATFORM_API_ALLOW)
+
+
+# Hop-by-hop headers never cross a proxy (RFC 7230 6.1). On the way OUT we also
+# drop the viewer's own cookie (the operator session must not leak to the
+# platform) and any caller-supplied Authorization (the HMI's identity is the
+# configured one, not whatever the browser sends). Content-Length is KEPT: the
+# platform caps the slicer's STL upload on it (413 before buffering).
+_HOP_BY_HOP = frozenset({
+    "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+    "te", "trailers", "transfer-encoding", "upgrade",
+})
+_REQUEST_DROP = _HOP_BY_HOP | {"host", "cookie", "authorization"}
+_RESPONSE_DROP = _HOP_BY_HOP | {"set-cookie"}
+
+_platform_http_client: httpx.AsyncClient | None = None
+
+
+def _platform_client() -> httpx.AsyncClient:
+    """One pooled client per process. Tests monkeypatch this to a MockTransport."""
+    global _platform_http_client
+    if _platform_http_client is None or _platform_http_client.is_closed:
+        _platform_http_client = httpx.AsyncClient(
+            # Slices are tens of MB and `?wait=1` can block on a long slice.
+            timeout=httpx.Timeout(10.0, read=600.0, write=600.0, pool=10.0),
+            follow_redirects=False,
+        )
+    return _platform_http_client
+
+
+async def _platform_forward(request: Request, upstream_path: str) -> Response:
+    """Stream `request` to the platform at `upstream_path` and stream the answer back."""
+    base_url = _platform_base_url()
+    if not base_url:
+        raise HTTPException(status_code=404, detail="Not Found")
+    url = f"{base_url}{upstream_path}"
+    if request.url.query:
+        url = f"{url}?{request.url.query}"
+
+    headers = {
+        key: value
+        for key, value in request.headers.items()
+        if key.lower() not in _REQUEST_DROP
+    }
+    headers.update(_platform_auth_headers())
+    default_org = os.environ.get("AVIS_PLATFORM_ORG_ID", "").strip()
+    if default_org and "x-org-id" not in {k.lower() for k in headers}:
+        headers["X-Org-Id"] = default_org
+
+    has_body = request.method.upper() not in {"GET", "HEAD"} and (
+        request.headers.get("content-length", "0") != "0"
+        or "transfer-encoding" in request.headers
+    )
+    client = _platform_client()
+    upstream_request = client.build_request(
+        request.method,
+        url,
+        headers=headers,
+        content=request.stream() if has_body else None,
+    )
+    try:
+        upstream = await client.send(upstream_request, stream=True)
+    except httpx.HTTPError as exc:
+        return JSONResponse(
+            status_code=502,
+            content={"detail": f"Platform unreachable: {exc.__class__.__name__}"},
+        )
+
+    response_headers: list[tuple[str, str]] = []
+    for key, value in upstream.headers.multi_items():
+        lower = key.lower()
+        if lower in _RESPONSE_DROP:
+            continue
+        if lower == "location" and value.startswith(base_url):
+            # An upstream redirect names the platform host; keep the browser
+            # on OUR origin or the iframe walks out of the proxy.
+            value = value[len(base_url):] or "/"
+        response_headers.append((key, value))
+
+    async def body() -> "AsyncIterator[bytes]":
+        # aiter_raw() hands back the bytes as sent (still gzip-encoded when the
+        # platform compressed them), so Content-Encoding / Content-Length stay
+        # true. A transport that already read the body (httpx does so for any
+        # Response built from inline content, i.e. the test fake) has no raw
+        # stream left to iterate - hand that content over in one piece.
+        if upstream.is_stream_consumed:
+            yield upstream.content
+            return
+        async for chunk in upstream.aiter_raw():
+            yield chunk
+
+    return StreamingResponse(
+        body(),
+        status_code=upstream.status_code,
+        headers=dict(response_headers),
+        background=BackgroundTask(upstream.aclose),
+    )
 
 
 # --- Real-machine backend (M600Pro.Platform ControlService) ----------------
@@ -954,10 +1142,22 @@ def create_app() -> FastAPI:
         embedded slicer (via the same-origin `/slicer` entry) or showing its
         graceful fallback placeholder.
         """
+        if _platform_base_url():
+            # Platform mode: the slicer is proxied same-origin under /slicer/
+            # (trailing slash: its frontend fetches RELATIVE `api/...` and
+            # `./bundle/...`), and `embed=1` hides its own header.
+            return {
+                "configured": True,
+                "mode": "platform",
+                "url": "/slicer/",
+                "embedQuery": "embed=1",
+            }
         ui_url = _slicer_ui_url()
         return {
             "configured": ui_url is not None,
+            "mode": "legacy" if ui_url else "none",
             "url": "/slicer" if ui_url else None,
+            "embedQuery": "dock=1" if ui_url else None,
         }
 
     @app.get("/api/slicer/profiles")
@@ -970,7 +1170,9 @@ def create_app() -> FastAPI:
         Returns 503 when no slicer is configured, so the Slicer-flyout profile
         picker hides itself, matching the slice proxy's graceful degradation.
         """
-        base_url = _slicer_base_url()
+        # Platform mode reads the platform's profile library with the HMI's
+        # identity; legacy mode asks the standalone slicer.
+        base_url = _platform_base_url() or _slicer_base_url()
         if not base_url:
             raise HTTPException(
                 status_code=503,
@@ -978,7 +1180,11 @@ def create_app() -> FastAPI:
             )
 
         try:
-            info = _http_json(f"{base_url}/api/profiles", timeout=15.0)
+            info = _http_json(
+                f"{base_url}/api/profiles",
+                headers=_platform_auth_headers() if _platform_base_url() else None,
+                timeout=15.0,
+            )
         except urllib.error.URLError as exc:
             raise HTTPException(status_code=502, detail=f"Slicer unreachable: {exc.reason}") from exc
         except Exception as exc:  # noqa: BLE001 - surface as bad gateway, keep viewer usable
@@ -1013,6 +1219,13 @@ def create_app() -> FastAPI:
         layout). When no slicer is configured, returns a small placeholder page
         instead of a broken frame.
         """
+        if _platform_base_url():
+            # Platform mode: the slicer lives under /slicer/ (see the proxy
+            # route below). Keep whatever query the caller had.
+            query = request.url.query
+            return RedirectResponse(
+                url=f"/slicer/?{query}" if query else "/slicer/", status_code=307
+            )
         ui_url = _slicer_ui_url()
         if ui_url:
             # Forward the raw query string as-received (stl is already percent-
@@ -1047,6 +1260,79 @@ def create_app() -> FastAPI:
 </div></body></html>""",
             status_code=200,
         )
+
+    @app.api_route(
+        "/slicer/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]
+    )
+    async def platform_slicer_proxy(path: str, request: Request) -> Response:
+        """Same-origin reverse proxy to the platform's slicer sub-app.
+
+        `/slicer/<x>` -> `<AVIS_PLATFORM_URL><prefix>/<x>`: the page, its hashed
+        `bundle/`, and its own `api/load`, `api/slice`, `api/gcode`... The whole
+        sub-app is forwarded - slicing IS the point. 404 when no platform is
+        configured (the legacy `/slicer` redirect above still serves that mode).
+        """
+        if not _platform_base_url():
+            raise HTTPException(status_code=404, detail="Not Found")
+        return await _platform_forward(request, f"{_platform_slicer_prefix()}/{path}")
+
+    @app.post("/api/slicer/part-from-file")
+    async def slicer_part_from_file(payload: dict | None = Body(default=None)) -> dict:
+        """Hand one of the HMI's STL files to the platform as a Part.
+
+        The current slicer opens platform PARTS (`/slicer/?part=<id>`), not raw
+        STL URLs, so "Load to slicer" first uploads the chosen file through the
+        HMI's identity and answers the part id the iframe should open. A 409
+        (the platform already holds this geometry) reuses the first candidate
+        instead of creating a duplicate. 503 when no platform is configured.
+        """
+        base_url = _platform_base_url()
+        if not base_url:
+            raise HTTPException(
+                status_code=503,
+                detail="Platform not configured (set AVIS_PLATFORM_URL).",
+            )
+        body = payload or {}
+        name = str(body.get("name") or "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Model name is required")
+        stl_path = _resolve_global_stl_file(name)  # 404 if unknown
+
+        client = _platform_client()
+        try:
+            upstream = await client.post(
+                f"{base_url}/api/parts",
+                data={"name": stl_path.stem},
+                files={"file": (stl_path.name, stl_path.read_bytes(), "model/stl")},
+                headers=_platform_auth_headers(),
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(
+                status_code=502, detail=f"Platform unreachable: {exc.__class__.__name__}"
+            ) from exc
+
+        if upstream.status_code == 409:
+            try:
+                detail = upstream.json().get("detail")
+            except ValueError:
+                detail = None
+            candidates = detail.get("candidates") if isinstance(detail, dict) else None
+            first = candidates[0] if isinstance(candidates, list) and candidates else None
+            part_id = first.get("partId") or first.get("id") if isinstance(first, dict) else None
+            if part_id:
+                return {"partId": str(part_id), "name": name, "reused": True}
+        if upstream.status_code >= 400:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Platform refused the part upload: HTTP {upstream.status_code}",
+            )
+        try:
+            part_id = upstream.json().get("id")
+        except ValueError:
+            part_id = None
+        if not part_id:
+            raise HTTPException(status_code=502, detail="Platform answered without a part id")
+        return {"partId": str(part_id), "name": name, "reused": False}
 
     @app.get("/api/urdf/models")
     def urdf_models() -> dict[str, object]:
@@ -1145,6 +1431,15 @@ def create_app() -> FastAPI:
         when no slicer is configured so the viewer degrades gracefully to its
         client-side layer reveal.
         """
+        if _platform_base_url():
+            # The current slicer slices as an async job and answers a binary
+            # container, not the `{moves: [...]}` JSON this proxy was built on;
+            # the toolpath hand-off is phase 2 (docs/platform-slicer-integration.md).
+            # 503 keeps the client on its documented clip-plane fallback.
+            raise HTTPException(
+                status_code=503,
+                detail="Slice proxy is not available in platform mode; slice in the embedded platform slicer.",
+            )
         base_url = _slicer_base_url()
         if not base_url:
             raise HTTPException(
@@ -1273,7 +1568,12 @@ def create_app() -> FastAPI:
     # current operator and the connected machine. The real deployment replaces
     # these with the Meltio dashboard's identity + machine-registry services.
     @app.get("/api/me")
-    def whoami(request: Request) -> dict:
+    async def whoami(request: Request) -> object:
+        if _platform_base_url():
+            # The embedded platform slicer asks `/api/me` for the user's orgs
+            # and capabilities (its upload target, Advanced gating). Answer
+            # with the HMI's platform identity, not this console's operator.
+            return await _platform_forward(request, "/api/me")
         # Reflect the real session when one is present, so the console (and any
         # server-side check) sees the authenticated operator + their permissions.
         operator = _operator_from_request(request)
@@ -1297,7 +1597,10 @@ def create_app() -> FastAPI:
         }
 
     @app.get("/api/machines")
-    def machines() -> dict:
+    async def machines(request: Request) -> object:
+        if _platform_base_url():
+            # The platform's machine library (presets the slicer's picker lists).
+            return await _platform_forward(request, "/api/machines")
         snap = get_machine().snapshot()
         return {
             "machines": [
@@ -1310,6 +1613,21 @@ def create_app() -> FastAPI:
                 }
             ]
         }
+
+    # Registered LAST on purpose: every route of the viewer's own above wins,
+    # and only what the allow-list names reaches the platform. Without a
+    # platform this is a 404, the same answer an unknown /api path always got.
+    @app.api_route(
+        "/api/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]
+    )
+    async def platform_api_proxy(path: str, request: Request) -> Response:
+        """Allow-listed same-origin proxy to the platform API the slicer frontend calls."""
+        if not _platform_base_url():
+            raise HTTPException(status_code=404, detail="Not Found")
+        full_path = f"/api/{path}"
+        if not _platform_api_allowed(request.method, full_path):
+            raise HTTPException(status_code=404, detail="Not Found")
+        return await _platform_forward(request, full_path)
 
     return app
 

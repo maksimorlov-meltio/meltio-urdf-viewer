@@ -358,6 +358,7 @@
     "addEventListener": {
       "providedBy": "embedder",
       "readBy": [
+        "hmi/slicerPane.js",
         "hmi/ui/dsSelect.js"
       ]
     },
@@ -884,6 +885,9 @@
         "setCloudFileRowSliceStatus",
         "setSelectedCloudLibraryFile",
         "updateBottomNavState"
+      ],
+      "globalsRead": [
+        "addEventListener"
       ]
     },
     "hmi/state/machineState.js": {

@@ -189,3 +189,25 @@ test("a failing backend surfaces the HTTP status", async () => {
     /HTTP 503/,
   );
 });
+
+// --- Slice badge -------------------------------------------------------------
+
+test("the slice badge knows three states and hides on anything else", () => {
+  // "saved" is platform mode: the slice lives in the Meltio platform, so the
+  // row says so without claiming an in-viewer print-ready toolpath.
+  const badge = { dataset: {}, hidden: true, textContent: "" };
+  lib.applyCloudFileSliceBadge(badge, "saved");
+  assert.equal(badge.dataset.status, "saved");
+  assert.equal(badge.hidden, false);
+  assert.equal(badge.textContent, "Saved to platform");
+
+  lib.applyCloudFileSliceBadge(badge, "ready");
+  assert.equal(badge.textContent, "Ready");
+  lib.applyCloudFileSliceBadge(badge, "slicing");
+  assert.equal(badge.textContent, "Slicing…");
+
+  lib.applyCloudFileSliceBadge(badge, "uploaded");
+  assert.equal(badge.dataset.status, "", "an unknown status is no status");
+  assert.equal(badge.hidden, true);
+  assert.equal(badge.textContent, "");
+});

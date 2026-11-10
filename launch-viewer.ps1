@@ -28,8 +28,21 @@ $ViewerUrl = "http://127.0.0.1:8090/urdf"
 # AVIS_SLICER_URL points the viewer at the slicer so the Files-menu slice and
 # the in-scene print simulation work end to end.
 $env:PYTHONPATH         = "$SlicerSrc;$AvisSrc"
-$env:AVIS_SLICER_URL    = $SlicerUrl
-$env:AVIS_SLICER_UI_URL = $SlicerUrl
+
+# Platform mode (docs/platform-slicer-integration.md): when AVIS_PLATFORM_URL is
+# already set in the environment, the Files menu embeds the Meltio platform's
+# slicer through the viewer's same-origin proxy instead of the vendored one, so
+# the local slicer on :8765 is neither needed nor started. Set it (and
+# AVIS_PLATFORM_TOKEN or AVIS_PLATFORM_DEV_EMAIL) before double-clicking
+# Start-Viewer.bat, e.g. in a wrapper .bat or the user environment.
+$PlatformMode = -not [string]::IsNullOrWhiteSpace($env:AVIS_PLATFORM_URL)
+if ($PlatformMode) {
+  Remove-Item Env:\AVIS_SLICER_URL    -ErrorAction SilentlyContinue
+  Remove-Item Env:\AVIS_SLICER_UI_URL -ErrorAction SilentlyContinue
+} else {
+  $env:AVIS_SLICER_URL    = $SlicerUrl
+  $env:AVIS_SLICER_UI_URL = $SlicerUrl
+}
 
 function Test-Up($url) {
   try {
@@ -52,7 +65,9 @@ Write-Host ""
 Write-Host "=== Meltio Viewer launcher ===" -ForegroundColor Cyan
 
 # --- 1) Slicer backend -------------------------------------------------------
-if (Test-Up "$SlicerUrl/api/health") {
+if ($PlatformMode) {
+  Write-Host "Platform mode: slicer embedded from $($env:AVIS_PLATFORM_URL) (local :8765 slicer not started)." -ForegroundColor Cyan
+} elseif (Test-Up "$SlicerUrl/api/health") {
   Write-Host "Slicer already running on :8765." -ForegroundColor DarkGray
 } else {
   if (-not (Test-Path $PySlicer)) {

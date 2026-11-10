@@ -57,6 +57,13 @@ Two independent local services, glued at runtime:
   other's Python.
 - The live-machine link is **off by default**. Add `?machine=1` to the URL to
   enable it; otherwise the scene runs against a mock machine state.
+- **Platform mode (optional).** Set `AVIS_PLATFORM_URL` (plus
+  `AVIS_PLATFORM_TOKEN` or `AVIS_PLATFORM_DEV_EMAIL`) and **Files** embeds the
+  *current* Meltio platform slicer instead of the vendored one: the viewer
+  reverse-proxies it same-origin and hands STL files over as platform parts.
+  The local `:8765` slicer is then not needed. Analysis, env table and the
+  parts not yet bridged (print simulation from a platform slice):
+  [`docs/platform-slicer-integration.md`](docs/platform-slicer-integration.md).
 
 ---
 
@@ -182,6 +189,20 @@ $env:AVIS_SLICER_UI_URL = "http://127.0.0.1:8765"
 ```
 
 Then open http://127.0.0.1:8090/urdf.
+
+### Platform mode (the current Meltio platform slicer instead of the vendored one)
+
+```powershell
+# Platform running elsewhere (Lukas's process-intelligence-repo: docker compose,
+# published on a port other than the viewer's 8090). No local slicer needed.
+$env:PYTHONPATH           = "$PWD\apps\dev-host\src"
+$env:AVIS_PLATFORM_URL    = "http://127.0.0.1:8091"
+$env:AVIS_PLATFORM_TOKEN  = "mlt_..."          # read+write service token, or:
+# $env:AVIS_PLATFORM_DEV_EMAIL = "you@meltio3d.com"  # local stack with PLATFORM_DEV_USER_EMAIL
+.\.venv\Scripts\python.exe -m uvicorn avisualizer.web.app:create_app --factory --host 127.0.0.1 --port 8090
+```
+
+`Start-Viewer.bat` honours a pre-set `AVIS_PLATFORM_URL` and skips the local slicer.
 
 ### Kiosk display
 

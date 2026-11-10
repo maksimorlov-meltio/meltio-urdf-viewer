@@ -42,6 +42,17 @@ export function createSlicerPaneUi({
   let embedState = "idle"; // idle | loading | ready | unavailable
   let embedUrl = null;
   let embedInFlight = false;
+  // How the slicer is reached, from /api/slicer/status: "legacy" is the
+  // vendored standalone slicer (`/slicer?dock=1&stl=<url>`), "platform" is
+  // the Meltio platform's slicer proxied same-origin under /slicer/
+  // (`/slicer/?embed=1&part=<id>`), "none" is not configured or not asked yet.
+  let embedMode = "none";
+  let embedQuery = "dock=1";
+  let statusPromise = null;
+  // Platform mode: which HMI file became which platform part, so the iframe's
+  // `slice-saved` can badge the right Files row.
+  const platformFileByPart = new Map();
+  let lastPlatformSlice = null;
 
   // The slicer is a flyout panel anchored to the top-right corner of the Files
   // menu, opened/closed on demand — not shown permanently in the viewer.
@@ -76,6 +87,40 @@ export function createSlicerPaneUi({
     }
   }
 
+  // Ask the backend how the slicer is reached. Cached; `force` re-asks. It
+  // does NOT touch the iframe (refreshEmbed does) - it is kicked off at
+  // creation so the mode is known by the time an operator taps "Load to
+  // slicer". Resolves to the status, or null when no slicer is configured.
+  function loadStatus(options = {}) {
+    const { force = false } = options;
+    if (statusPromise && !force) {
+      return statusPromise;
+    }
+    statusPromise = fetch("/api/slicer/status", { cache: "no-store" })
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        return response.json();
+      })
+      .then((status) => {
+        const configured = Boolean(
+          status && status.configured && typeof status.url === "string",
+        );
+        embedMode = configured ? String(status.mode || "legacy") : "none";
+        embedQuery = configured && typeof status.embedQuery === "string"
+          ? status.embedQuery
+          : "dock=1";
+        return configured ? status : null;
+      })
+      .catch((error) => {
+        // A failed probe is not an answer: forget it so the next call re-asks.
+        statusPromise = null;
+        throw error;
+      });
+    return statusPromise;
+  }
+
   async function refreshEmbed(options = {}) {
     if (!frameEl && !fallbackEl) {
       return;
@@ -95,23 +140,21 @@ export function createSlicerPaneUi({
     }
 
     try {
-      const response = await fetch("/api/slicer/status", { cache: "no-store" });
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-      const status = await response.json();
-      if (status && status.configured && typeof status.url === "string") {
+      const status = await loadStatus({ force });
+      if (status) {
         embedUrl = status.url;
         embedState = "ready";
-        // dock=1 → embedded bottom-bar slicer layout (forwarded by /slicer).
-        const base = `${status.url}?dock=1`;
+        // legacy: dock=1 → the embedded bottom-bar layout (forwarded by
+        // /slicer); platform: embed=1 → the platform slicer hides its own
+        // header. The query comes from the backend so the two never disagree.
+        const base = `${status.url}?${embedQuery}`;
         const target = force ? `${base}&t=${Date.now()}` : base;
         showFrame(target);
       } else {
         embedUrl = null;
         embedState = "unavailable";
         showFallback(
-          "Slicer not connected. Set AVIS_SLICER_URL to embed the slicer here.",
+          "Slicer not connected. Set AVIS_SLICER_URL (or AVIS_PLATFORM_URL) to embed the slicer here.",
         );
       }
     } catch (error) {
@@ -205,6 +248,12 @@ export function createSlicerPaneUi({
       return;
     }
     const name = String(fileName || "").trim();
+    if (embedMode === "platform") {
+      loadPlatformPartForFile(name).catch((error) => {
+        showFallback(`Could not hand ${name} to the platform (${error?.message || "error"}).`);
+      });
+      return;
+    }
     const stlUrl = `${window.location.origin}/api/stl/file?name=${encodeURIComponent(name)}`;
     // dock=1 → the slicer renders its embedded bottom-bar layout.
     frameEl.src = `/slicer?dock=1&stl=${encodeURIComponent(stlUrl)}`;
@@ -215,6 +264,76 @@ export function createSlicerPaneUi({
     if (embedWrapEl) {
       embedWrapEl.hidden = false;
     }
+  }
+
+  // Platform mode: the current slicer opens platform PARTS (`?part=<id>`), not
+  // STL URLs. Hand the HMI file over through the backend - it carries the
+  // HMI's platform identity, the browser never does - then open that part in
+  // the embedded slicer. Resolves to the part id.
+  async function loadPlatformPartForFile(name) {
+    if (fallbackEl) {
+      fallbackEl.hidden = false;
+      fallbackEl.textContent = `Sending ${name} to the platform...`;
+    }
+    const response = await fetch("/api/slicer/part-from-file", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      let detail = `HTTP ${response.status}`;
+      try {
+        const body = await response.json();
+        if (body && body.detail) {
+          detail = String(body.detail);
+        }
+      } catch (_ignored) {
+        /* non-JSON error body */
+      }
+      throw new Error(detail);
+    }
+    const payload = await response.json();
+    const partId = String((payload && payload.partId) || "").trim();
+    if (!partId) {
+      throw new Error("the platform answered without a part id");
+    }
+    platformFileByPart.set(partId, name);
+    showFrame(`/slicer/?${embedQuery}&part=${encodeURIComponent(partId)}`);
+    if (embedWrapEl) {
+      embedWrapEl.hidden = false;
+    }
+    return partId;
+  }
+
+  // Platform mode: the slicer tells its parent when a slice was SAVED to the
+  // platform - `{type:"slice-saved", partId, version}`, posted to
+  // location.origin, which is why the proxy must keep everything same-origin.
+  // Sender-checked like the host's handlers: the event must come from OUR
+  // iframe's window, not merely carry the right shape. Returns whether it was
+  // consumed.
+  function handleFrameMessage(event) {
+    if (!frameEl || !frameEl.contentWindow || !event || event.source !== frameEl.contentWindow) {
+      return false;
+    }
+    if (event.origin !== window.location.origin) {
+      return false;
+    }
+    const data = event.data;
+    if (!data || data.type !== "slice-saved" || !data.partId) {
+      return false;
+    }
+    const partId = String(data.partId);
+    const fileName = platformFileByPart.get(partId) || null;
+    lastPlatformSlice = {
+      partId,
+      version: data.version === undefined ? null : data.version,
+      fileName,
+    };
+    if (fileName) {
+      setCloudFileRowSliceStatus(fileName, "saved");
+    }
+    return true;
   }
 
   // "Load to slicer" from a Files-list row: open the full slicer (all its tools)
@@ -364,8 +483,19 @@ export function createSlicerPaneUi({
     });
   }
 
+  window.addEventListener("message", handleFrameMessage);
+
+  // Learn the mode early (one small GET); a failure here is silent - the first
+  // real use re-asks and reports through the pane's fallback text.
+  loadStatus().catch(() => {});
+
   return {
     refreshEmbed,
+    loadStatus,
+    loadPlatformPartForFile,
+    handleFrameMessage,
+    getMode: () => embedMode,
+    getLastPlatformSlice: () => lastPlatformSlice,
     setEmbedOpen,
     setFullscreen,
     setMenuOpen,

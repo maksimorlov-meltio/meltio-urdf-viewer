@@ -285,3 +285,125 @@ test("a hidden pane is never positioned", () => {
   pane.positionMenuDocked();
   assert.equal(el("slicerPane").style.left, "7px");
 });
+
+// --- Platform mode: the Meltio platform's slicer, proxied same-origin --------
+// The backend answers `mode: "platform"` when AVIS_PLATFORM_URL is set. The
+// current slicer opens platform PARTS, not STL URLs, so "Load to slicer" first
+// hands the file over (POST /api/slicer/part-from-file) and only then frames
+// `/slicer/?embed=1&part=<id>`. These pin the URL shapes the platform depends
+// on, the hand-off order, and the sender check on its `slice-saved` message.
+
+function platformStatus() {
+  return {
+    ok: true,
+    json: async () => ({
+      configured: true, mode: "platform", url: "/slicer/", embedQuery: "embed=1",
+    }),
+  };
+}
+
+const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+test("platform mode embeds /slicer/?embed=1 and opens files as platform parts", async () => {
+  reset({ cloudOpen: true, file: "bracket.stl" });
+  const requests = [];
+  globalThis.fetch = async (url, init = {}) => {
+    requests.push({ url, method: init.method || "GET", body: init.body });
+    if (url === "/api/slicer/status") return platformStatus();
+    if (url === "/api/slicer/part-from-file") {
+      return { ok: true, json: async () => ({ partId: "part-9", name: "bracket.stl", reused: false }) };
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  await pane.loadStatus({ force: true });
+  assert.equal(pane.getMode(), "platform");
+
+  await pane.refreshEmbed({ force: true });
+  assert.match(el("slicerFrame").getAttribute("src"), /^\/slicer\/\?embed=1/,
+    "trailing slash (its frontend fetches relative api/...) and embed=1, never dock=1");
+
+  const partId = await pane.loadPlatformPartForFile("bracket.stl");
+  assert.equal(partId, "part-9");
+  const upload = requests.find((r) => r.url === "/api/slicer/part-from-file");
+  assert.equal(upload.method, "POST");
+  assert.deepEqual(JSON.parse(upload.body), { name: "bracket.stl" });
+  assert.equal(el("slicerFrame").getAttribute("src"), "/slicer/?embed=1&part=part-9");
+  assert.equal(el("slicerFrame").hidden, false);
+  assert.equal(el("slicerEmbedWrap").hidden, false);
+});
+
+test("in platform mode loadIframeForFile never builds the legacy stl URL", async () => {
+  reset({ file: "bracket.stl" });
+  let resolveUpload = null;
+  globalThis.fetch = async (url) => {
+    if (url === "/api/slicer/status") return platformStatus();
+    return new Promise((resolve) => { resolveUpload = resolve; });
+  };
+  await pane.loadStatus({ force: true });
+  el("slicerFrame").setAttribute("src", "about:blank");
+
+  pane.loadIframeForFile("bracket.stl");
+  assert.equal(el("slicerFrame").getAttribute("src"), "about:blank",
+    "no ?dock=1&stl= URL may be framed while the hand-off is pending");
+  assert.match(el("slicerFallback").textContent, /Sending bracket\.stl to the platform/);
+
+  resolveUpload({ ok: true, json: async () => ({ partId: "p1" }) });
+  await tick(); await tick(); await tick();
+  assert.equal(el("slicerFrame").getAttribute("src"), "/slicer/?embed=1&part=p1");
+});
+
+test("a refused hand-off is reported in the pane, not thrown", async () => {
+  reset({ file: "bracket.stl" });
+  globalThis.fetch = async (url) => {
+    if (url === "/api/slicer/status") return platformStatus();
+    return {
+      ok: false, status: 502,
+      json: async () => ({ detail: "Platform refused the part upload: HTTP 403" }),
+    };
+  };
+  await pane.loadStatus({ force: true });
+
+  pane.loadIframeForFile("bracket.stl");
+  await tick(); await tick(); await tick();
+  assert.equal(el("slicerFallback").hidden, false);
+  assert.match(el("slicerFallback").textContent,
+    /Could not hand bracket\.stl to the platform \(Platform refused the part upload: HTTP 403\)/);
+});
+
+test("slice-saved from OUR iframe badges the row; anything else is ignored", async () => {
+  reset({ file: "bracket.stl" });
+  globalThis.fetch = async (url) => {
+    if (url === "/api/slicer/status") return platformStatus();
+    return { ok: true, json: async () => ({ partId: "part-9" }) };
+  };
+  await pane.loadStatus({ force: true });
+  await pane.loadPlatformPartForFile("bracket.stl");
+  calls.length = 0;
+  const origin = globalThis.window.location.origin;
+  const frameWindow = pane.getFrameWindow();
+  const saved = { type: "slice-saved", partId: "part-9", version: 3 };
+
+  // Right shape, wrong sender: a spoofed message from another frame or tab.
+  assert.equal(pane.handleFrameMessage({ source: globalThis.window, origin, data: saved }), false);
+  // Right sender, wrong origin: would mean the platform's own origin got framed.
+  assert.equal(pane.handleFrameMessage({ source: frameWindow, origin: "http://platform.test", data: saved }), false);
+  assert.deepEqual(calls, []);
+
+  assert.equal(pane.handleFrameMessage({ source: frameWindow, origin, data: saved }), true);
+  assert.ok(calls.includes("status:bracket.stl:saved"));
+  assert.deepEqual(pane.getLastPlatformSlice(), { partId: "part-9", version: 3, fileName: "bracket.stl" });
+
+  // Legacy bridge messages are the host's business, not this handler's.
+  assert.equal(pane.handleFrameMessage({
+    source: frameWindow, origin, data: { source: "meltio-slicer", type: "slice-data" },
+  }), false);
+});
+
+test("legacy status without a mode keeps the dock=1 embed", async () => {
+  reset();
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ configured: true, url: "/slicer" }) });
+  await pane.loadStatus({ force: true });
+  assert.equal(pane.getMode(), "legacy");
+  await pane.refreshEmbed({ force: true });
+  assert.match(el("slicerFrame").getAttribute("src"), /^\/slicer\?dock=1/);
+});
