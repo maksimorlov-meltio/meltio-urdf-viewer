@@ -435,3 +435,24 @@ test("in legacy mode, opening Files does NOT auto-open the slicer", async () => 
   assert.equal(pane.openForFilesMenu(), false);
   assert.equal(pane.isMenuOpen(), false, "the Files list opens as it always did");
 });
+
+test("in platform mode, Load to slicer does not warm the legacy slice or badge 'slicing'", async () => {
+  // The warm slice is a 503 in platform mode, and its failure path would race
+  // the "Saved to platform" badge that slice-saved sets. The flow still opens
+  // the full view and hands the file over.
+  reset({ cloudOpen: true, file: "bracket.stl" });
+  globalThis.fetch = async (url) => {
+    if (url === "/api/slicer/status") return platformStatus();
+    return { ok: true, json: async () => ({ partId: "p1" }) };
+  };
+  await pane.loadStatus({ force: true });
+  calls.length = 0;
+
+  pane.loadFileToSlicer("bracket.stl");
+  await tick(); await tick(); await tick();
+  assert.ok(calls.includes("select:bracket.stl"));
+  assert.equal(calls.includes("warmSlice"), false, "no viewer-side slice in platform mode");
+  assert.equal(calls.includes("status:bracket.stl:slicing"), false);
+  assert.equal(pane.isMenuOpen(), true);
+  assert.equal(el("slicerFrame").getAttribute("src"), "/slicer/?embed=1&part=p1");
+});

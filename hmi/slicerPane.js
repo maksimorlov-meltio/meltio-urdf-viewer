@@ -360,7 +360,6 @@ export function createSlicerPaneUi({
   function loadFileToSlicer(fileName) {
     setAutoSliceFlowActive(true);
     setSelectedCloudLibraryFile(fileName, { updateSelect: true, syncDataset: true });
-    setCloudFileRowSliceStatus(fileName, "slicing");
     updateChosenFileLabel();
 
     // Open the full-view slicer now, then point its iframe at the chosen STL.
@@ -368,6 +367,15 @@ export function createSlicerPaneUi({
       setMenuOpen(true);
     }
     loadIframeForFile(fileName);
+
+    if (embedMode === "platform") {
+      // No viewer-side slice to warm: the platform slicer saves to the
+      // platform (badge "Saved to platform" arrives via slice-saved), and the
+      // legacy /api/slice/proxy answers 503 in this mode - running it anyway
+      // only races its failure path against that badge.
+      return;
+    }
+    setCloudFileRowSliceStatus(fileName, "slicing");
 
     // Warm the viewer-side slice (used by "Load to viewer") behind the slicer.
     loadCloudOverlayFromSelectedFile()

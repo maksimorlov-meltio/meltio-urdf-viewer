@@ -218,9 +218,9 @@ operator taps a row's "Load to slicer"
 
 Done on this branch (2026-11-10):
 
-* `pytest apps/dev-host/tests`: 162 passed (61 new in `tests/web/test_platform_proxy.py`
+* `pytest apps/dev-host/tests`: 161 passed (60 new in `tests/web/test_platform_proxy.py`
   against a fake platform on `httpx.MockTransport`); `pytest tests/smoke` viewer-only mode.
-* `node --test tests/js`: 233 passed (8 new platform-mode tests in
+* `node --test tests/js`: 234 passed (9 new platform-mode tests in
   `slicerPane.test.mjs`, 1 badge test in `fileLibrary.test.mjs`); eslint 0 errors;
   `bash gate.sh` all nine gates green.
 * Mutation-verified (each change broken on purpose, its test died, code
