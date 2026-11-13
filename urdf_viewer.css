@@ -2333,80 +2333,8 @@ body.settings-menu-open .topbar-settings-submenu:not([hidden]) {
   mask: var(--icon) center / contain no-repeat;
 }
 
-/* Ventilation (fan) icon: spin slowly clockwise while the button is active,
-   and stop when it is toggled off. Keyframes keep the 1.5x scale. */
-@keyframes fan-icon-spin {
-  from {
-    transform: scale(1.5) rotate(0deg);
-  }
-  to {
-    transform: scale(1.5) rotate(360deg);
-  }
-}
-
-#topbarFanToggle[aria-pressed="true"] .ui-img-icon {
-  /* Clean clockwise spin about the centre (icon art is hub-centred).
-     Duration is driven by fan speed (--fan-spin-duration, set in JS). */
-  animation: fan-icon-spin var(--fan-spin-duration, 4s) linear infinite;
-}
-
-/* Chiller thermometer icon: the mercury column rises and falls while the button
-   is active (mirrors the fan icon's active-only animation). The outline path
-   inherits the standard topbar stroke; the mercury (bulb + column) is filled to
-   match that stroke across every theme / active state. */
-#topbarChillerToggle .thermo-fill {
-  fill: rgba(235, 235, 235, 0.88);
-  stroke: none;
-}
-#topbarChillerToggle .thermo-col {
-  /* Grow/shrink from the bulb end, not the middle. */
-  transform-box: fill-box;
-  transform-origin: 50% 100%;
-}
-#topbarChillerToggle.is-active .thermo-fill,
-#topbarChillerToggle[aria-pressed="true"] .thermo-fill {
-  fill: rgba(247, 247, 247, 0.98);
-}
-#topbarChillerToggle[aria-pressed="true"] .thermo-col {
-  animation: thermo-rise 1.8s ease-in-out infinite;
-}
-body.light-mode #topbarChillerToggle .thermo-fill {
-  fill: rgba(46, 46, 46, 0.85);
-}
-body.light-mode #topbarChillerToggle.is-active .thermo-fill,
-body.light-mode #topbarChillerToggle[aria-pressed="true"] .thermo-fill {
-  fill: rgba(54, 54, 54, 0.96);
-}
-@keyframes thermo-rise {
-  0%, 100% { transform: scaleY(0.34); }
-  50% { transform: scaleY(1); }
-}
-
-/* Notification bell: swing once when a new notification arrives (the JS adds
-   .bell-ring, then removes it on animationend so it can replay). Pivot near the
-   top of the bell (where it "hangs") for a natural ring. */
-@keyframes bell-ring {
-  0% { transform: rotate(0); }
-  15% { transform: rotate(15deg); }
-  30% { transform: rotate(-13deg); }
-  45% { transform: rotate(10deg); }
-  60% { transform: rotate(-7deg); }
-  75% { transform: rotate(4deg); }
-  100% { transform: rotate(0); }
-}
-#topbarNotificationsToggle.bell-ring svg {
-  transform-origin: 50% 20%;
-  animation: bell-ring 0.9s ease-in-out;
-}
-
-/* Settings gear: rotate 90° while the settings menu is open, glide back on
-   close. Gear art is centre-symmetric so it pivots cleanly about its middle. */
-#topbarSettingsToggle svg {
-  transition: transform 0.3s ease;
-}
-#topbarSettingsToggle[aria-expanded="true"] svg {
-  transform: rotate(90deg);
-}
+/* The Fan icon is the <m600-ventilation> component now (see "Top bar icons"
+   at the end of this file); it spins itself. */
 
 /* Topbar icons tint via explicit stroke colors, not currentColor, so mirror
    those states for the masked variant. */
@@ -5375,48 +5303,6 @@ body.light-mode .spool-select-amount {
   overflow: visible;
 }
 
-.topbar-notification-toggle .topbar-notification-badge {
-  position: absolute;
-  top: 4px;
-  right: -2px;
-  min-width: 16px;
-  height: 16px;
-  border-radius: 999px;
-  padding: 0 4px;
-  border: 1px solid rgba(30, 30, 30, 0.95);
-  background: #f3b74f;
-  color: #0f0f0f;
-  font-size: 10px;
-  line-height: 14px;
-  font-weight: 700;
-  text-align: center;
-  box-shadow: 0 0 0 2px rgba(20, 20, 20, 0.9);
-}
-
-.topbar-notification-toggle .topbar-notification-badge.is-dot {
-  min-width: 10px;
-  width: 10px;
-  height: 10px;
-  padding: 0;
-  line-height: 8px;
-  color: transparent;
-}
-
-.topbar-notification-toggle.has-active-notifications {
-  border-color: rgba(236, 191, 102, 0.65);
-  background: rgba(52, 52, 52, 0.9);
-  box-shadow: inset 0 0 0 1px rgba(255, 222, 151, 0.14), 0 0 0 1px rgba(242, 190, 95, 0.2);
-}
-
-.topbar-notification-toggle.has-active-notifications svg {
-  stroke: rgba(255, 233, 186, 0.98);
-}
-
-.topbar-notification-toggle.has-critical-notifications {
-  border-color: rgba(223, 122, 122, 0.7);
-  box-shadow: inset 0 0 0 1px rgba(255, 220, 220, 0.12), 0 0 14px rgba(214, 86, 86, 0.24);
-}
-
 .topbar-notification-center {
   position: absolute;
   top: calc(100% + 20px);
@@ -5725,20 +5611,6 @@ body.light-mode .topbar-notification-center,
 body.light-mode .notification-details-modal-card {
   border-color: rgba(55, 55, 55, 0.24);
   background: rgba(251, 251, 251, 0.96);
-}
-
-body.light-mode .topbar-notification-toggle.has-active-notifications {
-  border-color: rgba(193, 142, 44, 0.6);
-  background: rgba(255, 231, 181, 0.96);
-}
-
-body.light-mode .topbar-notification-toggle.has-active-notifications svg {
-  stroke: #393939;
-}
-
-body.light-mode .topbar-notification-toggle .topbar-notification-badge {
-  border-color: rgba(240, 240, 240, 0.92);
-  box-shadow: 0 0 0 2px rgba(255, 252, 250, 0.95);
 }
 
 body.light-mode .notification-center-header h3,
@@ -7484,42 +7356,6 @@ body.files-collapsed-for-print #navDoorToggle { order: 3; }
    counts, a persistent critical banner, and transient arrival toasts.
    ========================================================================== */
 
-/* Bell: amber for warnings, red pulse for criticals (critical dominates). */
-.topbar-notification-toggle.has-warning-notifications {
-  border-color: rgba(236, 191, 102, 0.65);
-  box-shadow: inset 0 0 0 1px rgba(255, 222, 151, 0.14), 0 0 10px rgba(230, 167, 61, 0.22);
-}
-/* 2026-10-30: the pulse used to animate box-shadow, which the compositor cannot
-   accelerate -- the top bar repainted 60x a second for as long as a critical
-   notification existed (on the mock: always). Pulse the glyph's scale instead
-   (transform-only, no shadow -- DS v3). ID selector so it outranks the one-shot
-   `#topbarNotificationsToggle.bell-ring svg` only once the ring has ended. */
-#topbarNotificationsToggle.has-critical-notifications:not(.bell-ring) .ui-img-icon,
-#topbarNotificationsToggle.has-critical-notifications:not(.bell-ring) svg {
-  animation: notif-bell-pulse 1.6s ease-in-out infinite;
-  transform-origin: 50% 50%;
-}
-@keyframes notif-bell-pulse {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.1); }
-}
-@media (prefers-reduced-motion: reduce) {
-  #topbarNotificationsToggle.has-critical-notifications .ui-img-icon,
-  #topbarNotificationsToggle.has-critical-notifications svg { animation: none; }
-}
-
-/* Badge colour by highest unacknowledged severity. */
-.topbar-notification-toggle .topbar-notification-badge.badge-critical {
-  /* Deeper red so the white count digits clear WCAG AA (white on --ui-error is
-     3.58:1; on --ui-error-strong it is ~5.2:1). */
-  background: var(--ui-error-strong);
-  color: #fff;
-}
-.topbar-notification-toggle .topbar-notification-badge.badge-warning {
-  background: var(--ui-warning);
-  color: #0f0f0f;
-}
-
 /* Row left accent by severity (in addition to the existing icon/label tint). */
 .notification-card.severity-critical, .notification-card.severity-warning, .notification-card.severity-info {
   border-color: var(--ui-border-subtle);
@@ -8568,7 +8404,7 @@ body.light-mode .perm-account-chip:not(.is-signed-in)::after { background: #5f67
 }
 .move-btn:hover { border-color: var(--ui-border-accent); color: var(--ui-accent); }
 .move-btn:active { background: rgba(255, 255, 255, 0.056); }
-.move-jog-z .move-btn { flex: 0 0 40px; width: 108px; height: 40px; min-height: 0; min-width: 0; padding: 0 8px; font-family: var(--ui-font-mono); font-size: 12px; }
+.move-jog-z .move-btn { flex: 0 0 44px; width: 108px; height: 44px; min-height: 0; min-width: 0; padding: 0 8px; font-family: var(--ui-font-mono); font-size: 12px; }
 .move-step { display: flex; align-items: center; gap: 6px; margin-top: 12px; }
 .move-step-btn {
   flex: 1 1 0;
@@ -9087,81 +8923,9 @@ body.light-mode .topbar-icon[aria-expanded="true"] .ui-img-icon {
    innerHTML swap. SVG children need transform-box:view-box so the origins
    below are in the 24-unit drawing space. */
 
-/* Materials "A": the stroke reel spins a part-turn (the four spokes make it
-   read); nothing changes colour — the pressed ink comes from the shared
-   .bottom-nav [aria-pressed] stroke rule. */
-#navMaterialsToggle .spool-reel {
-  transform-box: view-box;
-  transform-origin: 12px 12px;
-  transition: transform 700ms cubic-bezier(0.34, 1.02, 0.42, 1);
-}
-#navMaterialsToggle.is-active .spool-reel,
-#navMaterialsToggle[aria-pressed="true"] .spool-reel {
-  transform: rotate(-150deg);
-}
+/* Materials and Files are web components now (see the end of this file). */
 
-/* Files "A" one-to-many: idle = a single centred sheet; open = the front
-   sheet settles down-left while two more fan out up-right from behind it, one
-   after the other. Close reverses. Tap only (keyed off aria-pressed). */
-#navFilesToggle .file-s1,
-#navFilesToggle .file-s2,
-#navFilesToggle .file-s3 {
-  transform-box: view-box;
-  transition: transform 450ms cubic-bezier(0.34, 1.02, 0.42, 1), opacity 250ms ease;
-}
-#navFilesToggle .file-s1 { transform: translate(2px, -2px); }
-#navFilesToggle .file-s2 { transform: translate(-2.5px, 2.5px); opacity: 0; }
-#navFilesToggle .file-s3 { transform: translate(-5px, 5px); opacity: 0; }
-#navFilesToggle.is-active .file-s1,
-#navFilesToggle[aria-pressed="true"] .file-s1 { transform: none; }
-#navFilesToggle.is-active .file-s2,
-#navFilesToggle[aria-pressed="true"] .file-s2 { transform: none; opacity: 1; transition-delay: 60ms; }
-#navFilesToggle.is-active .file-s3,
-#navFilesToggle[aria-pressed="true"] .file-s3 { transform: none; opacity: 1; transition-delay: 140ms; }
-
-/* Front door "A": door-closed cross-fades to door-open; the open leaf swings
-   out from its hinge (x10) as it appears. */
-#navDoorToggle .door-panel,
-#navDoorToggle .door-open {
-  transition: opacity 220ms ease;
-}
-#navDoorToggle .door-open { opacity: 0; }
-#navDoorToggle .door-leaf {
-  transform-box: view-box;
-  transform-origin: 10px 12px;
-  transform: scaleX(0.55);
-  transition: transform 450ms cubic-bezier(0.34, 1.02, 0.42, 1);
-}
-#navDoorToggle[aria-pressed="true"] .door-panel { opacity: 0; }
-#navDoorToggle[aria-pressed="true"] .door-open { opacity: 1; }
-#navDoorToggle[aria-pressed="true"] .door-leaf { transform: none; }
-#navDoorToggle svg { overflow: visible; }
-
-/* Top door "M + crane" (2026-10-13): the top cover band is lifted by a crane.
-   Open: the A-sling (.lid-sling) drops in from above and hooks the cover
-   (200 ms), then sling + cover (.lid-lift) rise 4 units straight up (450 ms).
-   Close: the cover lowers first (450 ms), then the sling lifts away (200 ms).
-   Closed = clean machine glyph, no straps visible. */
-#annotationNavTopCover .lid-lift {
-  transform-box: view-box;
-  transition: transform 450ms cubic-bezier(0.34, 1.02, 0.42, 1) 0ms;
-}
-#annotationNavTopCover .lid-sling {
-  transform-box: view-box;
-  opacity: 0;
-  transform: translateY(-5px);
-  transition: transform 200ms ease-out 450ms, opacity 200ms ease-out 450ms;
-}
-#annotationNavTopCover[aria-pressed="true"] .lid-sling { opacity: 1; transform: none; transition-delay: 0ms; }
-#annotationNavTopCover[aria-pressed="true"] .lid-lift { transform: translateY(-4px); transition-delay: 200ms; }
-
-@media (prefers-reduced-motion: reduce) {
-  #navMaterialsToggle .spool-reel,
-  #navFilesToggle .file-s1, #navFilesToggle .file-s2, #navFilesToggle .file-s3,
-  #navDoorToggle .door-panel, #navDoorToggle .door-open, #navDoorToggle .door-leaf,
-  #annotationNavTopCover .lid-lift, #annotationNavTopCover .lid-sling { transition: none; }
-}
-}
+/* Top door is a web component as well (see the end of this file). */
 
 /* ==========================================================================
    Meltio Design System v3 — component layer (2026-09-24)
@@ -9385,12 +9149,6 @@ body.files-collapsed-for-print .print-sim-view-mode.is-active {
   border-color: var(--ws-border-hover);
 }
 
-/* Static glows on the bell: drop the blurred term (the critical pulse keyframes
-   at .has-critical-notifications stay — that is a status signal). */
-.topbar-notification-toggle.has-warning-notifications { box-shadow: none; }
-.topbar-notification-toggle.has-active-notifications { box-shadow: none; }
-.topbar-notification-toggle.has-critical-notifications { box-shadow: none; }
-
 /* D5  locked panels are dimmed, never desaturated */
 .perm-denied { filter: none; }
 .control-subpanel.perm-denied { opacity: 0.5; color: var(--ws-muted); } /* K8 */
@@ -9402,14 +9160,6 @@ body.files-collapsed-for-print .print-sim-view-mode.is-active {
 /* --------------------------------------------------------------------------
    Colour (C3–C8, C11)
    -------------------------------------------------------------------------- */
-/* C3  critical count badge: flat red, page-black ink (5.6:1), no halo */
-.topbar-notification-toggle .topbar-notification-badge { box-shadow: none; }
-.topbar-notification-toggle .topbar-notification-badge.badge-critical {
-  background: #e5675f;
-  color: #07080a;
-  box-shadow: none;
-  border: 1px solid #07080a;
-}
 
 /* C4  connection chip: tinted hairline + body ink, colour lives in the dot */
 .topbar-connection {
@@ -9898,11 +9648,6 @@ body.light-mode .cloud-file-item-k,
 body.light-mode #topbarDate { color: #5f676f; }
 body.light-mode .cloud-file-item-material,
 body.light-mode .cloud-file-item-source { color: #3a4046; }
-body.light-mode .topbar-notification-toggle .topbar-notification-badge.badge-critical {
-  background: #e5675f;
-  color: #07080a;
-  border-color: #07080a;
-}
 body.light-mode .control-subpanel.perm-denied,
 body.light-mode .control-subpanel.perm-denied h3,
 body.light-mode .control-subpanel.perm-denied .control-label { color: #565d65; }
@@ -9932,7 +9677,6 @@ body.light-mode .control-subpanel.perm-denied dd { color: #565d65; }
 /* misc contrast + light fixes found in the scan */
 .spool-select-meta-sep { color: var(--ws-muted); }
 body.light-mode .spool-select-meta-sep { color: #565d65; }
-body.light-mode .topbar-notification-toggle .topbar-notification-badge { box-shadow: none; }
 body.light-mode .cloud-file-item-name { color: #07080a; }
 body.light-mode .cloud-list-tags span,
 body.light-mode .cloud-list-tag-button { color: #3a4046; }
@@ -10118,4 +9862,418 @@ body.light-mode .ds-select-option svg { stroke: #07080a; }
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+/* ==========================================================================
+   Top bar in ONE row (Maksim, 2026-11-09). On the portrait HMI the machine
+   title broke into "M600-" / "PRO-1" and the signed-out account chip stacked
+   "Sign in" over "NOT SIGNED IN" on three lines. Nothing in the top bar wraps:
+   the title and chips keep their natural width, the account chip's two texts
+   sit side by side, and the left group shrinks its gaps before anything else.
+   ========================================================================== */
+.status-panel.app-topbar .topbar-left {
+  flex-wrap: nowrap;
+  gap: 10px;
+}
+.status-panel.app-topbar .machine-title-stack {
+  min-width: max-content;
+  padding-right: 6px; /* keeps the title clear of the Connected chip at 1080 px */
+}
+.status-panel.app-topbar .machine-title,
+.status-panel.app-topbar .machine-subtitle,
+.status-panel.app-topbar .topbar-connection {
+  white-space: nowrap;
+}
+.status-panel.app-topbar .topbar-connection {
+  flex: none;
+}
+.status-panel.app-topbar .perm-account-chip {
+  flex: none;
+  white-space: nowrap;
+}
+.status-panel.app-topbar .perm-account-chip-text {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  white-space: nowrap;
+}
+.status-panel.app-topbar .perm-account-chip-level {
+  white-space: nowrap;
+}
+
+/* 2026-11-10 (Maksim): pop-up menus carry a QUIET thin outline (corners
+   included) with a small light that keeps travelling round it. The line is the
+   border-box layer of the background, so it follows the rounded corners; the
+   panel's own solid ground is repainted on the padding-box above it. An edge
+   that sits on the screen border gets no line at all. */
+@property --popup-light-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+@keyframes popup-light-run {
+  to { --popup-light-angle: 360deg; }
+}
+body .topbar-settings-menu,
+body .controls-panel,
+body .cloud-model-popup,
+body .materials-menu-popup,
+body .topbar-notification-center,
+body .topbar-utility-settings,
+body .numeric-keypad,
+body .ds-select-panel,
+body .print-sim-panel,
+body .print-stop-modal-card,
+body .advanced-pin-modal-card,
+body .notification-details-modal-card,
+body .calendar-event-modal-card {
+  --popup-ground: #12161a;
+  --popup-line: rgba(255, 255, 255, 0.2);
+  --popup-light: rgba(255, 255, 255, 0.9);
+  border: 1px solid transparent !important;
+  background:
+    linear-gradient(var(--popup-ground), var(--popup-ground)) padding-box,
+    conic-gradient(from var(--popup-light-angle),
+      var(--popup-line) 0deg, var(--popup-line) 318deg,
+      var(--popup-light) 346deg, var(--popup-line) 360deg) border-box !important;
+  animation: popup-light-run 7s linear infinite;
+}
+body .print-sim-panel,
+body .print-stop-modal-card,
+body .advanced-pin-modal-card,
+body .notification-details-modal-card,
+body .calendar-event-modal-card {
+  --popup-ground: #0d0f12;
+}
+body.light-mode .topbar-settings-menu,
+body.light-mode .controls-panel,
+body.light-mode .cloud-model-popup,
+body.light-mode .materials-menu-popup,
+body.light-mode .topbar-notification-center,
+body.light-mode .topbar-utility-settings,
+body.light-mode .numeric-keypad,
+body.light-mode .ds-select-panel,
+body.light-mode .print-sim-panel,
+body.light-mode .print-stop-modal-card,
+body.light-mode .advanced-pin-modal-card,
+body.light-mode .notification-details-modal-card,
+body.light-mode .calendar-event-modal-card {
+  --popup-ground: #ffffff;
+  --popup-line: rgba(7, 8, 10, 0.2);
+  --popup-light: rgba(7, 8, 10, 0.85);
+}
+/* Docked to the left screen edge: no line on that side. */
+body .controls-panel,
+body .cloud-model-popup,
+body .materials-menu-popup {
+  border-left: 0 !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  body .topbar-settings-menu,
+  body .controls-panel,
+  body .cloud-model-popup,
+  body .materials-menu-popup,
+  body .topbar-notification-center,
+  body .topbar-utility-settings,
+  body .numeric-keypad,
+  body .ds-select-panel,
+    body .print-sim-panel,
+  body .print-stop-modal-card,
+  body .advanced-pin-modal-card,
+  body .notification-details-modal-card,
+  body .calendar-event-modal-card {
+    animation: none;
+  }
+}
+
+/* ==========================================================================
+   Bottom bar icons and underline. All four icons are Maksim's web components
+   (2026-11-11): <m600-front-door>, <m600-top-door>, <m600-materials-icon>,
+   <m600-files-icon>, styled at the end of this block. The two door icons get
+   their positions from urdf_viewer.js (updateNavDoorStories).
+   ========================================================================== */
+.bottom-nav { --nav-story-ground: #0d0f12; --nav-story-hole: #07090b; --nav-story-track: #22272e; }
+body.light-mode .bottom-nav { --nav-story-ground: #f6f6f7; --nav-story-hole: #cfd3d8; --nav-story-track: #d9dce0; }
+/* Underline: replaces the accent underline on all four buttons. A quiet grey
+   track is always there; the bright line on top of it grows from the CENTRE to
+   both sides when the button turns on and shrinks back to the centre when it
+   turns off (Maksim, 2026-11-11: "not like loading" - timing and easing are
+   the underline of his Files + Materials demo). On = selected for Materials
+   and Files; for the two doors it is on while the door is open or opening
+   (.is-line-on, set in updateNavDoorStories). */
+#navDoorToggle::after,
+#annotationNavTopCover::after,
+#navMaterialsToggle::after,
+#navFilesToggle::after { background: transparent !important; }
+.bottom-nav-item .nav-door-track {
+  position: absolute;
+  left: 24%;
+  right: 24%;
+  bottom: 4px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--nav-story-track);
+  overflow: hidden;
+  pointer-events: none;
+  display: block;
+}
+.bottom-nav-item .nav-door-track b {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--ui-text-primary, #f1f3f5);
+  transform: scaleX(0);
+  transform-origin: 50% 50%;
+  transition: transform .45s cubic-bezier(.2, .8, .2, 1);
+}
+#navDoorToggle.is-line-on .nav-door-track b,
+#annotationNavTopCover.is-line-on .nav-door-track b,
+#navMaterialsToggle.is-active .nav-door-track b,
+#navMaterialsToggle[aria-pressed="true"] .nav-door-track b,
+#navFilesToggle.is-active .nav-door-track b,
+#navFilesToggle[aria-pressed="true"] .nav-door-track b { transform: scaleX(1); }
+@media (prefers-reduced-motion: reduce) {
+  .bottom-nav-item .nav-door-track b { transition: none; }
+}
+.bottom-nav-item.is-stop-mode .nav-door-track,
+.bottom-nav-item:disabled .nav-door-track { display: none; }
+
+/* ==========================================================================
+   Front door icon (2026-11-11): Maksim's <m600-front-door> web component +
+   cat Easter egg (ui/m600-front-door.js, ui/m600-cat-egg.js, used unmodified).
+   The drawing lives in the component's shadow root, so only its documented
+   custom properties are set here (size and position: see "Sizing" below).
+   The light-DOM svg in the button is only the print Stop square.
+   ========================================================================== */
+#navDoorToggle > m600-front-door,
+#annotationNavTopCover > m600-top-door,
+#navMaterialsToggle > m600-materials-icon,
+#navFilesToggle > m600-files-icon {
+  --m600-bg: var(--nav-story-ground);
+  flex: none;
+}
+/* Sizing (Maksim, 2026-11-11: "not aligned and different sizes"). The four
+   drawings fill their 24-unit boxes very differently, so one --icon-size for
+   all made them 29-46 px tall with four different bottom edges. One rule now:
+     - same major dimension N = --nav-icon-h (46px) at rest: the height of the
+       two portrait icons and of the Top door, the diameter of the spool;
+     - every drawing stands on the same baseline, the bottom of an N-tall
+       layout box, so the gap to the label is identical;
+     - the drawing, not its box, is centred over the label.
+   Only --icon-size and margins are set. The Top door drawing itself was
+   made taller with a square window (his pick A, see ui/m600-top-door.js). The
+   numbers are the rest-state drawing bounds in box units, stroke included -
+   re-derive them if a module is replaced:
+     front door   x 4.8-19.2   y 2.8-21.2   (14.4 x 18.4)
+     top door     x 4.0-20.0   y 4.7-21.0   (16.0 x 16.3; open it reaches y -6.3)
+     materials    x 2.1-21.9   y 2.1-21.9   (19.8 x 19.8)
+     files        x 3.5-18.3   y 3.7-23.5   (14.8 x 19.8; the module shifts its
+                                             page by -1.6 / +1.6 units)
+   --icon-size = N * 24 / major; margin-top = -N * (space above the N-tall
+   band) / major; margin-bottom = -N * (24 - bottom) / major. */
+#navDoorToggle > m600-front-door {
+  --icon-size: calc(var(--nav-icon-h, 46px) * 24 / 18.4);
+  margin: calc(var(--nav-icon-h, 46px) * -2.8 / 18.4) 0;
+}
+#annotationNavTopCover > m600-top-door {
+  --icon-size: calc(var(--nav-icon-h, 46px) * 24 / 16.3);
+  margin: calc(var(--nav-icon-h, 46px) * -4.7 / 16.3) 0 calc(var(--nav-icon-h, 46px) * -3 / 16.3);
+}
+#navMaterialsToggle > m600-materials-icon {
+  --icon-size: calc(var(--nav-icon-h, 46px) * 24 / 19.8);
+  margin: calc(var(--nav-icon-h, 46px) * -2.1 / 19.8) 0;
+}
+#navFilesToggle > m600-files-icon {
+  --icon-size: calc(var(--nav-icon-h, 46px) * 24 / 19.8);
+  margin: calc(var(--nav-icon-h, 46px) * -3.7 / 19.8) 0 calc(var(--nav-icon-h, 46px) * -0.5 / 19.8);
+  position: relative;
+  left: calc(var(--nav-icon-h, 46px) * 1.1 / 19.8);
+}
+#navDoorToggle > m600-front-door {
+  --m600-fg: currentColor;
+  --m600-interior: var(--nav-story-hole);
+}
+/* Top door, Materials + Files (2026-11-11): <m600-top-door>,
+   <m600-materials-icon>, <m600-files-icon> (ui/). They take
+   their colour from the button; --m600-bg is the bar ground, which the Top
+   door window, slot and hinge pin and the Files text lines and fold are
+   drawn in. */
+#navDoorToggle > svg { display: none !important; }
+#navDoorToggle.is-stop-mode > svg { display: block !important; }
+#navDoorToggle.is-stop-mode > m600-front-door { display: none; }
+/* All bar icons in the Front door icon's colour (Maksim, 2026-11-11): the
+   older rule dimmed unselected icons to 72 %, the door component draws at
+   full strength. Selected state still comes from the brighter label/icon
+   colour and the running line. */
+.bottom-nav .bottom-nav-item svg,
+.bottom-nav .bottom-nav-item .ui-img-icon { opacity: 1; }
+
+/* ==========================================================================
+   Top bar icons (2026-11-12, Maksim): <m600-chiller>, <m600-movement>,
+   <m600-notifications>, <m600-calendar>, <m600-settings> -- his hand-off
+   ui/m600-topbar-icons.js, used unmodified. They replace the inline svgs, the
+   light-DOM count badge and their hand-written animations (thermometer rise,
+   bell swing / pulse, gear turn). The Fan button is <m600-ventilation>
+   (ui/m600-ventilation.js, same hand-off day, unmodified): it replaces the PNG
+   mask icon and its CSS spin.
+   The drawings live in shadow roots, so the `.topbar-icon svg` rules do not
+   reach them:
+     - colour: the icon follows the button's `color` and recolours itself
+       while cooling / by notification severity. So `color` is set on the
+       BUTTON, never on the component: a document rule on the host would beat
+       the component's own state colours;
+     - size: one --icon-size per icon, derived from --icon-major (see "Size");
+     - --m600-bg: the bar ground (calendar cut-outs, badge ring). The top bar
+       buttons have no hover fill, so one value per theme is enough.
+   ========================================================================== */
+.topbar-icon {
+  --icon-major: 17px;
+  --icon-size: var(--icon-major);
+  --m600-bg: #12161a;
+  --topbar-line-track: #22272e;
+}
+body.light-mode .topbar-icon { --m600-bg: #f6f6f7; --topbar-line-track: #d9dce0; }
+@media screen and (orientation: portrait) and (min-width: 1000px) and (min-height: 1600px) {
+  .topbar-icon { --icon-major: 22px; }
+}
+@media screen and (orientation: landscape) and (min-width: 1900px) and (max-width: 1940px) and (min-height: 1000px) and (max-height: 1120px) {
+  .topbar-icon { --icon-major: 22px; }
+}
+/* Size (Maksim, 2026-11-12: "same size and slightly bigger"). The six drawings
+   fill their 24-unit boxes differently (the fan only 13.9 units, the chiller
+   19.85), so one --icon-size left the fan a third smaller than its neighbours.
+   Same rule as the bottom bar: every icon's major dimension at rest is
+   --icon-major (17px, 22px on the HMI breakpoints; it was about 14.5 / 19.5),
+   and the drawing, not its box, is centred in the button. Rest-state bounds in
+   box units, measured from a 20 px/unit render -- re-derive them if a module is
+   replaced:
+     chiller        14.05 x 19.85   centre (12.83, 12.43)
+     ventilation    13.90 x 13.90   centre ( 8.40, 12.00)   wind blows out to the right of it
+     movement       19.20 x 19.20   centre (12.00, 12.00)
+     notifications  15.60 x 18.60   centre (12.00, 12.50)   badge not counted
+     calendar       17.20 x 18.80   centre (12.00, 11.40)
+     settings       18.80 x 15.80   centre (12.00, 12.00)
+   --icon-size = major * 24 / M; the negative margin gives the extra box back so
+   every icon occupies a --icon-major square; left / top move the drawing's
+   centre onto the box centre. */
+#topbarChillerToggle > m600-chiller,
+#topbarFanToggle > m600-ventilation,
+#topbarPanToggle > m600-movement,
+#topbarNotificationsToggle > m600-notifications,
+#topbarCalendarToggle > m600-calendar,
+#topbarSettingsToggle > m600-settings { position: relative; }
+#topbarChillerToggle > m600-chiller {
+  --icon-size: calc(var(--icon-major) * 24 / 19.85);
+  margin: calc(var(--icon-major) * (19.85 - 24) / (2 * 19.85));
+  left: calc(var(--icon-major) * -0.83 / 19.85);
+  top: calc(var(--icon-major) * -0.43 / 19.85);
+}
+#topbarFanToggle > m600-ventilation {
+  --icon-size: calc(var(--icon-major) * 24 / 13.9);
+  margin: calc(var(--icon-major) * (13.9 - 24) / (2 * 13.9));
+  left: calc(var(--icon-major) * 3.6 / 13.9);
+}
+#topbarPanToggle > m600-movement {
+  --icon-size: calc(var(--icon-major) * 24 / 19.2);
+  margin: calc(var(--icon-major) * (19.2 - 24) / (2 * 19.2));
+}
+#topbarNotificationsToggle > m600-notifications {
+  --icon-size: calc(var(--icon-major) * 24 / 18.6);
+  margin: calc(var(--icon-major) * (18.6 - 24) / (2 * 18.6));
+  top: calc(var(--icon-major) * -0.5 / 18.6);
+}
+#topbarCalendarToggle > m600-calendar {
+  --icon-size: calc(var(--icon-major) * 24 / 18.8);
+  margin: calc(var(--icon-major) * (18.8 - 24) / (2 * 18.8));
+  top: calc(var(--icon-major) * 0.6 / 18.8);
+}
+#topbarSettingsToggle > m600-settings {
+  --icon-size: calc(var(--icon-major) * 24 / 18.8);
+  margin: calc(var(--icon-major) * (18.8 - 24) / (2 * 18.8));
+}
+/* Colour + highlight (Maksim, 2026-11-12: "when the top icon is active it
+   should be highlighted as the bottom icon. all icons"). Same language as the
+   bottom bar: every icon is drawn at full strength in the secondary ink and
+   steps to the primary ink while active; under it a quiet track with a bright
+   line that grows from the CENTRE to both sides in .45 s and shrinks back.
+   Active = the toggle is on (Chiller, Fan, Controls, Calendar: aria-pressed)
+   or its panel is open (Notifications, Settings: aria-expanded). The
+   components' own state colours (chiller blue, bell severity, fan red) still
+   win, because they are set on the host inside the shadow root. */
+#topbarChillerToggle,
+#topbarFanToggle,
+#topbarPanToggle,
+#topbarNotificationsToggle,
+#topbarCalendarToggle,
+#topbarSettingsToggle {
+  position: relative;
+  color: var(--ui-text-secondary);
+  transition: color 0.2s ease;
+}
+#topbarChillerToggle[aria-pressed="true"],
+#topbarFanToggle[aria-pressed="true"],
+#topbarPanToggle[aria-pressed="true"],
+#topbarCalendarToggle[aria-pressed="true"],
+#topbarNotificationsToggle[aria-expanded="true"],
+#topbarSettingsToggle[aria-expanded="true"] { color: var(--ui-text-primary); }
+#topbarChillerToggle::before,
+#topbarFanToggle::before,
+#topbarPanToggle::before,
+#topbarNotificationsToggle::before,
+#topbarCalendarToggle::before,
+#topbarSettingsToggle::before,
+#topbarChillerToggle::after,
+#topbarFanToggle::after,
+#topbarPanToggle::after,
+#topbarNotificationsToggle::after,
+#topbarCalendarToggle::after,
+#topbarSettingsToggle::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 1px;
+  width: calc(var(--icon-major) + 8px);
+  height: 2px;
+  margin-left: calc((var(--icon-major) + 8px) / -2);
+  border-radius: 1px;
+  pointer-events: none;
+}
+#topbarChillerToggle::before,
+#topbarFanToggle::before,
+#topbarPanToggle::before,
+#topbarNotificationsToggle::before,
+#topbarCalendarToggle::before,
+#topbarSettingsToggle::before { background: var(--topbar-line-track); }
+#topbarChillerToggle::after,
+#topbarFanToggle::after,
+#topbarPanToggle::after,
+#topbarNotificationsToggle::after,
+#topbarCalendarToggle::after,
+#topbarSettingsToggle::after {
+  background: var(--ui-text-primary);
+  opacity: 1;
+  transform: scaleX(0);
+  transform-origin: 50% 50%;
+  transition: transform 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+#topbarChillerToggle[aria-pressed="true"]::after,
+#topbarFanToggle[aria-pressed="true"]::after,
+#topbarPanToggle[aria-pressed="true"]::after,
+#topbarCalendarToggle[aria-pressed="true"]::after,
+#topbarNotificationsToggle[aria-expanded="true"]::after,
+#topbarSettingsToggle[aria-expanded="true"]::after { transform: scaleX(1); }
+@media (prefers-reduced-motion: reduce) {
+  #topbarChillerToggle,
+  #topbarFanToggle,
+  #topbarPanToggle,
+  #topbarNotificationsToggle,
+  #topbarCalendarToggle,
+  #topbarSettingsToggle,
+  #topbarChillerToggle::after,
+  #topbarFanToggle::after,
+  #topbarPanToggle::after,
+  #topbarNotificationsToggle::after,
+  #topbarCalendarToggle::after,
+  #topbarSettingsToggle::after { transition: none; }
 }
