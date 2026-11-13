@@ -3172,7 +3172,13 @@ function computeWireDrumVisibleTarget(spoolKey = "spool1") {
   // 2026-11-09 (Maksim): the drums stay visible while the Materials menu is
   // open too (they used to hide), and the menu view frames spools + drum
   // together -- see buildMaterialsMenuCameraState.
-  return isFeederDrumFed(spoolKey) ? 1 : 0;
+  if (isFeederDrumFed(spoolKey)) {
+    return 1;
+  }
+  // The Wire Drum card of this repo: confirming a material on it, or a print
+  // that draws from it, "connects" the drum (setWireDrumConnected) -- that
+  // still shows drum 1, by the door.
+  return spoolKey === "spool1" && manualWireDrumConnect ? 1 : 0;
 }
 // The drum's OWN door opens only when the compartment door is CLOSED and a drum
 // feeder is actively running (so you can watch it feed); if the materials door is

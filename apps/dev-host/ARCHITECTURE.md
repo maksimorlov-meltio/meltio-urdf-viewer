@@ -208,6 +208,15 @@ its root-absolute esbuild plugin.
   `canOperateMotion()` is the in-handler `machine.motion` re-check that the
   palpador sweep button reuses — the `data-requires-permission` gate on the
   markup is a convenience, this is the refusal.
+- **`navIcons.js`** — the bottom-bar icons (`createNavIconsUi(deps)`): the door
+  icons follow the real door positions (injected as 0..1 fractions), the
+  underline under the four labels, the cat Easter egg (one random open in 50).
+- **`materialsPeek.js`** — the read-only Materials card shown on a long press on
+  the materials door / a spool / a drum (`createMaterialsPeekUi(deps)`).
+- **`ui/topbarIcons.js`** — the one helper the top-bar icon call sites share.
+  The icons themselves are web components (`<m600-*>`) that live beside the
+  assembly in `static/ui/` (see §3.5), not in `hmi/`: `hmi/` only writes
+  attributes on them.
 - **`permissions.js`**, **`error_codes.js`**, **`i18n/`** — sign-in/roles UI,
   fault-code catalog, translations (classic scripts / DOM hydration).
 
@@ -224,13 +233,20 @@ its root-absolute esbuild plugin.
 - **`toolpath/toolpathTubes.js`** — builds the volumetric **bead** (tube)
   geometry so the deposition looks like a real weld bead, not a thin line.
 - **`effects/dustExhaust.js`**, **`effects/chamberInert.js`** — scene effects.
+- **`effects/feedstockHighlight.js`** — the Materials-menu highlight of the
+  focused feedstock (`createFeedstockHighlight({ THREE, scene, requestRender })`):
+  scanner rings round a drum, a spinning arc round a spool's rim. Meshes are
+  parented to the scene, never to the part.
 - **`overlays/`** — the sanctioned DOM island (3D→screen projections):
   **`assemblyAnnotations.js`** (`createAssemblyAnnotationManager(layerEl, deps)`
   — the floating door/feeder callout buttons: per-frame projection, silhouette
   avoidance, occlusion raycasts, SVG leader lines) and
   **`feederWheelFloat.js`** (the Up/Stop/Down jog panel that follows each
   feeder wheel while a feeder camera anchor is active). Host state and door /
-  hotspot actions are injected via `deps`.
+  hotspot actions are injected via `deps`. **`doorTouchHotspots.js`**
+  (`createDoorTouchHotspots(deps)`): double tap / long press on the model —
+  one raycast per tap, the nearest visible part under the finger decides; the
+  panels and their actions are injected.
 
 #### 3.3.1 The third edge — the `window` bus
 Those modules reach outside themselves three ways, and only two are obvious.
@@ -264,6 +280,12 @@ Support the point-cloud viewer (unrelated to printing):
 filters), `trend_chart.js` (2D canvas time-series chart).
 
 ### 3.5 HTML & CSS
+`static/ui/m600-*.js` — the bottom-bar and top-bar icon web components (Maksim's
+hand-off files). Imported by `urdf_viewer.js`, which registers them; shipped with
+the assembly by `tools/gen_artifact.mjs`. They are outside `hmi/` because they look
+elements up inside their own shadow roots, which the DOM contract would publish
+as page ids.
+
 - **`urdf.html`** — all the DOM: the `#scene` canvas, topbar, bottom nav
   (Door / Materials / Files / Play / Slicer), side panels, modals, and an inline
   `window.AVIS_SLICER = {…}` config block for the embedded slicer.
