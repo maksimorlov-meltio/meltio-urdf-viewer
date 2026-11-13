@@ -70,6 +70,40 @@ test("a drum gets a set of sweeping rings sized to its outline, parented to the 
   assert.ok(set.rings[0].material.opacity > set.rings[9].material.opacity, "the lead ring is the brightest");
 });
 
+test("a part attached to the scene since the last draw is measured where it now stands", () => {
+  // The second drum is kept OUT of the scene graph while hidden and attached
+  // under the (rotated) machine when it appears; nothing has redrawn in
+  // between, so its own world matrix is still the detached one. Measured with
+  // that, the drum lies on its side and the rings come out as a huge ellipse.
+  const { scene, highlight } = world();
+  const machine = new THREE.Group();
+  machine.rotation.x = -Math.PI / 2;      // machine-local +Y is world up... for the test
+  machine.position.set(0.5, -0.2, 0);
+  scene.add(machine);
+  scene.updateMatrixWorld(true);
+
+  const link = new THREE.Group();
+  link.name = "link:wire_drum_2_link";
+  const geometry = new THREE.CylinderGeometry(0.25, 0.25, 0.6, 48, 6);
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+  link.add(mesh);
+  // Like the real thing: the part hangs in a joint frame, and it is the FRAME
+  // that is attached. The part's own parent is therefore the stale one.
+  const frame = new THREE.Group();
+  frame.add(link);
+  frame.updateMatrixWorld(true);           // world matrices of the DETACHED state
+  machine.add(frame);                      // ...attached, and nothing redrawn
+
+  highlight.set(mesh, true);
+  highlight.update(0);
+  const set = [...highlight.getSets().values()][0];
+  for (const ring of set.rings) {
+    assert.ok(Math.abs(ring.scale.x - 0.264) < 0.01 && Math.abs(ring.scale.y - 0.264) < 0.01,
+      `ring ${ring.scale.x.toFixed(3)} x ${ring.scale.y.toFixed(3)}: measured in the detached pose`);
+    assert.ok(Math.abs(ring.position.x - 0.5) < 0.01 && Math.abs(ring.position.y + 0.2) < 0.01);
+  }
+});
+
 test("the rings sweep: the lead ring is at the top at t=0 and at the bottom half a cycle later", () => {
   const { scene, highlight } = world();
   const drum = part(scene, "wire_drum_link", drumGeometry(0.25, 0.6));

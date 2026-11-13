@@ -70,7 +70,11 @@ export function createFeedstockHighlight({ THREE, scene, requestRender }) {
   }
 
   function buildFeedstockScanProfile(anchor, meshes, axis = "z") {
-    anchor.updateMatrixWorld(true);
+    // Parents too: a part that was attached to the scene since the last draw
+    // (the second drum lives in the scene graph only while it shows) still
+    // carries the world matrix of its detached state, i.e. without the
+    // machine's own rotation -- the outline would be measured on its side.
+    anchor.updateWorldMatrix(true, true);
     const origin = new THREE.Vector3().setFromMatrixPosition(anchor.matrixWorld);
     // World-space vertices (relative to the anchor) per mesh, then the height range.
     const parts = [];
@@ -236,7 +240,7 @@ export function createFeedstockHighlight({ THREE, scene, requestRender }) {
     return geometry;
   }
   function createFeedstockSpinSet(anchor, meshes) {
-    anchor.updateMatrixWorld(true);
+    anchor.updateWorldMatrix(true, true); // parents too, see buildFeedstockScanProfile
     const origin = new THREE.Vector3().setFromMatrixPosition(anchor.matrixWorld);
     const bounds = new THREE.Box3();
     for (const meshNode of meshes) {
