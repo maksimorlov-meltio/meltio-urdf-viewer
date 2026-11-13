@@ -6,6 +6,8 @@
 //   onOpen() — close every other screen/panel (screen exclusivity is the
 //              caller's concern; this module only renders itself)
 
+import { setTopbarIconActive } from "./ui/topbarIcons.js";
+
 export
 function formatCalendarDateTime(dateLike) {
   const date = new Date(dateLike);
@@ -22,6 +24,8 @@ function formatCalendarDateTime(dateLike) {
 
 export function createCalendarUi({ escapeHtml, markUserActivity, toLocalDateTimeInputValue, materialLibrary, getFileLibraryEntries, onOpen }) {
 const topbarCalendarToggleEl = document.getElementById("topbarCalendarToggle");
+// <m600-calendar> inside the button (hmi/ui/topbarIcons.js): `active` while the screen is open.
+const topbarCalendarIconEl = topbarCalendarToggleEl ? topbarCalendarToggleEl.querySelector("m600-calendar") : null;
 const calendarScreenEl = document.getElementById("calendarScreen");
 const calendarReturnViewerEl = document.getElementById("calendarReturnViewer");
 const calendarAddEventEl = document.getElementById("calendarAddEvent");
@@ -694,6 +698,7 @@ function setCalendarScreenOpen(isOpen) {
     topbarCalendarToggleEl.setAttribute("aria-pressed", isCalendarScreenOpen ? "true" : "false");
     topbarCalendarToggleEl.classList.toggle("is-active", isCalendarScreenOpen);
   }
+  setTopbarIconActive(topbarCalendarIconEl, isCalendarScreenOpen);
 
   if (isCalendarScreenOpen) {
     onOpen(); // screen exclusivity: the host closes every other screen/panel

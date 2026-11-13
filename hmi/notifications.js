@@ -20,7 +20,14 @@ const {
 } = deps;
 
 const topbarNotificationsToggleEl = document.getElementById("topbarNotificationsToggle");
-const topbarNotificationBadgeEl = document.getElementById("topbarNotificationBadge");
+// <m600-notifications> inside the button draws the bell, its severity colour and
+// the count badge (hmi/ui/topbarIcons.js); see updateNotificationBellState.
+const topbarBellIconEl = topbarNotificationsToggleEl
+  ? topbarNotificationsToggleEl.querySelector("m600-notifications")
+  : null;
+// Last values written to the bell.
+let topbarBellSeverity = "";
+let topbarBellCount = -1;
 const topbarNotificationCenterEl = document.getElementById("topbarNotificationCenter");
 const notificationCenterCloseEl = document.getElementById("notificationCenterClose");
 const notificationActiveCountEl = document.getElementById("notificationActiveCount");
@@ -59,7 +66,6 @@ const NOTIFICATION_SEVERITY_LABELS = Object.freeze({
   warning: "Warning",
   info: "Info",
 });
-const NOTIFICATION_MAX_BADGE_COUNT = 99;
 const NOTIFICATION_DETAIL_CAUSES = Object.freeze({
   emergency_estop: "Emergency stop latch is engaged, safety relay is open, or hardware safety loop is not closed.",
   arm_machine_required: "Machine state requires an arm/enable transition before process continuation.",
@@ -457,6 +463,11 @@ function setNotificationCenterOpen(isOpen) {
   if (isNotificationCenterOpen && typeof clearNotificationToasts === "function") {
     clearNotificationToasts();
   }
+  // Opening the list is the operator's acknowledgement for the bell: an alarm
+  // stops ringing (the icon keeps its colour and count).
+  if (isNotificationCenterOpen) {
+    acknowledgeTopbarBell();
+  }
 
   document.body.classList.toggle("notification-center-open", isNotificationCenterOpen);
 
@@ -490,44 +501,54 @@ function setNotificationFilter(nextFilter) {
   renderNotificationCenter();
 }
 
+// Top bar bell: <m600-notifications> draws the bell, its severity colour and the
+// count badge. Hand-off contract: severity = the highest OPEN severity, count =
+// the number of open notifications. The component rings once by itself whenever
+// the count goes up and, on an alarm, keeps ringing until it is acknowledged.
+// Only CHANGED values are written: this runs on every notification render, and
+// re-setting severity="alarm" would clear `acknowledged` and restart the ring.
+function acknowledgeTopbarBell() {
+  if (topbarBellIconEl && !topbarBellIconEl.hasAttribute("acknowledged")) {
+    topbarBellIconEl.setAttribute("acknowledged", "");
+  }
+}
+
 function updateNotificationBellState() {
-  if (!topbarNotificationsToggleEl) {
+  if (!topbarBellIconEl) {
     return;
   }
 
-  const notifications = [...notificationsById.values()];
-  const activeNotifications = notifications.filter((item) => item.status !== "resolved");
-  // "Needs attention" = unacknowledged AND unresolved. The badge reflects this so
-  // acknowledging (marking seen) clears the count even while the issue persists.
-  const unacknowledged = notifications.filter((item) => item.status === "active");
-  const criticalCount = getNotificationSeverityCount(activeNotifications, "critical");
-  const warningCount = getNotificationSeverityCount(activeNotifications, "warning");
-
-  topbarNotificationsToggleEl.classList.toggle("has-active-notifications", activeNotifications.length > 0);
-  topbarNotificationsToggleEl.classList.toggle("has-critical-notifications", criticalCount > 0);
-  // Amber bell only when the top active severity is a warning (critical dominates).
-  topbarNotificationsToggleEl.classList.toggle("has-warning-notifications", criticalCount === 0 && warningCount > 0);
-
-  if (!topbarNotificationBadgeEl) {
-    return;
+  const openNotifications = [...notificationsById.values()].filter((item) => item.status !== "resolved");
+  const count = openNotifications.length;
+  let severity = "none";
+  if (getNotificationSeverityCount(openNotifications, "critical") > 0) {
+    severity = "alarm";
+  } else if (getNotificationSeverityCount(openNotifications, "warning") > 0) {
+    severity = "warning";
+  } else if (count > 0) {
+    severity = "info";
   }
 
-  if (!unacknowledged.length) {
-    topbarNotificationBadgeEl.hidden = true;
-    topbarNotificationBadgeEl.textContent = "";
-    topbarNotificationBadgeEl.classList.remove("badge-critical", "badge-warning");
-    return;
+  // Plain attribute writes (what the component's own setState does): they work
+  // whether or not the custom element is registered yet, so this module does
+  // not depend on the embedder's import order. Severity first, then the count.
+  if (severity !== topbarBellSeverity) {
+    topbarBellSeverity = severity;
+    topbarBellIconEl.setAttribute("severity", severity);
+  }
+  if (count !== topbarBellCount) {
+    topbarBellCount = count;
+    topbarBellIconEl.setAttribute("count", String(count));
   }
 
-  topbarNotificationBadgeEl.hidden = false;
-  const showCount = unacknowledged.length <= NOTIFICATION_MAX_BADGE_COUNT;
-  topbarNotificationBadgeEl.classList.toggle("is-dot", !showCount);
-  topbarNotificationBadgeEl.textContent = showCount ? String(unacknowledged.length) : "";
-  // Colour the badge by the highest unacknowledged severity.
-  const hasCritU = unacknowledged.some((n) => n.severity === "critical");
-  const hasWarnU = unacknowledged.some((n) => n.severity === "warning");
-  topbarNotificationBadgeEl.classList.toggle("badge-critical", hasCritU);
-  topbarNotificationBadgeEl.classList.toggle("badge-warning", !hasCritU && hasWarnU);
+  // The alarm keeps ringing only while a critical is still unacknowledged and
+  // the list is not on screen.
+  const hasUnacknowledgedCritical = openNotifications.some(
+    (item) => item.severity === "critical" && item.status === "active",
+  );
+  if (severity === "alarm" && (!hasUnacknowledgedCritical || isNotificationCenterOpen)) {
+    acknowledgeTopbarBell();
+  }
 }
 
 // --- Arrival toasts (UX pass) ----------------------------------------------
@@ -569,65 +590,6 @@ function syncNotificationToasts() {
   for (const id of [...notificationToastedIds]) {
     if (!activeIds.has(id)) notificationToastedIds.delete(id);
   }
-}
-
-// --- Bell arrival animation ------------------------------------------------
-// Swing the bell icon whenever a genuinely new (any-severity) notification
-// becomes active. Uses its own "seen" set, seeded on first run so the initial
-// batch on load doesn't ring. Resolved ids are pruned so a re-activation rings
-// again.
-const bellArrivalSeenIds = new Set();
-let bellArrivalInitialized = false;
-
-function ringNotificationBell() {
-  const el = topbarNotificationsToggleEl;
-  if (!el) {
-    return;
-  }
-  // Restart the one-shot animation even if it is already applied.
-  el.classList.remove("bell-ring");
-  void el.offsetWidth; // force reflow so re-adding the class replays it
-  el.classList.add("bell-ring");
-}
-
-function syncNotificationBellArrival() {
-  const activeIds = [...notificationsById.values()]
-    .filter((n) => n.status === "active")
-    .map((n) => n.id);
-  const activeIdSet = new Set(activeIds);
-
-  if (!bellArrivalInitialized) {
-    activeIds.forEach((id) => bellArrivalSeenIds.add(id));
-    bellArrivalInitialized = true;
-    return;
-  }
-
-  let hasNew = false;
-  for (const id of activeIds) {
-    if (!bellArrivalSeenIds.has(id)) {
-      bellArrivalSeenIds.add(id);
-      hasNew = true;
-    }
-  }
-  // Drop ids that are no longer active so they ring again if re-raised.
-  for (const id of [...bellArrivalSeenIds]) {
-    if (!activeIdSet.has(id)) {
-      bellArrivalSeenIds.delete(id);
-    }
-  }
-
-  if (hasNew) {
-    ringNotificationBell();
-  }
-}
-
-if (topbarNotificationsToggleEl) {
-  // Clear the one-shot class when the swing finishes so it can replay cleanly.
-  topbarNotificationsToggleEl.addEventListener("animationend", (event) => {
-    if (event.animationName === "bell-ring") {
-      topbarNotificationsToggleEl.classList.remove("bell-ring");
-    }
-  });
 }
 
 // --- Notification history log ----------------------------------------------
@@ -1178,7 +1140,6 @@ function renderNotificationCenter() {
   }
   updateNotificationBellState();
   syncNotificationToasts();
-  syncNotificationBellArrival();
   syncNotificationHistory();
 }
 
@@ -1210,6 +1171,7 @@ function acknowledgeNotification(notificationId) {
     ...current,
     status: "acknowledged",
   });
+  acknowledgeTopbarBell();
   renderNotificationCenter();
   return true;
 }

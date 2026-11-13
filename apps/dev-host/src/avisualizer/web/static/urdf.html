@@ -7,7 +7,7 @@
   <!-- Inline SVG data-URI: no extra file, no extra route, and it stops the
        /favicon.ico 404 the browser fires on every load. -->
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230f1216'/%3E%3Cpath d='M8 23V9l8 6 8-6v14' fill='none' stroke='%234da3ff' stroke-width='3' stroke-linejoin='round' stroke-linecap='round'/%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="/static/urdf_viewer.css?v=271" />
+  <link rel="stylesheet" href="/static/urdf_viewer.css?v=292" />
 </head>
 <body class="controls-panel-collapsed">
   <div class="status-panel app-topbar">
@@ -38,23 +38,19 @@
       <span id="topbarPrintFinish" class="tpp-finish"></span>
     </div>
 
+    <!-- Chiller / Controls / Notifications / Calendar / Settings icons are web
+         components from ui/m600-topbar-icons.js, the Fan icon is
+         ui/m600-ventilation.js (imported by the app entry);
+         urdf_viewer.js mirrors app state into their attributes. -->
     <div class="topbar-right" aria-label="Top bar actions">
       <button id="topbarChillerToggle" class="topbar-icon" type="button" aria-label="Chiller" aria-pressed="false">
-        <svg class="thermo-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z" />
-          <circle class="thermo-fill thermo-bulb" cx="11.5" cy="18.5" r="2.7" />
-          <rect class="thermo-fill thermo-col" x="10.2" y="6" width="2.6" height="14" rx="1.3" />
-        </svg>
+        <m600-chiller state="idle"></m600-chiller>
       </button>
       <button id="topbarFanToggle" class="topbar-icon" type="button" aria-label="Fan" aria-pressed="false">
-        <svg class="ui-img-icon" style="--icon: url('/static/icons/ventilation.png?v=3')" aria-hidden="true" focusable="false"></svg>
+        <m600-ventilation state="stopped"></m600-ventilation>
       </button>
       <button id="topbarPanToggle" class="topbar-icon" type="button" aria-label="Controls" title="Controls" aria-pressed="false">
-        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <path d="M12 4v16M4 12h16" />
-          <path d="m12 4 2.5 2.5M12 4 9.5 6.5M12 20l2.5-2.5M12 20l-2.5-2.5" />
-          <path d="m4 12 2.5-2.5M4 12l2.5 2.5M20 12l-2.5-2.5M20 12l-2.5 2.5" />
-        </svg>
+        <m600-movement></m600-movement>
       </button>
       <button
         id="topbarNotificationsToggle"
@@ -64,11 +60,7 @@
         aria-controls="topbarNotificationCenter"
         aria-expanded="false"
       >
-        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <path d="M12 21a2.5 2.5 0 0 0 2.4-2h-4.8A2.5 2.5 0 0 0 12 21Z" />
-          <path d="M5 17h14l-1.6-2.4V10a5.4 5.4 0 0 0-10.8 0v4.6L5 17Z" />
-        </svg>
-        <span id="topbarNotificationBadge" class="topbar-notification-badge" aria-hidden="true" hidden></span>
+        <m600-notifications severity="none" count="0"></m600-notifications>
       </button>
       <section
         id="topbarNotificationCenter"
@@ -108,10 +100,7 @@
         </footer>
       </section>
       <button id="topbarCalendarToggle" class="topbar-icon" type="button" aria-label="Calendar" aria-pressed="false">
-        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <rect x="4" y="5" width="16" height="15" rx="2" />
-          <path d="M4 9h16M8 3v4M16 3v4" />
-        </svg>
+        <m600-calendar></m600-calendar>
       </button>
       <button
         id="topbarSettingsToggle"
@@ -121,10 +110,7 @@
         aria-controls="topbarSettingsMenu"
         aria-expanded="false"
       >
-        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <path d="M12 8.5A3.5 3.5 0 1 0 12 15.5A3.5 3.5 0 1 0 12 8.5Z" />
-          <path d="M19 12a7.1 7.1 0 0 0-.1-1.2l2.1-1.6-2-3.4-2.6.8a7.8 7.8 0 0 0-2.1-1.2L14 2h-4l-.3 3.4c-.8.3-1.5.7-2.1 1.2L5 5.8l-2 3.4 2.1 1.6A7.1 7.1 0 0 0 5 12c0 .4 0 .8.1 1.2L3 14.8l2 3.4 2.6-.8c.6.5 1.3.9 2.1 1.2L10 22h4l.3-3.4c.8-.3 1.5-.7 2.1-1.2l2.6.8 2-3.4-2.1-1.6c.1-.4.1-.8.1-1.2Z" />
-        </svg>
+        <m600-settings></m600-settings>
       </button>
       <div id="topbarSettingsMenu" class="topbar-settings-menu" aria-hidden="true" hidden>
         <header class="topbar-settings-header">
@@ -164,6 +150,7 @@
             <button id="settingsSetupTimelapseButton" type="button">Timelapse</button>
             <button id="settingsSetupBedMaintenanceButton" type="button">Bed maintenance</button>
             <button id="settingsLightToggle" type="button" role="switch" aria-checked="false" aria-pressed="false"><span class="ds-switch-label">Light mode</span><span class="ds-switch" aria-hidden="true"></span></button>
+            <button id="settingsDoorCatButton" type="button">Door cat: 1 in 50 opens</button>
           </div>
         </section>
 
@@ -1044,30 +1031,23 @@
 
   <nav class="bottom-nav" aria-label="Primary actions">
     <button id="navDoorToggle" class="bottom-nav-item" type="button" aria-pressed="false">
-      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" data-mode="door-closed">
-        <g class="door-panel"><path d="M19 21V5a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v16"/><path d="M2 21h20"/><path d="M9 12h.01"/></g><g class="door-open"><path d="M10 21H2"/><path d="M10 3H7a2 2 0 0 0-2 2v16"/><path d="M22 21h-3"/><g class="door-leaf"><path d="M14 12h.01"/><path d="M19 21V5a2 2 0 0 0-1.675-1.974l-6.163-1.013A1 1 0 0 0 10 3v18a1 1 0 0 0 1.124.992z"/></g></g>
-      </svg>
+      <m600-front-door id="navFrontDoorIcon" aria-hidden="true"></m600-front-door>
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" data-mode="door"></svg>
       <span data-i18n="nav.openDoor">Front door</span>
     </button>
 
     <button id="annotationNavTopCover" class="bottom-nav-item" type="button" aria-pressed="false">
-      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" data-mode="top-closed">
-        <g><path d="M3 21V7"/><path d="M21 21V7"/><path d="M3 21h18"/><rect x="7" y="11" width="10" height="6" rx="1"/><g class="lid-lift"><g class="lid-cover"><path d="M3 7V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2"/><path d="M3 7h18"/></g><g class="lid-sling"><path d="M6 3l6-4.5 6 4.5"/><path d="M12-1.5V-4"/></g></g></g>
-      </svg>
+      <m600-top-door id="navTopDoorIcon" aria-hidden="true"></m600-top-door>
       <span data-i18n="nav.topDoor">Top door</span>
     </button>
 
     <button id="navMaterialsToggle" class="bottom-nav-item" type="button" aria-pressed="false">
-      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" data-mode="materials-idle">
-        <g class="spool-reel"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/><path d="M12 3v6.5M12 14.5V21M3 12h6.5M14.5 12H21"/></g>
-      </svg>
+      <m600-materials-icon id="navMaterialsIcon" aria-hidden="true"></m600-materials-icon>
       <span data-i18n="nav.materials">Materials</span>
     </button>
 
     <button id="navFilesToggle" class="bottom-nav-item" type="button" aria-pressed="false">
-      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" data-mode="outline">
-        <g><g class="file-s3"><path d="M8 3.5V2.5A1.5 1.5 0 0 1 9.5 1h8.5L22 5v10.5a1.5 1.5 0 0 1-1.5 1.5h-1"/></g><g class="file-s2"><path d="M5.5 6V5A1.5 1.5 0 0 1 7 3.5h8.5l4 4V18a1.5 1.5 0 0 1-1.5 1.5H17"/></g><g class="file-s1"><path d="M13 6H4.5A1.5 1.5 0 0 0 3 7.5v13A1.5 1.5 0 0 0 4.5 22h11a1.5 1.5 0 0 0 1.5-1.5V10Z"/><path d="M12.5 6v3a1.5 1.5 0 0 0 1.5 1.5H17"/></g></g>
-      </svg>
+      <m600-files-icon id="navFilesIcon" aria-hidden="true"></m600-files-icon>
       <span data-i18n="nav.files">Files</span>
     </button>
 
