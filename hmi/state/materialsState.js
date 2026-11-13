@@ -285,6 +285,15 @@ export function getSelectedPrintJobRequiredGrams() {
   return DEFAULT_PRINT_JOB_USAGE_GRAMS;
 }
 
+// A feeder is LOADED when a material is assigned to it and some of it is left.
+// Unload clears both, a fresh install has neither (the default amounts belong to
+// "Not assigned"). An unloaded feeder shows no feedstock in the scene -- neither
+// its spool nor its drum (Maksim, 2026-11-13).
+export function isFeederLoaded(spoolKey) {
+  return Boolean(hotspotMaterialAssignments[spoolKey])
+    && (Number(spoolRemainingAmountGramsByKey[spoolKey]) || 0) > 0;
+}
+
 export function getSpoolRemainingAmountText(spoolKey) {
   return formatGramsText(spoolRemainingAmountGramsByKey[spoolKey]);
 }

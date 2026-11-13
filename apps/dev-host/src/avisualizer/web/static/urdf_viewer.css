@@ -8464,43 +8464,6 @@ body.light-mode .move-step-btn.is-active {
    mirror .move-btn's sizing/hover/active treatment so the Feeder panel reads
    as the same family as the Move panel above it.
    ========================================================================== */
-.feeder-view-toggle {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  width: 100%;
-  min-height: 44px;
-  border: 1px solid var(--ui-border-subtle);
-  border-radius: var(--ui-radius-sm);
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--ui-text-primary);
-  font-size: 13px;
-  font-weight: var(--ui-font-weight-medium);
-  letter-spacing: 0.02em;
-  cursor: pointer;
-  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
-}
-.feeder-view-toggle:hover:not(:disabled) { border-color: var(--ui-border-accent); color: var(--ui-accent); }
-.feeder-view-toggle:disabled { opacity: 0.5; cursor: not-allowed; }
-.feeder-view-toggle.active,
-.feeder-view-toggle[aria-pressed="true"] {
-  border-color: var(--ui-border-accent);
-  background: rgba(255, 255, 255, 0.09);
-  color: var(--ui-text-primary);
-  box-shadow: var(--ui-shadow-accent);
-}
-.feeder-view-icon {
-  width: 18px;
-  height: 18px;
-  flex: 0 0 auto;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.7;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
 .feeder-jog-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -8522,17 +8485,26 @@ body.light-mode .move-step-btn.is-active {
   color: var(--ui-text-muted);
 }
 .feeder-jog-btn {
-  min-height: 44px;
-  display: grid;
-  place-items: center;
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   border: 1px solid var(--ui-border-subtle);
   border-radius: var(--ui-radius-sm);
   background: rgba(255, 255, 255, 0.05);
   color: var(--ui-text-primary);
-  font-size: 16px;
+  font-size: 14px;
+  font-weight: 600;
   cursor: pointer;
   transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
 }
+.feeder-jog-glyph { font-size: 12px; line-height: 1; }
+/* Stop sits between Up and Down; it is lit while that wheel stands still. */
+.feeder-jog-stop { color: var(--ui-text-muted); }
+/* `.controls-panel button` (0,1,1) sets the panel-wide tap height and font size;
+   these three are the operator's main jog targets, so they are taller. */
+.controls-panel button.feeder-jog-btn { min-height: 52px; font-size: 14px; }
 .feeder-jog-btn:hover:not(:disabled) { border-color: var(--ui-border-accent); color: var(--ui-accent); }
 .feeder-jog-btn:active:not(:disabled) { background: rgba(255, 255, 255, 0.056); }
 .feeder-jog-btn:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -9901,6 +9873,97 @@ body.light-mode .ds-select-option svg { stroke: #07080a; }
   white-space: nowrap;
 }
 
+/* ==========================================================================
+   2026-11-10 (Maksim) -- sign-in chip, sign-in prompt, Settings menu gap.
+   ========================================================================== */
+/* Signed out: just "Sign in" -- no status dot, no second line; the button
+   highlights on hover. */
+.perm-account-chip:not(.is-signed-in)::after { content: none; }
+.perm-account-chip:not(.is-signed-in) { padding-right: 14px; transition: background 0.15s ease, border-color 0.15s ease; }
+.perm-account-chip:not(.is-signed-in):hover,
+.perm-account-chip:not(.is-signed-in):focus-visible {
+  border-color: rgba(255, 255, 255, 0.60);
+  background: rgba(255, 255, 255, 0.08);
+}
+body.light-mode .perm-account-chip:not(.is-signed-in):hover,
+body.light-mode .perm-account-chip:not(.is-signed-in):focus-visible {
+  border-color: rgba(7, 8, 10, 0.55);
+  background: rgba(7, 8, 10, 0.06);
+}
+/* A signed-out tap on a locked control pulses the chip (white accent, DS v3). */
+@keyframes permSignInAttention {
+  0%, 100% { background: transparent; border-color: rgba(255, 255, 255, 0.30); }
+  50% { background: rgba(255, 255, 255, 0.20); border-color: #ffffff; }
+}
+.perm-account-chip.perm-attention:not(.is-signed-in) {
+  animation: permSignInAttention 0.8s ease-in-out 3;
+}
+@keyframes permSignInAttentionLight {
+  0%, 100% { background: transparent; border-color: rgba(7, 8, 10, 0.30); }
+  50% { background: rgba(7, 8, 10, 0.16); border-color: #07080a; }
+}
+body.light-mode .perm-account-chip.perm-attention:not(.is-signed-in) {
+  animation-name: permSignInAttentionLight;
+}
+/* Settings account block, signed out: avatar + one full-width Sign in button. */
+.perm-settings-account.is-signed-out .perm-settings-account-info { flex: none; }
+.perm-settings-account.is-signed-out .perm-settings-account-actions { flex: 1 1 auto; min-width: 0; }
+.perm-settings-account.is-signed-out .perm-settings-account-actions > button { width: 100%; }
+/* Settings menu hangs at the SAME distance below the top bar as the Controls
+   panel (was 1 px under the bar). Tops mirror the .controls-panel media rules. */
+.topbar-settings-menu { position: fixed; top: 84px; right: 12px; }
+@media screen and (orientation: portrait) and (min-width: 1000px) and (min-height: 1600px) {
+  .topbar-settings-menu { top: 122px; right: 14px; }
+}
+@media screen and (orientation: landscape) and (min-width: 1900px) and (max-width: 1940px) and (min-height: 1000px) and (max-height: 1120px) {
+  .topbar-settings-menu { top: 96px; }
+}
+
+/* ==========================================================================
+   2026-11-10 -- Materials peek card (long press on the materials door / drum).
+   DS v3: solid ground, hairline border, no shadow, white accent.
+   ========================================================================== */
+.materials-peek {
+  position: fixed;
+  z-index: 240;
+  width: min(320px, calc(100vw - 24px));
+  padding: 14px 16px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
+  background: #12161a;
+  color: var(--ui-text-primary, #e8eaed);
+  pointer-events: auto;
+}
+.materials-peek[hidden] { display: none; }
+.materials-peek-title {
+  font-family: var(--ui-font-mono, monospace);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ui-text-muted, #8a929b);
+  margin-bottom: 10px;
+}
+.materials-peek-row { padding: 10px 0; border-top: 1px solid rgba(255, 255, 255, 0.08); }
+.materials-peek-row:first-of-type { border-top: 0; padding-top: 0; }
+.materials-peek-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.materials-peek-feeder { font-size: 12px; font-weight: 600; }
+.materials-peek-status {
+  font-family: var(--ui-font-mono, monospace);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--ui-text-muted, #8a929b);
+  white-space: nowrap;
+}
+.materials-peek-material { margin-top: 4px; font-size: 16px; font-weight: 600; line-height: 1.25; }
+.materials-peek-bar { margin-top: 8px; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.10); overflow: hidden; }
+.materials-peek-bar span { display: block; height: 100%; border-radius: 2px; background: #e8eaed; }
+.materials-peek-amount { margin-top: 6px; font-family: var(--ui-font-mono, monospace); font-size: 12px; color: var(--ui-text-muted, #8a929b); }
+.materials-peek-hint { margin-top: 10px; font-size: 11px; color: var(--ui-text-muted, #8a929b); }
+body.light-mode .materials-peek { background: #ffffff; border-color: rgba(7, 8, 10, 0.16); color: #07080a; }
+body.light-mode .materials-peek-row { border-top-color: rgba(7, 8, 10, 0.10); }
+body.light-mode .materials-peek-bar { background: rgba(7, 8, 10, 0.10); }
+body.light-mode .materials-peek-bar span { background: #07080a; }
+
 /* 2026-11-10 (Maksim): pop-up menus carry a QUIET thin outline (corners
    included) with a small light that keeps travelling round it. The line is the
    border-box layer of the background, so it follows the rounded corners; the
@@ -9922,6 +9985,7 @@ body .topbar-notification-center,
 body .topbar-utility-settings,
 body .numeric-keypad,
 body .ds-select-panel,
+body .materials-peek,
 body .print-sim-panel,
 body .print-stop-modal-card,
 body .advanced-pin-modal-card,
@@ -9953,6 +10017,7 @@ body.light-mode .topbar-notification-center,
 body.light-mode .topbar-utility-settings,
 body.light-mode .numeric-keypad,
 body.light-mode .ds-select-panel,
+body.light-mode .materials-peek,
 body.light-mode .print-sim-panel,
 body.light-mode .print-stop-modal-card,
 body.light-mode .advanced-pin-modal-card,
@@ -9977,7 +10042,8 @@ body .materials-menu-popup {
   body .topbar-utility-settings,
   body .numeric-keypad,
   body .ds-select-panel,
-    body .print-sim-panel,
+  body .materials-peek,
+  body .print-sim-panel,
   body .print-stop-modal-card,
   body .advanced-pin-modal-card,
   body .notification-details-modal-card,
@@ -10041,7 +10107,8 @@ body.light-mode .bottom-nav { --nav-story-ground: #f6f6f7; --nav-story-hole: #cf
 
 /* ==========================================================================
    Front door icon (2026-11-11): Maksim's <m600-front-door> web component +
-   cat Easter egg (ui/m600-front-door.js, ui/m600-cat-egg.js, used unmodified).
+   cat Easter egg (ui/m600-front-door.js used unmodified; ui/m600-cat-egg.js
+   with bigger sleeping z's, 2026-11-13).
    The drawing lives in the component's shadow root, so only its documented
    custom properties are set here (size and position: see "Sizing" below).
    The light-DOM svg in the button is only the print Stop square.

@@ -26,14 +26,19 @@ What it does
     the full PBR set. Bound whole to the atlas path the screen washed out (studio
     reflections + roughness 0.43 on a flat screenshot: median luminance 27 -> 122),
     and the delivered maps are constant everywhere except on the hose strip.
-  * Display hose (flex_display_hose): the ribbed hose in Display.glb is modelled for a
-    display that stands VERTICAL, but the URDF tilts the display 4 deg back at
-    display_joint (since 2026-05). Rigidly attached, the hose's chassis end swung
-    53 mm sideways and stopped beside the SCREEN CONNECTION elbow instead of in its
-    opening. The hose is therefore bent at build time: the display end keeps
-    following the display, the chassis end is put where the delivery has it relative
-    to the CHASSIS and centred on the elbow's bore, smooth blend in between. The tilt
-    is read from the URDF, so changing it and re-running `glbs` re-bends the hose.
+  * Display hose (route_display_hose, tools/display_hose.py): the ribbed hose in
+    Display.glb is modelled for a display that stands VERTICAL, but the URDF tilts
+    the display 4 deg back at display_joint (since 2026-05), so as delivered its
+    chassis end stops 46 mm beside the SCREEN CONNECTION elbow. It is also a coarse
+    tube (24 rings of 12 sides) that arrives at the elbow 10 deg off its axis.
+    Bending that mesh into place (2026-11-12/13) stretched some rings by up to 37 %,
+    and with them the rib texture. So the delivered hose is now only MEASURED -- its
+    display-side end ring, its radius, its strip of the atlas and how much texture
+    it carries per millimetre -- and a new one is built between the two fittings:
+    the shape a conduit of the given length hangs in by itself (an elastic rod
+    clamped straight in the display gland and in the elbow's bore), as a round tube
+    with close rings and the texture laid evenly by length. The tilt is read from
+    the URDF, so changing it and re-running `glbs` re-routes the hose.
   * Node fix: some exports carry the Blender object LOCATION as a node translation
     (Feeder, Z in the 2026-11 delivery) while their vertex data already sits in the
     link frame -- the translation is stripped (STRIP_NODE_TRANSLATION). Node
@@ -70,11 +75,25 @@ PBR_SETS = {
 DISPLAY_SET = "Display_Atlas"
 DISPLAY_SCREEN_MATERIAL = "Display_Screen"   # picture surfaces of the Display atlas: base colour only
 DISPLAY_HOSE_U_MIN = 0.8                      # atlas columns right of this hold the ribbed hose strip
-# Hose re-posing (flex_display_hose). bore_xy: axis of the SCREEN CONNECTION elbow's
+# Display hose (route_display_hose). bore_xy: axis of the SCREEN CONNECTION elbow's
 # opening in Chassis.glb coordinates (m), bore_axis: its direction (index of the
-# coordinate). Measured 2026-11-12 from the elbow's connected component in the
-# delivery Chassis.glb (bbox x 0.5275..0.5787, y 0.4329..0.5089, mouth at z -0.4235).
-HOSE_FLEX = {"Display.glb": {"link": "display_link", "parent": "chassis_link", "bore_xy": (0.5529, 0.4705), "bore_axis": 2}}
+# coordinate; +z there is world DOWN), bore_radius: the opening's inner radius,
+# mouth: the plane of the opening along bore_axis. Measured 2026-11-13 from the
+# opening's own inner circle in the delivery Chassis.glb (elbow component: bbox
+# x 0.5275..0.5787, y 0.4329..0.5089, mouth plane z -0.4235; inner circle there
+# x 0.5387..0.5723, y 0.4536..0.4882 -> centre (0.5555, 0.4709), radius 17 mm). The
+# 2026-11-12 value (0.5529, 0.4705) was the centre of the elbow's BOUNDING BOX,
+# which includes the mounting flange on the wall side.
+# insert_m: how far the hose reaches into the elbow (as delivered). length_m: the
+# hose's length -- the one design choice; 0.40 hangs 60 mm below the mouth with a
+# 49 mm tightest bend (Maksim's sketch, 2026-11-13; the delivered hose is 546 mm
+# and hung 160 mm). straight_*_m: the lengths the two fittings hold straight.
+# gravity: weight against stiffness (dimensionless, hardly matters at this length).
+# sides / ring_step_m: the tube's resolution.
+DISPLAY_HOSE = {"Display.glb": {"link": "display_link", "parent": "chassis_link", "bore_xy": (0.5555, 0.4709), "bore_axis": 2,
+                                "bore_radius": 0.017, "mouth": -0.4235, "insert_m": 0.0188, "length_m": 0.40,
+                                "straight_display_m": 0.018, "straight_elbow_m": 0.027, "gravity": 2.0,
+                                "sides": 20, "ring_step_m": 0.004}}
 # Per-set cache-bust on top of TEX_VERSION: bump a set here when only ITS PNGs changed,
 # so only the GLBs that use it get new URIs (the others stay byte-identical).
 SET_VERSION = {
@@ -360,44 +379,64 @@ def urdf_frames(urdf_text, link, parent):
     return (j_xyz, j_rpy) + tuple(visual(link)) + tuple(visual(parent))
 
 
-def flex_display_hose(j, b, urdf_text, spec):
-    """Bend the display hose so its chassis end sits in the elbow (see module docstring).
+def _append_float_accessor(j, b, data, kind, with_bounds=False):
+    """Append a float32 vertex accessor (kind "VEC2" / "VEC3") to the bin chunk; returns (accessor id, new bin)."""
+    arr = np.ascontiguousarray(data, dtype="<f4")
+    payload = arr.tobytes()
+    b = b + bytes((4 - len(b) % 4) % 4)
+    j["bufferViews"].append({"buffer": 0, "byteOffset": len(b), "byteLength": len(payload), "target": 34962})
+    b = b + payload
+    acc = {"bufferView": len(j["bufferViews"]) - 1, "componentType": 5126, "count": int(len(arr)), "type": kind}
+    if with_bounds:
+        acc["min"], acc["max"] = [float(x) for x in arr.min(0)], [float(x) for x in arr.max(0)]
+    j["accessors"].append(acc)
+    j["buffers"][0]["byteLength"] = len(b)
+    return len(j["accessors"]) - 1, b
 
-    Frames (all in the parent link frame): M = display mesh as the URDF places it,
-    M0 = the same with the joint rotation removed (the pose the hose was modelled
-    for), C = chassis mesh. The chassis end of the hose must be at M0 * p (where the
-    delivery has it relative to the chassis), moved sideways onto the bore axis; the
-    display end must stay at M * p. Per ring: p' = (1-w) p + w L p with
-    L = M^-1 Trans(delta) M0 and w a smoothstep of the arc length from the display end.
-    Returns (bin, report string).
+
+def route_display_hose(j, b, urdf_text, spec):
+    """Replace the delivered display hose by one routed between its two fittings (see module docstring).
+
+    The delivered hose (the triangles of the Display atlas primitive that lie in the
+    hose strip) is measured and then dropped from that primitive; the new hose is
+    appended as a primitive of its own on the same material, so
+    split_display_surfaces still finds it by its UVs. Returns (bin, report string).
     """
+    import sys as _sys
+    if HERE not in _sys.path:
+        _sys.path.insert(0, HERE)  # python -I does not add the script dir
+    from display_hose import centreline, tube
+
     j_xyz, j_rpy, v_xyz, v_rpy, c_xyz, c_rpy = urdf_frames(urdf_text, spec["link"], spec["parent"])
     node = np.eye(4)
     for n in j.get("nodes", []):
         if "mesh" in n:
             node = node_matrix(n)
             break
-    A = _rigid(v_xyz, v_rpy) @ node
-    M = _rigid(j_xyz, j_rpy) @ A
-    M0 = _rigid(j_xyz, (0.0, 0.0, 0.0)) @ A
-    C = _rigid(c_xyz, c_rpy)
+    M = _rigid(j_xyz, j_rpy) @ _rigid(v_xyz, v_rpy) @ node   # display mesh -> parent link, as the URDF places it
+    C = _rigid(c_xyz, c_rpy)                                 # chassis mesh -> parent link
+    G = np.linalg.inv(C) @ M                                 # display mesh -> Chassis.glb coordinates
+    Gi = np.linalg.inv(G)
+    ax = spec["bore_axis"]
+    assert ax == 2, "display hose: the routing assumes the elbow's bore runs along z (world vertical)"
+    plane = [0, 1]
+    bore = np.array(spec["bore_xy"])
 
     names = [m.get("name") for m in j.get("materials", [])]
     atlas_mat = names.index(DISPLAY_SET)
-    prim = next(p for m in j["meshes"] for p in m["primitives"] if p.get("material") == atlas_mat)
+    mesh, prim = next((m, p) for m in j["meshes"] for p in m["primitives"] if p.get("material") == atlas_mat)
     pos = _read_accessor(j, b, prim["attributes"]["POSITION"]).astype(np.float64)
-    nrm = _read_accessor(j, b, prim["attributes"]["NORMAL"]).astype(np.float64)
     uv = _read_accessor(j, b, prim["attributes"]["TEXCOORD_0"]).astype(np.float64)
-    tris = _read_accessor(j, b, prim["indices"]).reshape(-1, 3).astype(np.int64)
-    tris = tris[uv[tris][:, :, 0].mean(1) >= DISPLAY_HOSE_U_MIN]
-    rows = np.unique(tris)                                   # GLB vertices of the hose
+    tris_all = _read_accessor(j, b, prim["indices"]).reshape(-1, 3).astype(np.int64)
+    is_hose = uv[tris_all][:, :, 0].mean(1) >= DISPLAY_HOSE_U_MIN
+    tris = tris_all[is_hose]
+    rows = np.unique(tris)                                   # GLB vertices of the delivered hose
     key = np.round(pos[rows] / 1e-5).astype(np.int64)
     _, first, inv = np.unique(key, axis=0, return_index=True, return_inverse=True)
-    inv = inv.reshape(-1)
-    wpos = pos[rows][first]                                  # welded positions
     lut = np.full(len(pos), -1, np.int64)
-    lut[rows] = inv
+    lut[rows] = inv.reshape(-1)
     wtris = lut[tris]
+    wpos = (np.c_[pos[rows][first], np.ones(len(first))] @ G.T)[:, :3]   # welded, in Chassis.glb coordinates
 
     # open ends = boundary loops (edges used by one triangle)
     e = np.sort(np.concatenate([wtris[:, [0, 1]], wtris[:, [1, 2]], wtris[:, [2, 0]]]), axis=1)
@@ -406,14 +445,12 @@ def flex_display_hose(j, b, urdf_text, spec):
     for a, c in ue:
         adj_all[a].append(c)
         adj_all[c].append(a)
-    bverts = np.unique(ue[cnt == 1])
-    bset = set(int(v) for v in bverts)
-    loops, seen = [], set()
     badj = {}
     for a, c in ue[cnt == 1]:
         badj.setdefault(int(a), []).append(int(c))
         badj.setdefault(int(c), []).append(int(a))
-    for v in bset:
+    loops, seen = [], set()
+    for v in badj:
         if v in seen:
             continue
         comp, stack = [], [v]
@@ -426,16 +463,7 @@ def flex_display_hose(j, b, urdf_text, spec):
             stack.extend(badj[x])
         loops.append(np.array(comp))
     assert len(loops) == 2, f"display hose: expected 2 open ends, found {len(loops)}"
-
-    def to_chassis_mesh(points_local, frame):
-        ph = np.c_[points_local, np.ones(len(points_local))]
-        return (ph @ (np.linalg.inv(C) @ frame).T)[:, :3]
-
-    ax = spec["bore_axis"]
-    plane = [i for i in range(3) if i != ax]
-    bore = np.array(spec["bore_xy"])
-    centres0 = [to_chassis_mesh(wpos[lp], M0).mean(0) for lp in loops]
-    chassis_end = int(np.argmin([np.linalg.norm(c[plane] - bore) for c in centres0]))
+    chassis_end = int(np.argmin([np.linalg.norm(wpos[lp].mean(0)[plane] - bore) for lp in loops]))
     start, end = loops[1 - chassis_end], loops[chassis_end]
 
     # rings: breadth-first layers from the display end
@@ -451,44 +479,64 @@ def flex_display_hose(j, b, urdf_text, spec):
                     layer[u] = k
                     nxt.append(u)
         frontier = nxt
-    assert (layer >= 0).all() and set(layer[end]) == {layer.max()}, "display hose: rings are not a simple tube"
-    cents = np.array([wpos[layer == i].mean(0) for i in range(layer.max() + 1)])
-    arc = np.r_[0.0, np.cumsum(np.linalg.norm(np.diff(cents, axis=0), axis=1))]
-    s = arc / arc[-1]
-    w_ring = s * s * (3 - 2 * s)
+    K = int(layer.max())
+    assert (layer >= 0).all() and set(layer[end]) == {K}, "display hose: rings are not a simple tube"
+    cents = np.array([wpos[layer == i].mean(0) for i in range(K + 1)])
+    delivered_length = float(np.linalg.norm(np.diff(cents, axis=0), axis=1).sum())
+    assert cents[max(K - 3, 0)][ax] > cents[K][ax], "display hose: expected the hose to leave the elbow toward +z (down)"
 
-    # sideways correction onto the bore axis, in chassis-mesh coordinates
-    delta_c = np.zeros(3)
-    delta_c[plane] = bore - centres0[chassis_end][plane]
-    delta = (C[:3, :3] @ delta_c)                            # parent link frame
-    T = np.eye(4)
-    T[:3, 3] = delta
-    L = np.linalg.inv(M) @ T @ M0
+    # what the new hose takes over from the delivered one
+    a_end = cents[0]
+    a_dir = np.linalg.svd(wpos[layer == 0] - a_end)[2][2]    # the display-side end ring's plane normal ...
+    if float(a_dir @ (cents[1] - cents[0])) < 0:
+        a_dir = -a_dir                                       # ... pointing into the hose
+    radius = float(np.linalg.norm(wpos[layer == 0] - a_end, axis=1).mean())
+    ring_of_row = layer[lut[rows]]
+    u_lo, u_hi = float(uv[rows][:, 0].min()), float(uv[rows][:, 0].max())
+    v_a = float(uv[rows[ring_of_row == 0]][:, 1].mean())
+    v_b = float(uv[rows[ring_of_row == K]][:, 1].mean())
+    v_per_m = (v_b - v_a) / delivered_length                 # texture per metre, as delivered
 
-    w = w_ring[layer[lut[rows]]][:, None]
-    p_old = pos[rows]
-    p_new = (1 - w) * p_old + w * (np.c_[p_old, np.ones(len(rows))] @ L.T)[:, :3]
-    n_old = nrm[rows]
-    n_new = (1 - w) * n_old + w * (n_old @ L[:3, :3].T)
+    b_end = np.array([bore[0], bore[1], spec["mouth"] - spec["insert_m"]])
+    pts, arc, stats = centreline(a_end, a_dir, b_end, spec["length_m"], spec["straight_display_m"],
+                                 spec["straight_elbow_m"], spec["gravity"])
+    p_c, n_c, uv_new, idx_new = tube(pts, arc, radius, spec["sides"], spec["ring_step_m"], u_lo, u_hi, v_a, v_per_m,
+                                     a_dir, np.array([0.0, 0.0, -1.0]))
+    p_new = (np.c_[p_c, np.ones(len(p_c))] @ Gi.T)[:, :3]
+    n_new = n_c @ Gi[:3, :3].T
     n_new /= np.maximum(np.linalg.norm(n_new, axis=1, keepdims=True), 1e-12)
 
+    # the old primitive keeps its picture surfaces; its hose vertices are parked on a
+    # vertex that stays in use, so the accessor's bounds describe what is drawn
+    rest = tris_all[~is_hose]
+    assert len(rest), "display hose: the atlas primitive holds nothing but the hose"
+    keep_idx, b = _append_index_accessor(j, b, rest.reshape(-1))
+    prim["indices"] = keep_idx
+    orphans = np.setdiff1d(rows, np.unique(rest))
     ba = bytearray(b)
-    _write_accessor_rows(j, ba, prim["attributes"]["POSITION"], rows, p_new)
-    _write_accessor_rows(j, ba, prim["attributes"]["NORMAL"], rows, n_new)
+    _write_accessor_rows(j, ba, prim["attributes"]["POSITION"], orphans, np.repeat(pos[rest[0, 0]][None, :], len(orphans), axis=0))
     b = bytes(ba)
     allpos = _read_accessor(j, b, prim["attributes"]["POSITION"])
     acc = j["accessors"][prim["attributes"]["POSITION"]]
     acc["min"], acc["max"] = [float(x) for x in allpos.min(0)], [float(x) for x in allpos.max(0)]
 
-    before = to_chassis_mesh(wpos[end], M).mean(0)
-    lut_new = {int(r): i for i, r in enumerate(rows)}
-    end_rows = [r for r in rows if lut[r] in set(int(v) for v in end)]
-    after = to_chassis_mesh(p_new[[lut_new[int(r)] for r in end_rows]], M).mean(0)
-    top_rows = [r for r in rows if lut[r] in set(int(v) for v in start)]
-    moved_top = np.abs(p_new[[lut_new[int(r)] for r in top_rows]] - pos[top_rows]).max()
-    report = ("hose: %d rings, %.0f mm long | chassis end off the bore axis %.1f mm -> %.1f mm (Chassis.glb coords %s -> %s) | display end moved %.2f mm"
-              % (layer.max() + 1, arc[-1] * 1000, np.linalg.norm(before[plane] - bore) * 1000, np.linalg.norm(after[plane] - bore) * 1000,
-                 np.round(before, 4), np.round(after, 4), moved_top * 1000))
+    a_pos, b = _append_float_accessor(j, b, p_new, "VEC3", with_bounds=True)
+    a_nrm, b = _append_float_accessor(j, b, n_new, "VEC3")
+    a_uv, b = _append_float_accessor(j, b, uv_new, "VEC2")
+    a_idx, b = _append_index_accessor(j, b, idx_new.reshape(-1))
+    mesh["primitives"].append({"attributes": {"POSITION": a_pos, "NORMAL": a_nrm, "TEXCOORD_0": a_uv},
+                               "indices": a_idx, "material": atlas_mat})
+
+    rings = len(p_c) // (spec["sides"] + 1)
+    report = ("hose: routed between its fittings, %d rings x %d sides (%d tris), %.0f mm long (delivered: %d rings x 12, %.0f mm)"
+              % (rings, spec["sides"], len(idx_new), spec["length_m"] * 1000, K + 1, delivered_length * 1000))
+    report += ("\n    hangs %.0f mm below the elbow's mouth, tightest bend %.0f mm | elbow end %.2f mm off the bore axis,"
+               " %.1f mm inside | hose radius %.1f mm in an opening of %.1f mm | solver: end %.1e m, gradient %.1e"
+               % ((stats["lowest_z"] - spec["mouth"]) * 1000, stats["min_bend_radius"] * 1000,
+                  np.linalg.norm(pts[-1][plane] - bore) * 1000, (spec["mouth"] - pts[-1][ax]) * 1000,
+                  radius * 1000, spec["bore_radius"] * 1000, stats["closure_error"], stats["gradient"]))
+    report += ("\n    texture: %.5f v per mm everywhere (as delivered), v %.3f at the display -> %.3f at the elbow, u %.4f..%.4f"
+               % (abs(v_per_m) / 1000, v_a, v_a + spec["length_m"] * v_per_m, u_lo, u_hi))
     return b, report
 
 
@@ -632,8 +680,8 @@ def build_glbs(src, assets, suffix, write=True):
             spec = NEUTRAL_COIL[src_name]
             b, _moved = neutralize_coil(j, b, spec["from"], spec["to"], spec["uv_offset"])
         flex_report = None
-        if src_name in HOSE_FLEX:
-            b, flex_report = flex_display_hose(j, b, urdf, HOSE_FLEX[src_name])
+        if src_name in DISPLAY_HOSE:
+            b, flex_report = route_display_hose(j, b, urdf, DISPLAY_HOSE[src_name])
         b, _pic, _hose = split_display_surfaces(j, b)
         rewrite_materials(j)
         out = f"{stem}{suffix}.glb"

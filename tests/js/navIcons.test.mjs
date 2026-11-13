@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { mountUrdfDom } from "./support/domFixture.mjs";
 
 mountUrdfDom();
-const { createNavIconsUi, DOOR_CAT_BLOCK_SIZE, DOOR_CAT_MODES } = await import("../../hmi/navIcons.js");
+const { createNavIconsUi, DOOR_CAT_BLOCK_SIZE } = await import("../../hmi/navIcons.js");
 
 // jsdom does not run the page's scripts, so the <m600-*> tags are unknown
 // elements. Give the two door icons the one method the wiring calls.
@@ -31,10 +31,11 @@ const doors = { front: 0, top: 0 };
 let reducedMotion = false;
 const egg = { mode: null, plays: 0, resets: 0, play() { this.plays += 1; }, reset() { this.resets += 1; } };
 window.localStorage.clear();
+// A choice left behind by the Settings "Door cat" option this module used to have.
+window.localStorage.setItem("m600.frontDoor.catMode", "off");
 const ui = createNavIconsUi({
   getFrontDoorFraction: () => doors.front,
   getTopCoverFraction: () => doors.top,
-  markUserActivity() {},
   createCatEgg: (_icon, options) => { egg.mode = options.mode; return egg; },
   prefersReducedMotion: () => reducedMotion,
 });
@@ -110,20 +111,23 @@ test("the block survives a reload: the count continues instead of starting over"
   assert.equal(next.n, 0, "a new block starts after the fiftieth opening");
 });
 
-test("the Settings button cycles the three modes and tells the egg module only what it understands", () => {
-  const button = document.getElementById("settingsDoorCatButton");
-  assert.equal(button.textContent, "Door cat: 1 in 50 opens");
+test("there is no cat setting: no Settings button, the old stored choice is dropped, the egg module is held off", () => {
+  assert.equal(document.getElementById("settingsDoorCatButton"), null, "the Settings option is back in the page");
+  assert.equal(window.localStorage.getItem("m600.frontDoor.catMode"), null, "a stored 'off' from the old option must not linger");
   assert.equal(egg.mode, "off", "the 1-in-50 draw is ours: the module must not also count opens");
-  button.click();
-  assert.equal(button.textContent, "Door cat: every open");
+});
+
+test("the QA switch makes every open a cat open for this page load only, and then steps aside for the module", () => {
+  window.localStorage.setItem("m600.frontDoor.catBlock", JSON.stringify({ n: 0, pick: 0 }));
+  assert.equal(ui.setCatMode("always"), "always");
   assert.equal(egg.mode, "always");
-  button.click();
-  assert.equal(button.textContent, "Door cat: off");
+  egg.plays = 0;
+  frontIcon.dispatchEvent(new window.Event("door-opened"));
+  assert.equal(egg.plays, 0, "the module plays by itself in this mode; a play() from here would restart its story");
+  assert.equal(JSON.parse(window.localStorage.getItem("m600.frontDoor.catBlock")).n, 0, "and the 1-in-50 block is not used up");
+  assert.equal(window.localStorage.getItem("m600.frontDoor.catMode"), null, "nothing is stored");
+  assert.equal(ui.setCatMode("off"), "random50", "there is no off any more: anything else is one in 50");
   assert.equal(egg.mode, "off");
-  assert.equal(egg.resets, 1, "switching off must clear a cat that is on screen");
-  button.click();
-  assert.equal(button.textContent, "Door cat: 1 in 50 opens");
-  assert.deepEqual([...DOOR_CAT_MODES], ["random50", "always", "off"]);
 });
 
 test("in 1-in-50 mode a completed opening plays the cat only on the picked one", () => {

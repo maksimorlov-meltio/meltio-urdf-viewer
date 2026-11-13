@@ -9,8 +9,9 @@
 //   - the underline under each label (.nav-door-track) exists on all four
 //     buttons; the doors light theirs from the moment the door starts to open
 //     and release it the moment it starts to close;
-//   - the cat plays on one random open in every block of 50 ("Door cat" in
-//     Settings cycles 1 in 50 / every open / off);
+//   - the cat plays on one random open in every block of 50. There is no
+//     setting for it (Maksim, 2026-11-13: the Settings "Door cat" option is
+//     gone, the cat is simply there);
 //   - two host-side adjustments to the Materials icon he asked for, made
 //     without editing his file: no wire, no spring at the end of the turn.
 //
@@ -18,20 +19,14 @@
 // last wrote: it runs every frame and must not touch the DOM unless a door
 // actually moved (AGENTS.md rule 5).
 
-export const DOOR_CAT_MODES = Object.freeze(["random50", "always", "off"]);
 export const DOOR_CAT_BLOCK_SIZE = 50;
-const DOOR_CAT_DEFAULT_MODE = "random50";
-const DOOR_CAT_MODE_KEY = "m600.frontDoor.catMode";
 const DOOR_CAT_BLOCK_KEY = "m600.frontDoor.catBlock";
-const DOOR_CAT_LABELS = Object.freeze({
-  random50: "Door cat: 1 in 50 opens",
-  always: "Door cat: every open",
-  off: "Door cat: off",
-});
+// What the removed Settings option used to store; nothing reads it any more.
+const DOOR_CAT_RETIRED_MODE_KEY = "m600.frontDoor.catMode";
 // Length of the Materials icon's activation turn once its spring is removed.
 const NAV_MATERIALS_TURN_MS = 640;
 
-export function createNavIconsUi({ getFrontDoorFraction, getTopCoverFraction, markUserActivity, createCatEgg, prefersReducedMotion }) {
+export function createNavIconsUi({ getFrontDoorFraction, getTopCoverFraction, createCatEgg, prefersReducedMotion }) {
   const navDoorToggleEl = document.getElementById("navDoorToggle");
   const navTopCoverEl = document.getElementById("annotationNavTopCover");
   const navMaterialsToggleEl = document.getElementById("navMaterialsToggle");
@@ -39,7 +34,6 @@ export function createNavIconsUi({ getFrontDoorFraction, getTopCoverFraction, ma
   const navFrontDoorIconEl = document.getElementById("navFrontDoorIcon");
   const navTopDoorIconEl = document.getElementById("navTopDoorIcon");
   const navMaterialsIconEl = document.getElementById("navMaterialsIcon");
-  const settingsDoorCatButtonEl = document.getElementById("settingsDoorCatButton");
 
   // Last position sent to each door icon (-1 = nothing sent yet).
   const doorState = { front: { p: -1, motion: "idle" }, top: { p: -1, motion: "idle" } };
@@ -47,6 +41,8 @@ export function createNavIconsUi({ getFrontDoorFraction, getTopCoverFraction, ma
   let preview = null;
   let catEgg = null;
   let catBlockFallback = null;
+  // QA only, for this page load, never stored: every open is an Easter-egg open.
+  let catEveryOpen = false;
 
   // ---- sizing + underline ---------------------------------------------------
 
@@ -81,13 +77,9 @@ export function createNavIconsUi({ getFrontDoorFraction, getTopCoverFraction, ma
 
   // ---- cat Easter egg -------------------------------------------------------
 
-  // What the egg module itself is told: it has no random mode, and any name it
-  // does not know silently means "every 3rd". The 1-in-50 draw therefore lives
-  // here: the module is held at "off" and play() is called on the picked open.
-  function eggModeFor(mode) {
-    return mode === "always" ? "always" : "off";
-  }
-
+  // The egg module has no random mode, and any name it does not know silently
+  // means "every 3rd". The 1-in-50 draw therefore lives here: the module is held
+  // at "off" and play() is called on the picked open.
   function newCatBlock() {
     return { n: 0, pick: Math.floor(Math.random() * DOOR_CAT_BLOCK_SIZE) };
   }
@@ -127,41 +119,17 @@ export function createNavIconsUi({ getFrontDoorFraction, getTopCoverFraction, ma
     return plays;
   }
 
-  function readCatMode() {
-    try {
-      const stored = window.localStorage.getItem(DOOR_CAT_MODE_KEY);
-      if (DOOR_CAT_MODES.includes(stored)) {
-        return stored;
-      }
-    } catch (_error) {
-      // storage blocked: fall through to the default
-    }
-    return DOOR_CAT_DEFAULT_MODE;
-  }
-
-  function applyCatMode(mode, { persist = false } = {}) {
-    const next = DOOR_CAT_MODES.includes(mode) ? mode : DOOR_CAT_DEFAULT_MODE;
-    if (persist) {
-      try {
-        window.localStorage.setItem(DOOR_CAT_MODE_KEY, next);
-      } catch (_error) {
-        // storage blocked: the choice lasts for this session only
-      }
-    }
+  function setCatEveryOpen(on) {
+    catEveryOpen = Boolean(on);
     if (catEgg) {
-      catEgg.mode = eggModeFor(next);
-      if (next === "off") {
-        catEgg.reset();
-      }
+      catEgg.mode = catEveryOpen ? "always" : "off";
     }
-    if (settingsDoorCatButtonEl) {
-      settingsDoorCatButtonEl.textContent = DOOR_CAT_LABELS[next];
-    }
-    return next;
+    return catEveryOpen;
   }
 
   function onFrontDoorOpened() {
-    if (!catEgg || readCatMode() !== "random50") {
+    // In the QA "every open" mode the egg module plays by itself.
+    if (!catEgg || catEveryOpen) {
       return;
     }
     if (!rollCat()) {
@@ -175,13 +143,10 @@ export function createNavIconsUi({ getFrontDoorFraction, getTopCoverFraction, ma
     catEgg.play();
   }
 
-  applyCatMode(readCatMode());
-  if (settingsDoorCatButtonEl) {
-    settingsDoorCatButtonEl.addEventListener("click", () => {
-      markUserActivity();
-      const current = readCatMode();
-      applyCatMode(DOOR_CAT_MODES[(DOOR_CAT_MODES.indexOf(current) + 1) % DOOR_CAT_MODES.length], { persist: true });
-    });
+  try {
+    window.localStorage.removeItem(DOOR_CAT_RETIRED_MODE_KEY);
+  } catch (_error) {
+    // storage blocked: nothing to clean up
   }
 
   // ---- Materials icon -------------------------------------------------------
@@ -271,7 +236,7 @@ export function createNavIconsUi({ getFrontDoorFraction, getTopCoverFraction, ma
     if (isReady(navDoorToggleEl, navFrontDoorIconEl)) {
       ensureTrack(navDoorToggleEl);
       if (!catEgg) {
-        catEgg = createCatEgg(navFrontDoorIconEl, { mode: eggModeFor(readCatMode()) });
+        catEgg = createCatEgg(navFrontDoorIconEl, { mode: catEveryOpen ? "always" : "off" });
         navFrontDoorIconEl.addEventListener("door-opened", onFrontDoorOpened);
       }
       const pinned = preview && typeof preview.front === "number";
@@ -293,7 +258,8 @@ export function createNavIconsUi({ getFrontDoorFraction, getTopCoverFraction, ma
     removeMaterialsSpring,
     // QA hooks (the app entry exposes them on window for reference renders).
     setPreview(override) { preview = override || null; },
-    setCatMode: (mode) => applyCatMode(mode, { persist: true }),
+    // "always" = every open plays (this page load only); anything else = one in 50.
+    setCatMode: (mode) => (setCatEveryOpen(mode === "always") ? "always" : "random50"),
     rollCat,
   };
 }

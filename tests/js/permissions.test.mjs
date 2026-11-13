@@ -86,7 +86,11 @@ test("the level shown is the rendered name, not the role id", () => {
   // Why the memo key is built from currentLevelName() and not from roleId: the
   // level resolves through getRole(roleId)?.name, so a key made of the id would
   // freeze the chip for ever the first time an administrator renames a role.
-  assert.match(chip().textContent, /Not signed in/);
+  // Signed out, the chip no longer prints a level at all (2026-11-10: it says
+  // just "Sign in"); the rendered level name is asserted on the signed-in chip
+  // in the first test ("Operator", not "role_operator") and in the Settings
+  // block's button state below.
+  assert.equal(chip().textContent, "Sign in");
   assert.doesNotMatch(chip().textContent, /role_/);
 });
 
@@ -96,4 +100,37 @@ test("refreshing while signed out is also a no-op", () => {
   for (let i = 0; i < 50; i += 1) perms.refresh();
   assert.equal(settingsButton(), button);
   assert.equal(chip(), chipEl);
+});
+
+// --- signed out: the chip is the way in ------------------------------------------
+
+test("signed out, the chip says just 'Sign in' and the Settings block is avatar + button", () => {
+  if (perms.isSignedIn()) perms.signOut();
+  assert.equal(chip().querySelector(".perm-account-chip-name").textContent, "Sign in");
+  assert.equal(chip().querySelector(".perm-account-chip-level"), null, "no second 'Not signed in' line");
+  const block = document.querySelector(".perm-settings-account");
+  assert.equal(block.classList.contains("is-signed-out"), true);
+  assert.equal(block.querySelector(".perm-settings-account-text"), null);
+  assert.equal(settingsButton().textContent, "Sign in");
+});
+
+test("a tap on a control locked for guests pulses the chip; any other tap does not", () => {
+  if (perms.isSignedIn()) perms.signOut();
+  const locked = document.createElement("div");
+  locked.className = "perm-denied-guest";
+  const inner = document.createElement("span");
+  locked.append(inner);
+  const free = document.createElement("div");
+  document.body.append(locked, free);
+  const tap = (el) => el.dispatchEvent(new window.Event("pointerdown", { bubbles: true }));
+  try {
+    tap(free);
+    assert.equal(chip().classList.contains("perm-attention"), false);
+    tap(inner); // the tap lands inside the gated container
+    assert.equal(chip().classList.contains("perm-attention"), true);
+  } finally {
+    locked.remove();
+    free.remove();
+    chip().classList.remove("perm-attention");
+  }
 });
