@@ -30,6 +30,7 @@ import { createMachineLink } from "/hmi/ports/machineLink.js";
 import { createPrePrintCheck } from "/hmi/prePrintCheck.js";
 import { createBoundedQueue } from "/hmi/boundedQueue.js";
 import { createDustExhaust } from "/viewer/effects/dustExhaust.js";
+import { createFeedstockHighlight } from "/viewer/effects/feedstockHighlight.js";
 import { createChamberInert } from "/viewer/effects/chamberInert.js";
 import { t, applyDomTranslations, getLocale } from "/hmi/i18n/index.js";
 import { createCalendarUi, formatCalendarDateTime } from "/hmi/calendar.js";
@@ -68,6 +69,7 @@ import {
   setMaterialsMenuOpen,
   isMaterialsMenuOpen,
   hotspotMaterialsFocusSpoolKey,
+  selectedHotspotMaterialId,
   clearMaterialsFocusSpool,
   ensureHotspotMaterialsFocusSpool,
   syncHotspotMaterialSelectionForSpool,
@@ -425,6 +427,10 @@ void ambientLight; void viewerLight; // owned by sceneCore; kept for symmetry
 // Fume/dust extraction plume from the top exhaust port — driven by the fan (see
 // setFanOn / the animate loop). Cosmetic; anchored to the top cover on load.
 const dustExhaust = createDustExhaust({ THREE, scene, camera, renderer });
+// Materials-menu highlight of the focused spool / drum (viewer/effects/feedstockHighlight.js).
+const feedstockHighlight = createFeedstockHighlight({ THREE, scene, requestRender: () => requestRender() });
+// Reference renders: window.__feedstockHighlightTune({ color, spinStyle, wave }).
+window.__feedstockHighlightTune = (options) => feedstockHighlight.tune(options);
 
 // Argon inertization fill — a rising cool-cyan gas that floods the build chamber
 // while a print is inerting; the front door fades see-through so it's visible
@@ -470,6 +476,22 @@ const WIRE_SPOOL_DOOR_LINK = "wire_spool_door_link";
 const TOP_COVER_LINK = "top_cover_link";
 const WIRE_SPOOL_DOOR_JOINT = "wire_spool_door_joint";
 const WIRE_DRUM_LINK = "wire_drum_link";
+// Second wire drum (2026-10-13, Maksim): when Feeder 2 is also drum-fed a
+// second drum assembly stands beside the first. It is a runtime clone of the
+// first drum's joint frame (buildSecondWireDrum).
+// 2026-11-09 (Maksim): the drums stand in a row PARALLEL to the machine's side
+// wall (chassis-local +z = world -y, i.e. toward the back), not outward from
+// it. Slot A is the URDF drum position, right under the drum door and nearest
+// the materials compartment; slot B is one diameter + gap behind it. A lone
+// active drum always takes slot A: when only Feeder 2 is drum-fed its drum
+// slides into slot A, when both are, Feeder 1's drum has A and Feeder 2's B.
+const WIRE_DRUM_2_LINK = "wire_drum_2_link";
+const WIRE_DRUM_2_FRAME_NAME = "joint_frame:wire_drum_2_joint";
+const WIRE_DRUM_DIAMETER_M = 0.519;
+const WIRE_DRUM_2_GAP_M = 0.12;
+const WIRE_DRUM_SLOT_B_OFFSET_LOCAL = Object.freeze([0, 0, WIRE_DRUM_DIAMETER_M + WIRE_DRUM_2_GAP_M]); // chassis frame
+const WIRE_DRUM_SLOT_SLIDE_SMOOTHING = 0.14; // per-frame approach fraction while a drum changes slot
+let wireDrum2SlotBaseLocal = null; // slot A in the chassis frame (the URDF drum frame position)
 const HANDLE_PRIMARY_JOINT = "handle_joint";
 const HANDLE_SECONDARY_JOINT = "handle_z_joint";
 const HANDLE_TRANSITION_SMOOTH_FRACTION = 0.12;
@@ -814,6 +836,34 @@ let wireDrumRevealTarget = 0;
 // Manual "Wire Drum" appearance override (Appearance button / print-sim reveal).
 // The per-frame drum logic ORs this with the door/feeder-driven rules.
 let manualWireDrumConnect = false;
+// Second wire drum: a runtime clone of the first one, for Feeder 2 (buildSecondWireDrum).
+let wireDrum2Meshes = [];
+let wireDrum2Materials = [];
+let wireDrum2Frame = null;
+let wireDrum2Parent = null;
+let wireDrum2RevealProgress = 0;
+let wireDrum2RevealTarget = 0;
+// A non-active spool stays SOLID (Maksim 2026-11-09: spools are never
+// transparent); the highlight alone marks the active one.
+const FEEDSTOCK_DIM_OPACITY = 1.0;
+// The wire COIL of each spool shows the material the operator LOADED in the
+// Materials menu (Maksim, 2026-11-09). Both spool GLBs sample the same neutral
+// steel texel of Metal_Atlas_01 (155,150,132 -- build_textured_assembly.py
+// NEUTRAL_COIL moves the copper spool's coil onto it), and these are `color`
+// multipliers on that texel, keyed by MELTIO_MATERIAL_LIBRARY id. The blue
+// plastic flanges are never touched. Bronze lands on the delivery's copper
+// patch (163,107,64); the others are subtle casts of steel.
+const SPOOL_COIL_TINT_BY_MATERIAL = Object.freeze({
+  "316l-stainless": 0xffffff,
+  "17-4ph-stainless": 0xf4f6f8,
+  "inconel-718": 0xfff2d6,
+  "ti64": 0xdfe4ee,
+  "bronze-cu-sn": 0xffad75,
+});
+const SPOOL_COIL_TINT_UNASSIGNED = 0xffffff; // nothing loaded: plain steel
+// Per-spool private clone of the coil material (the GLB material may be shared
+// with other meshes of the same file; tinting must never bleed into them).
+const spoolCoilMaterialByKey = { spool1: null, spool2: null };
 let cameraTransitionState = null;
 let gasSpringAlignmentOffsets = null;
 let activeFeederCameraAnchorSide = null;
@@ -2322,11 +2372,14 @@ function syncFeederWheelStates() {
   updateFeederDriveButtons();
 }
 
-function applyWireDrumAppearance() {
-  const clampedProgress = clamp(wireDrumRevealProgress, 0, 1);
-  const easedProgress = (clampedProgress * clampedProgress) * (3 - (2 * clampedProgress));
+function easeDrumReveal(progress) {
+  const p = clamp(progress, 0, 1);
+  return (p * p) * (3 - (2 * p));
+}
+
+function applyDrumMeshVisibility(meshList, easedProgress) {
   const isHidden = easedProgress <= 0.001;
-  for (const meshNode of wireDrumMeshes) {
+  for (const meshNode of meshList) {
     meshNode.visible = !isHidden;
     // In light mode, disable near-invisible shadow casting to avoid ghost shadows.
     if (isLightMode) {
@@ -2335,17 +2388,83 @@ function applyWireDrumAppearance() {
       meshNode.castShadow = ENABLE_REALTIME_SHADOWS && !isHidden;
     }
   }
+}
 
-  // Spool models follow each feeder's feed type (a drum-fed feeder hides its
-  // spool); spool 1 also hides while the drum is revealed (shared bay).
-  applySpoolFeedTypeVisibility();
+// The feeder whose card is focused in Materials. The legacy "wiredrum" focus
+// key means "Feeder 1 drawing from the drum".
+function focusedFeederKey() {
+  const key = normalizeSpoolKey(hotspotMaterialsFocusSpoolKey) || "spool1";
+  return key === "spool2" ? "spool2" : "spool1";
+}
 
-  for (const material of wireDrumMaterials) {
-    setMaterialOpacity(material, easedProgress);
+// Where Feeder 2's drum belongs right now (chassis frame): slot B behind
+// Feeder 1's drum while that one is active too, otherwise slot A by the door.
+function computeWireDrum2SlotTargetLocal() {
+  const target = wireDrum2SlotBaseLocal ? wireDrum2SlotBaseLocal.clone() : new THREE.Vector3();
+  if (isFeederDrumFed("spool1")) {
+    target.x += WIRE_DRUM_SLOT_B_OFFSET_LOCAL[0];
+    target.y += WIRE_DRUM_SLOT_B_OFFSET_LOCAL[1];
+    target.z += WIRE_DRUM_SLOT_B_OFFSET_LOCAL[2];
+  }
+  return target;
+}
+
+// Per frame: glide drum 2 to its slot while it is shown, snap while hidden
+// (so it always appears in the right place). Returns true while moving.
+function updateWireDrum2Slot() {
+  if (!wireDrum2Frame || !wireDrum2SlotBaseLocal) {
+    return false;
+  }
+  const target = computeWireDrum2SlotTargetLocal();
+  const distance = wireDrum2Frame.position.distanceTo(target);
+  if (distance < 0.0005) {
+    if (distance > 0) wireDrum2Frame.position.copy(target);
+    return false;
+  }
+  if (wireDrum2RevealProgress <= 0.001) {
+    wireDrum2Frame.position.copy(target);
+    return false;
+  }
+  wireDrum2Frame.position.lerp(target, WIRE_DRUM_SLOT_SLIDE_SMOOTHING);
+  requestRender();
+  return true;
+}
+
+function applyWireDrumAppearance() {
+  const clampedProgress = clamp(wireDrumRevealProgress, 0, 1);
+  const easedProgress = easeDrumReveal(clampedProgress);
+  const eased2 = easeDrumReveal(wireDrum2RevealProgress);
+  applyDrumMeshVisibility(wireDrumMeshes, easedProgress);
+  applyDrumMeshVisibility(wireDrum2Meshes, eased2);
+  updateWireDrum2Slot();
+
+  // Drum 2 lives in the scene graph only while it shows: a hidden clone would
+  // still count in Box3.setFromObject() and push the reset view / chiller
+  // placement outward by a drum that is not there.
+  if (wireDrum2Frame && wireDrum2Parent) {
+    const shouldAttach = eased2 > 0.001;
+    if (shouldAttach && wireDrum2Frame.parent !== wireDrum2Parent) {
+      wireDrum2Parent.add(wireDrum2Frame);
+    } else if (!shouldAttach && wireDrum2Frame.parent) {
+      wireDrum2Frame.parent.remove(wireDrum2Frame);
+    }
   }
 
-  // Keep the Materials-menu "Connect wire drum" toggle in sync (it drives the
-  // same reveal). Done before the early returns below so it always updates.
+  // Spool models follow each feeder's feed type + the Materials-menu focus/glow
+  // (single writer). Called here so the drum reveal keeps them in sync each frame.
+  applyFeedstockPresentation();
+
+  // Each drum follows ITS feeder (Maksim, 2026-10-13): the focused feeder's drum
+  // is solid, the other feeder's drum is dimmed like a non-active spool.
+  const focused = focusedFeederKey();
+  const dim1 = focused === "spool1" ? 1 : FEEDSTOCK_DIM_OPACITY;
+  const dim2 = focused === "spool2" ? 1 : FEEDSTOCK_DIM_OPACITY;
+  for (const material of wireDrumMaterials) {
+    setMaterialOpacity(material, easedProgress * dim1);
+  }
+  for (const material of wireDrum2Materials) {
+    setMaterialOpacity(material, eased2 * dim2);
+  }
 
   if (!wireDrumAppearButtonEl) {
     return;
@@ -2382,35 +2501,125 @@ function applyWireDrumAppearance() {
   wireDrumAppearButtonEl.setAttribute("aria-pressed", "false");
 }
 
-// Each feeder (Materials menu) can be fed by its spool or by the shared wire drum.
-// A spool's 3D model is hidden ONLY when ITS OWN feeder is set to "drum":
-// Feeder 1 -> spool 1 model, Feeder 2 -> spool 2 model, fully independent. So a
-// spool-fed feeder keeps its spool visible even while the other feeder is on drum
-// (e.g. Feeder 1 = Spool + Feeder 2 = Drum shows Spool 1 AND the drum, hides
-// Spool 2). The drum's own visibility is handled by computeWireDrumVisibleTarget.
-function applySpoolFeedTypeVisibility() {
-  // A spool model is visible only when ITS feeder is on "spool" AND it still has
-  // material loaded (amount loaded > 0). A drum-fed feeder OR an empty spool
-  // (0 g loaded) hides that spool.
+// The mesh's real material(s).
+function getFeedstockBaseMaterials(meshNode) {
+  return Array.isArray(meshNode.material) ? meshNode.material : [meshNode.material];
+}
+
+// Apply visibility + opacity + glow to one spool's meshes together. Hidden meshes
+// are still restored to base (opaque, no glow) so no residual dim/glow lingers on
+// a material that later becomes visible through another path.
+function applySpoolMeshPresentation(meshList, visible, opacity, glow) {
+  for (const meshNode of meshList) {
+    meshNode.visible = visible;
+    meshNode.castShadow = ENABLE_REALTIME_SHADOWS && visible;
+    const baseMaterials = getFeedstockBaseMaterials(meshNode);
+    // The highlight never touches the materials, so the coil keeps its
+    // loaded-material tint.
+    feedstockHighlight.set(meshNode, visible && glow);
+    for (const material of baseMaterials) {
+      if (!material) {
+        continue;
+      }
+      setMaterialOpacity(material, visible ? opacity : 1);
+    }
+  }
+}
+
+// SINGLE writer for Materials-menu feedstock presentation (spool + drum). Driven
+// by: whether the Materials panel is open, which feeder is focused, each feeder's
+// feed type, and its loaded amount.
+//   Panel OPEN, focused feeder on Spool -> that spool shown + highlighted; the
+//     other feeder's spool shown plain for context.
+//   Panel OPEN, focused feeder on Drum   -> that feeder's spool HIDDEN; its drum
+//     shown + highlighted (visibility handled by the reveal animation).
+//   Panel CLOSED -> plain feed-type visibility, no highlight (resting look).
+// Idempotent and cheap, so it is safe to call every frame (the drum reveal calls
+// it): opacity goes through setMaterialOpacity (needsUpdate only on a mode
+// change) and the highlight is a Set membership.
+function applyFeedstockPresentation() {
+  // The ACTIVE feedstock source is the focused feeder's spool, or the wire drum
+  // when that feeder is set to Drum. This holds AT ALL TIMES, not only while the
+  // Materials menu is open: the active spool is fully opaque, every other spool is
+  // transparent, and the drum only exists while it is the active source. The glow
+  // stays menu-only — it marks "you are configuring this", the opacity carries the
+  // active/non-active state on its own.
+  // Highlight only while the Materials menu itself is open (Maksim, 2026-11-10);
+  // the Files menu's materials panel no longer lights it.
+  const materialsOpen = isMaterialsMenuOpen;
+  const focusedKey = normalizeSpoolKey(hotspotMaterialsFocusSpoolKey) || "spool1";
+  // Legacy "wiredrum" focus (removed card, may still be restored from storage) is
+  // treated as "the drum is the active source".
+  const focusedIsDrum = focusedKey === "wiredrum" || feederFeedType[focusedKey] === "drum";
+  const focusedFeeder = (focusedKey === "spool1" || focusedKey === "spool2") ? focusedKey : null;
   const grams = (key) => Number(spoolRemainingAmountGramsByKey[key]) || 0;
-  const spool1Visible = feederFeedType.spool1 !== "drum" && grams("spool1") > 0;
-  const spool2Visible = feederFeedType.spool2 !== "drum" && grams("spool2") > 0;
-  for (const meshNode of spool1Meshes) {
-    meshNode.visible = spool1Visible;
-    meshNode.castShadow = ENABLE_REALTIME_SHADOWS && spool1Visible;
+
+  for (const spoolKey of ["spool1", "spool2"]) {
+    const meshList = spoolKey === "spool1" ? spool1Meshes : spool2Meshes;
+    const ownIsDrum = feederFeedType[spoolKey] === "drum";
+    const hasStock = grams(spoolKey) > 0;
+    const isFocusedFeeder = spoolKey === focusedFeeder;
+
+    let visible;
+    let opacity = 1;
+    let glow = false;
+
+    if (isFocusedFeeder && !focusedIsDrum) {
+      // ACTIVE source — fully opaque, never dimmed.
+      visible = hasStock;
+      glow = hasStock && materialsOpen;
+    } else if (isFocusedFeeder && focusedIsDrum) {
+      // This feeder draws from the drum, so its own spool is not in play at all.
+      visible = false;
+    } else {
+      // NON-ACTIVE spool — shown transparent (when it is spool-fed and has stock).
+      visible = !ownIsDrum && hasStock;
+      opacity = FEEDSTOCK_DIM_OPACITY;
+    }
+
+    applySpoolMeshPresentation(meshList, visible, opacity, glow);
   }
-  for (const meshNode of spool2Meshes) {
-    meshNode.visible = spool2Visible;
-    meshNode.castShadow = ENABLE_REALTIME_SHADOWS && spool2Visible;
+  applySpoolCoilTints();
+
+  // Drum glow follows the active source; the drum's VISIBILITY is owned by the
+  // reveal animation (computeWireDrumVisibleTarget / applyWireDrumAppearance).
+  const drumGlow1 = materialsOpen && focusedIsDrum && focusedFeeder !== "spool2";
+  const drumGlow2 = materialsOpen && focusedIsDrum && focusedFeeder === "spool2";
+  // The drum's reveal fades its BASE materials; swap the highlight in only once
+  // it is fully shown so the fade is never fought.
+  for (const meshNode of wireDrumMeshes) {
+    feedstockHighlight.set(meshNode, drumGlow1 && wireDrumRevealProgress > 0.98);
   }
+  for (const meshNode of wireDrum2Meshes) {
+    feedstockHighlight.set(meshNode, drumGlow2 && wireDrum2RevealProgress > 0.98);
+  }
+}
+
+// The wire drum is the ACTIVE feedstock source: the focused feeder is set to Drum.
+// Not gated on the Materials menu — the drum's presence IS the state cue, and when
+// it is the active source it must read as solid, not the translucent reveal fade.
+function isDrumSelectedSource() {
+  const focusedKey = normalizeSpoolKey(hotspotMaterialsFocusSpoolKey) || "spool1";
+  return focusedKey === "wiredrum" || feederFeedType[focusedKey] === "drum";
 }
 
 // Recompute all feedstock (spool + drum) visibility from the current feed types
 // and loaded amounts, then repaint. Call after any feed-type or amount change.
 function refreshFeedstockVisibility() {
-  applySpoolFeedTypeVisibility();
-  wireDrumRevealTarget = computeWireDrumVisibleTarget();
+  wireDrumRevealTarget = computeWireDrumVisibleTarget("spool1");
+  wireDrum2RevealTarget = computeWireDrumVisibleTarget("spool2");
+  // A freshly SELECTED drum should appear solid at once (no translucent fade-in) —
+  // snap its reveal to fully shown so the active source is never "dimmed". The
+  // fade-out on deselect is untouched.
+  if (wireDrumRevealTarget >= 1) {
+    wireDrumRevealProgress = 1;
+  }
+  if (wireDrum2RevealTarget >= 1) {
+    wireDrum2RevealProgress = 1;
+  }
+  applyFeedstockPresentation();
   applyWireDrumAppearance();
+  requestRender();
 }
 
 function registerWireDrumMaterials(object3d) {
@@ -2445,6 +2654,58 @@ function registerSpool1Meshes(object3d) {
   registerMeshNodes(object3d, spool1Meshes);
 }
 
+// The coil is the spool mesh on a METAL atlas material (the flanges are on
+// Plastic_Atlas_01). Returns the mesh, or null until the spool is loaded.
+function findSpoolCoilMesh(meshList) {
+  for (const meshNode of meshList) {
+    const materials = getFeedstockBaseMaterials(meshNode);
+    if (materials.some((material) => material && /^Metal_Atlas/i.test(String(material.name || "")))) {
+      return meshNode;
+    }
+  }
+  return null;
+}
+
+// Give the coil mesh its own material clone once (after styleMeshTree tuned the
+// original, so envMap / factors carry over) and return it.
+function getSpoolCoilMaterial(spoolKey) {
+  const meshList = spoolKey === "spool1" ? spool1Meshes : spool2Meshes;
+  const coil = findSpoolCoilMesh(meshList);
+  if (!coil || Array.isArray(coil.material)) {
+    return null;
+  }
+  let material = spoolCoilMaterialByKey[spoolKey];
+  if (!material || coil.material !== material) {
+    material = coil.material.clone();
+    material.name = coil.material.name; // keep the atlas name: shareAtlasTextures / isAtlasMaterial key on it
+    coil.material = material;
+    spoolCoilMaterialByKey[spoolKey] = material;
+  }
+  return material;
+}
+
+// Idempotent: colour each spool's coil from the material loaded on that feeder.
+// Called from applyFeedstockPresentation (the single feedstock writer), so it
+// runs on every assignment change, on load, and when state is restored.
+function applySpoolCoilTints() {
+  for (const spoolKey of ["spool1", "spool2"]) {
+    const material = getSpoolCoilMaterial(spoolKey);
+    if (!material || !material.color) {
+      continue;
+    }
+    // Live preview (Maksim, 2026-11-09): while the Materials view is open the
+    // focused feeder's coil shows the material picked in the dropdown at once,
+    // before Load; closing without loading falls back to the loaded material.
+    const previewing = isMaterialsViewOpen() && focusedFeederKey() === spoolKey && selectedHotspotMaterialId;
+    const materialId = previewing ? selectedHotspotMaterialId : hotspotMaterialAssignments[spoolKey];
+    const tint = (materialId && SPOOL_COIL_TINT_BY_MATERIAL[materialId]) || SPOOL_COIL_TINT_UNASSIGNED;
+    if (material.color.getHex() !== tint) {
+      material.color.setHex(tint);
+      requestRender();
+    }
+  }
+}
+
 function registerSpool2Meshes(object3d) {
   registerMeshNodes(object3d, spool2Meshes);
 }
@@ -2455,6 +2716,50 @@ function registerSpoolsDoorMeshes(object3d) {
 
 function registerWireSpoolDoorMeshes(object3d) {
   registerMeshNodes(object3d, wireSpoolDoorMeshes);
+}
+
+// Second drum = a clone of the first drum's joint frame + link, placed beside it
+// (chassis -x, outward) and given its OWN materials so opacity/glow are per drum.
+// Not added to the scene here: applyWireDrumAppearance attaches it while shown.
+function buildSecondWireDrum() {
+  if (!robotRoot) {
+    return;
+  }
+  const frame = robotRoot.getObjectByName("joint_frame:wire_drum_joint");
+  const link = robotRoot.getObjectByName(`link:${WIRE_DRUM_LINK}`);
+  if (!frame || !link || !frame.parent) {
+    return;
+  }
+  const frame2 = new THREE.Group();
+  frame2.name = WIRE_DRUM_2_FRAME_NAME;
+  frame2.position.copy(frame.position);
+  frame2.quaternion.copy(frame.quaternion);
+  frame2.scale.copy(frame.scale);
+  wireDrum2SlotBaseLocal = frame.position.clone();
+  frame2.position.copy(computeWireDrum2SlotTargetLocal());
+  const link2 = link.clone(true);
+  link2.name = `link:${WIRE_DRUM_2_LINK}`;
+  const meshes = [];
+  const materials = [];
+  link2.traverse((node) => {
+    if (!node.isMesh) {
+      return;
+    }
+    if (Array.isArray(node.material)) {
+      node.material = node.material.map((m) => (m ? m.clone() : m));
+    } else if (node.material) {
+      node.material = node.material.clone();
+    }
+    meshes.push(node);
+    for (const m of (Array.isArray(node.material) ? node.material : [node.material])) {
+      if (m && !materials.includes(m)) materials.push(m);
+    }
+  });
+  frame2.add(link2);
+  wireDrum2Frame = frame2;
+  wireDrum2Parent = frame.parent;
+  wireDrum2Meshes = meshes;
+  wireDrum2Materials = materials;
 }
 
 function registerMeshNodes(object3d, targetMeshList) {
@@ -2791,7 +3096,8 @@ function isWireDrumConnected() {
 // route through here so their states stay in sync.
 function setWireDrumConnected(connected) {
   manualWireDrumConnect = Boolean(connected);
-  wireDrumRevealTarget = computeWireDrumVisibleTarget();
+  wireDrumRevealTarget = computeWireDrumVisibleTarget("spool1");
+  wireDrum2RevealTarget = computeWireDrumVisibleTarget("spool2");
   markUserActivity();
   applyWireDrumAppearance();
 }
@@ -2806,17 +3112,26 @@ function isDrumFeederAssigned() {
 function isFeederRunning() {
   return Boolean(feederDriveSide && feederDriveVertical);
 }
-// Drum ASSEMBLY visible when: the materials/spools compartment door is open, OR a
-// drum-type feeder is actively running, OR the manual Appearance override is on.
-function computeWireDrumVisibleTarget() {
-  const spoolsOpen = typeof isSpoolsDoorOpen === "function" && isSpoolsDoorOpen();
-  // The drum reveals when a feeder's feed type is Drum (as soon as it is selected —
-  // it no longer has to be actively running) AND the drum still has material loaded
-  // (amount loaded > 0); an empty drum stays hidden. The door-open and manual
-  // "Wire Drum" appearance overrides still force it visible for inspection.
-  const drumHasStock = (Number(spoolRemainingAmountGramsByKey.wiredrum) || 0) > 0;
-  const drumFeederWantsReveal = isDrumFeederAssigned() && drumHasStock;
-  return (spoolsOpen || drumFeederWantsReveal || manualWireDrumConnect) ? 1 : 0;
+// One drum per drum-fed feeder.
+// The drum exists ONLY while it is the active feedstock source (the focused feeder
+// is set to Drum) — not active means removed from the scene, at all times. Shown
+// even when empty so it can still be configured. This deliberately replaces the
+// older door-open / any-feeder / manual-override reveals: the controls that drove
+// those (the Appearance "Wire Drum" button and the retired wire-drum card) are no
+// longer reachable in the operator UI, so nothing live depends on them.
+function isFeederDrumFed(spoolKey) {
+  return Boolean(typeof feederFeedType === "object" && feederFeedType && feederFeedType[spoolKey] === "drum");
+}
+function isMaterialsViewOpen() {
+  return Boolean(isMaterialsMenuOpen || activeHotspotPanelId === HOTSPOT_PANEL_MATERIALS_ID);
+}
+function computeWireDrumVisibleTarget(spoolKey = "spool1") {
+  // Per feeder (Maksim, 2026-10-13): drum 1 shows while Feeder 1 is set to
+  // Drum, drum 2 while Feeder 2 is -- independent of which card is focused.
+  // 2026-11-09 (Maksim): the drums stay visible while the Materials menu is
+  // open too (they used to hide), and the menu view frames spools + drum
+  // together -- see buildMaterialsMenuCameraState.
+  return isFeederDrumFed(spoolKey) ? 1 : 0;
 }
 // The drum's OWN door opens only when the compartment door is CLOSED and a drum
 // feeder is actively running (so you can watch it feed); if the materials door is
@@ -2830,31 +3145,45 @@ function triggerWireDrumAppearance() {
   setWireDrumConnected(!isWireDrumConnected());
 }
 
+const WIRE_DRUM_HIDE_SPEED_PER_SEC = 2.0; // hide fast (Materials opening), reveal at the slower appear speed
+function stepDrumReveal(progress, target, deltaSeconds) {
+  const isShowing = target > progress;
+  let revealSpeed = isShowing ? WIRE_DRUM_APPEAR_SPEED_PER_SEC : WIRE_DRUM_HIDE_SPEED_PER_SEC;
+  if (isShowing) {
+    const endPhase = clamp(
+      (progress - WIRE_DRUM_APPEAR_END_BOOST_START)
+        / (1 - WIRE_DRUM_APPEAR_END_BOOST_START),
+      0,
+      1,
+    );
+    revealSpeed *= 1 + (endPhase * (WIRE_DRUM_APPEAR_END_BOOST_MULTIPLIER - 1));
+  }
+  return approachValue(progress, target, revealSpeed * deltaSeconds);
+}
+
 function animateWireDrumAppearance(deltaSeconds) {
   // Recompute the drum-assembly visibility + door targets from the live door /
   // feeder state each frame (decoupled: the compartment door can show the drum
-  // without opening the drum's own door).
-  wireDrumRevealTarget = computeWireDrumVisibleTarget();
+  // without opening the drum's own door). One reveal per drum.
+  wireDrumRevealTarget = computeWireDrumVisibleTarget("spool1");
+  wireDrum2RevealTarget = computeWireDrumVisibleTarget("spool2");
 
+  let changed = false;
   if (Math.abs(wireDrumRevealProgress - wireDrumRevealTarget) > 1e-6) {
-    const isShowing = wireDrumRevealTarget > wireDrumRevealProgress;
-    let revealSpeed = WIRE_DRUM_APPEAR_SPEED_PER_SEC;
-
-    if (isShowing) {
-      const endPhase = clamp(
-        (wireDrumRevealProgress - WIRE_DRUM_APPEAR_END_BOOST_START)
-          / (1 - WIRE_DRUM_APPEAR_END_BOOST_START),
-        0,
-        1,
-      );
-      revealSpeed *= 1 + (endPhase * (WIRE_DRUM_APPEAR_END_BOOST_MULTIPLIER - 1));
-    }
-
-    wireDrumRevealProgress = approachValue(
-      wireDrumRevealProgress,
-      wireDrumRevealTarget,
-      revealSpeed * deltaSeconds,
-    );
+    wireDrumRevealProgress = stepDrumReveal(wireDrumRevealProgress, wireDrumRevealTarget, deltaSeconds);
+    changed = true;
+  }
+  if (Math.abs(wireDrum2RevealProgress - wireDrum2RevealTarget) > 1e-6) {
+    wireDrum2RevealProgress = stepDrumReveal(wireDrum2RevealProgress, wireDrum2RevealTarget, deltaSeconds);
+    changed = true;
+  }
+  // Drum 2's slot glide runs on its own clock: a freshly selected drum snaps
+  // to fully shown (no reveal frames), so the glide must not depend on them
+  // (2026-11-10: the two drums were left overlapping -- Maksim's screenshot).
+  if (updateWireDrum2Slot()) {
+    changed = true;
+  }
+  if (changed) {
     applyWireDrumAppearance();
     requestRender();
   }
@@ -7288,6 +7617,13 @@ function clearRobot() {
   wireDrumMaterials = [];
   wireDrumRevealProgress = 0;
   wireDrumRevealTarget = 0;
+  wireDrum2Meshes = [];
+  wireDrum2Materials = [];
+  wireDrum2Frame = null;
+  wireDrum2SlotBaseLocal = null;
+  wireDrum2Parent = null;
+  wireDrum2RevealProgress = 0;
+  wireDrum2RevealTarget = 0;
   manualWireDrumConnect = false;
   clearJointControlTransitions();
   cameraTransitionState = null;
@@ -7300,6 +7636,9 @@ function clearRobot() {
   spoolHighlightInfoByKey.spool2 = null;
   spool1Meshes = [];
   spool2Meshes = [];
+  spoolCoilMaterialByKey.spool1 = null;
+  spoolCoilMaterialByKey.spool2 = null;
+  feedstockHighlight.clear();
   spoolsDoorMeshes = [];
   wireSpoolDoorMeshes = [];
   leftFeederWheelState = null;
@@ -10163,6 +10502,10 @@ async function loadUrdf(urdfUrl) {
     }
     initializeSceneAnchorsFromRobot();
     enhanceFeederWheelMaterials();
+    buildSecondWireDrum();
+    // Apply the active/non-active feedstock look to the freshly built meshes. The
+    // presentation is otherwise only refreshed on a state CHANGE.
+    refreshFeedstockVisibility();
     rebuildJointControls();
     synchronizeTopCoverControlState();
     initDustExhaustAnchor();
@@ -10178,6 +10521,11 @@ async function loadUrdf(urdfUrl) {
 
     modelStatusEl.textContent = `Model: ${parsed.robotName}`;
     meshStatusEl.textContent = "Mesh: loaded";
+    // Debug handles for the browser console / verification scripts (read-only use).
+    window.__robotRoot = robotRoot;
+    window.__scene = scene;
+    window.__camera = camera;
+    window.__controls = controls;
     // Async load finished (may be well after the triggering click) — draw it.
     requestRender();
 
@@ -11058,6 +11406,7 @@ function animate(nowMs = performance.now()) {
   updateCameraTransition(nowMs);
   updateChillerPlacement(deltaSeconds);
   updateFirstViewSettle(nowMs);
+  feedstockHighlight.update(nowMs);
   updateIdleReset(nowMs);
   updateResetViewFab(nowMs);
   settingsUi.tick(nowMs);

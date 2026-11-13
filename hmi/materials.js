@@ -1088,6 +1088,9 @@ export function setMaterialsMenuOpen(isOpen, options = {}) {
 
   updateMaterialsReturnToSlicerButton();
 
+  // Engage the highlight on open; restore the resting look on close.
+  deps.refreshFeedstockVisibility();
+
   if (!skipBottomNavUpdate) {
     deps.updateBottomNavState();
   }
@@ -1121,6 +1124,7 @@ function wireMaterialsUi() {
       selectedHotspotMaterialId = materialsMaterialSelectEl.value || null;
       updateHotspotMaterialAssignmentStatus();
       setMaterialsMenuConfirmMessage("");
+      deps.refreshFeedstockVisibility(); // instant coil preview of the pick
     });
   }
 
