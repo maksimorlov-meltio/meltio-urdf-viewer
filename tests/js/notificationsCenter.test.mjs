@@ -118,6 +118,55 @@ test("but the bell and the badge still update while it is closed", () => {
   assert.deepEqual(toasts, ["Fault 700.7"], "and an arriving fault still toasts");
 });
 
+// --- the top bar bell is a component: it gets attributes, nothing else --------
+
+test("the bell component is told the open count and the highest open severity", () => {
+  // <m600-notifications> draws the bell, its colour and the count badge from
+  // its `severity` / `count` attributes. The contract with it: count = OPEN
+  // notifications (acknowledged ones included), severity = the highest open one.
+  const bell = document.querySelector("#topbarNotificationsToggle m600-notifications");
+  assert.ok(bell, "the page lost the bell component");
+  reset();
+  assert.equal(bell.getAttribute("count"), "0");
+  assert.equal(bell.getAttribute("severity"), "none");
+
+  put("810.1", { severity: "warning" });
+  ui.renderCenter();
+  assert.equal(bell.getAttribute("count"), "1");
+  assert.equal(bell.getAttribute("severity"), "warning");
+
+  put("820.2", { severity: "critical", status: "acknowledged" });
+  ui.renderCenter();
+  assert.equal(bell.getAttribute("count"), "2", "an acknowledged fault is still open");
+  assert.equal(bell.getAttribute("severity"), "alarm");
+  assert.equal(bell.hasAttribute("acknowledged"), true,
+    "no unacknowledged critical is left, so the alarm must not keep ringing");
+
+  put("820.2", { severity: "critical", status: "resolved" });
+  ui.renderCenter();
+  assert.equal(bell.getAttribute("count"), "1", "a resolved fault leaves the count");
+  assert.equal(bell.getAttribute("severity"), "warning");
+});
+
+test("an unchanged bell is not written again", () => {
+  // Re-writing severity="alarm" makes the component clear `acknowledged` and
+  // restart its ring, and this runs on every 5 s render.
+  const bell = document.querySelector("#topbarNotificationsToggle m600-notifications");
+  reset();
+  put("830.3", { severity: "critical" });
+  ui.renderCenter();
+  const writes = [];
+  const original = bell.setAttribute.bind(bell);
+  bell.setAttribute = (name, value) => { writes.push(name); original(name, value); };
+  try {
+    ui.renderCenter();
+    ui.renderCenter();
+  } finally {
+    delete bell.setAttribute;
+  }
+  assert.deepEqual(writes.filter((name) => name === "severity" || name === "count"), []);
+});
+
 test("opening the centre rebuilds the list it skipped", () => {
   // The counterpart of the guard, and the thing that makes it safe: without a
   // render on open, the operator sees whatever was there when they last closed.

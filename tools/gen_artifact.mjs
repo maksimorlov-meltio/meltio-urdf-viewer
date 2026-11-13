@@ -160,6 +160,10 @@ mkdirSync(join(OUT, "modules"), { recursive: true });
 for (const name of ["api.js", "render.js"]) {
   cpSync(join(STATIC, "modules", name), join(OUT, "modules", name));
 }
+// The icon web components (<m600-*>, bottom bar + top bar) the assembly imports
+// relatively. The page uses their tags: without the files the import is a
+// load-time-fatal 404, and without the components both bars are empty.
+cpSync(join(STATIC, "ui"), join(OUT, "ui"), { recursive: true });
 
 // The published partitions and the contracts. Copied here rather than by the
 // release workflow so that `--out` alone produces something you can serve.

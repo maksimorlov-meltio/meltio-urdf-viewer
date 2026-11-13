@@ -98,6 +98,19 @@ import {
   updateCloudFavoritesFilterButton,
 } from "/hmi/fileLibrary.js";
 import { initUtilities, fanState } from "/hmi/utilities.js";
+// Bottom bar and top bar icons: Maksim's web components (./ui/m600-*.js, used
+// as handed off). Importing a file registers its custom element(s). They sit
+// beside this file rather than in hmi/ because they look elements up inside
+// their own shadow roots, which the DOM contract would publish as page ids;
+// tools/gen_artifact.mjs ships the folder with the assembly.
+import "./ui/m600-front-door.js";
+import { M600CatEgg } from "./ui/m600-cat-egg.js";
+import "./ui/m600-materials-icon.js";
+import "./ui/m600-files-icon.js";
+import "./ui/m600-top-door.js";
+import "./ui/m600-topbar-icons.js";
+import "./ui/m600-ventilation.js";
+import { setTopbarIconActive } from "/hmi/ui/topbarIcons.js";
 import { createAssemblyAnnotationManager } from "/viewer/overlays/assemblyAnnotations.js";
 import {
   initFeederWheelFloatOverlay,
@@ -207,6 +220,7 @@ const printPauseDismissEl = document.getElementById("printPauseDismiss");
 // reassign-to-another-spool confirmation dialog.
 const printResetViewButtonEl = document.getElementById("printResetViewButton");
 const topbarPanToggleEl = document.getElementById("topbarPanToggle");
+const topbarMoveIconEl = topbarPanToggleEl ? topbarPanToggleEl.querySelector("m600-movement") : null;
 const topbarClockEl = document.getElementById("topbarClock");
 const topbarDateEl = document.getElementById("topbarDate");
 const topbarConnectionEl = document.querySelector(".topbar-connection");
@@ -635,20 +649,8 @@ const SPOOL_ICON_OUTLINE_SVG =
     '<path d="M7 9.6 17 11.6M7 13 17 15" />' +
   '</g>' +
   '<path class="spool-wire" pathLength="100" d="M17.8 7.3 22 3.2" />';
-// Materials nav icon (2026-10-08, Maksim picked "A" off the icon reference
-// sheet): Lucide-style stroke reel — ring, hub, four spokes — in currentColor
-// like every other nav glyph. ONE drawing; the pressed state is CSS in
-// #navMaterialsToggle off aria-pressed: the reel (.spool-reel) spins.
-const SPOOL_ICON_SOLID_SVG =
-  '<g class="spool-reel"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/><path d="M12 3v6.5M12 14.5V21M3 12h6.5M14.5 12H21"/></g>';
-// Files nav icon (2026-10-08, Maksim picked "A" + a one-to-many motion):
-// ONE drawing — a single sheet (.file-s1) when idle; when the browser opens
-// two more sheets (.file-s2/.file-s3, partial outlines so the strokes never
-// cross) fan out up-right from behind it while the front sheet settles
-// down-left. Close runs the reverse. All motion is CSS in #navFilesToggle
-// keyed off aria-pressed (tap only, no hover), so the glyph is never swapped.
-const FILES_ICON_SVG =
-  '<g><g class="file-s3"><path d="M8 3.5V2.5A1.5 1.5 0 0 1 9.5 1h8.5L22 5v10.5a1.5 1.5 0 0 1-1.5 1.5h-1"/></g><g class="file-s2"><path d="M5.5 6V5A1.5 1.5 0 0 1 7 3.5h8.5l4 4V18a1.5 1.5 0 0 1-1.5 1.5H17"/></g><g class="file-s1"><path d="M13 6H4.5A1.5 1.5 0 0 0 3 7.5v13A1.5 1.5 0 0 0 4.5 22h11a1.5 1.5 0 0 0 1.5-1.5V10Z"/><path d="M12.5 6v3a1.5 1.5 0 0 0 1.5 1.5H17"/></g></g>';
+// Materials / Files nav icons: Maksim's <m600-materials-icon> and
+// <m600-files-icon> components (ui/, 2026-11-11); see updateBottomNavState.
 // Door / Top-door icon set (2026-07-29 redesign): both glyphs are the SAME
 // M600 enclosure silhouette — a tall cabinet on small casters — so the two
 // bottom-nav buttons read as one machine-representative family rather than a
@@ -666,21 +668,9 @@ const NAV_MACHINE_BODY_SVG =
 // Closed: a flush seam + handle knob. Open: hinge stays at the seam (x11),
 // the leaf swings out past the cabinet's left edge, knob riding with it.
 const NAV_DOOR_ICON_CONSOLE = '<rect x="12.6" y="12.4" width="3.6" height="4.6" rx="0.6" />';
-// Front door (2026-10-08, Maksim picked "A" off the icon reference sheet):
-// Lucide door-closed (.door-panel) and door-open (.door-open) in one svg;
-// the pressed state cross-fades between them and swings the open leaf
-// (.door-leaf) out from its hinge. CSS in #navDoorToggle off aria-pressed.
-// .door-panel is also the install-once hook the call site checks for.
-const NAV_DOOR_ICON_DOOR_SVG =
-  '<g class="door-panel"><path d="M19 21V5a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v16"/><path d="M2 21h20"/><path d="M9 12h.01"/></g><g class="door-open"><path d="M10 21H2"/><path d="M10 3H7a2 2 0 0 0-2 2v16"/><path d="M22 21h-3"/><g class="door-leaf"><path d="M14 12h.01"/><path d="M19 21V5a2 2 0 0 0-1.675-1.974l-6.163-1.013A1 1 0 0 0 10 3v18a1 1 0 0 0 1.124.992z"/></g></g>';
+// Front door: drawn by the <m600-front-door> component (see updateNavFrontDoorIcon).
 const NAV_DOOR_ICON_STOP_SVG = '<rect x="6" y="6" width="12" height="12" rx="1.5" />';
-// Top door (2026-10-13, Maksim: "M" chamber glyph + CRANE): body, floor,
-// chamber window, and the top cover band (.lid-cover). On open an A-sling
-// (.lid-sling) drops from above, hooks the cover, and the pair (.lid-lift)
-// rises straight up; close runs in reverse. ONE drawing, all motion CSS off
-// aria-pressed on #annotationNavTopCover; install-once hook = .lid-cover.
-const TOP_DOOR_ICON_SVG =
-  '<g><path d="M3 21V7"/><path d="M21 21V7"/><path d="M3 21h18"/><rect x="7" y="11" width="10" height="6" rx="1"/><g class="lid-lift"><g class="lid-cover"><path d="M3 7V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2"/><path d="M3 7h18"/></g><g class="lid-sling"><path d="M6 3l6-4.5 6 4.5"/><path d="M12-1.5V-4"/></g></g></g>';
+// Top door: drawn by the <m600-top-door> component (see updateNavTopDoorIcon).
 const ANNOTATION_UPDATE_INTERVAL_MS = 0;
 const ANNOTATION_CLICK_ACTIVE_HOLD_MS = 2200;
 const ENABLE_ANNOTATION_OCCLUSION = false;
@@ -7112,40 +7102,98 @@ async function ensureChillerLoaded() {
 // machine-relative and camera-independent, so it lands in the same spot every
 // time: just past the left face, shifted forward in depth, resting on the floor.
 // The unit is measured with its Z spin already applied (see ensureChillerLoaded).
-function positionChillerBesideMachine() {
+// The chiller's own bounds at a zero offset (measured once per loaded model), so
+// the placement can be recomputed every frame the door moves without touching
+// the object's position to measure it.
+let chillerLocalBounds = null;
+function getChillerLocalBounds() {
+  if (!chillerObject) {
+    return null;
+  }
+  if (!chillerLocalBounds) {
+    const saved = chillerObject.position.clone();
+    chillerObject.position.set(0, 0, 0);
+    chillerObject.updateMatrixWorld(true);
+    chillerLocalBounds = new THREE.Box3().setFromObject(chillerObject);
+    chillerObject.position.copy(saved);
+    chillerObject.updateMatrixWorld(true);
+  }
+  return chillerLocalBounds.isEmpty() ? null : chillerLocalBounds;
+}
+
+// Where the chiller belongs for the machine's CURRENT pose: just past the +X
+// (left) face, forward in depth, on the floor. The front door swings out past
+// that face, so with the door open the unit sits beside the open door and with
+// the door closed it tucks in beside the body (Maksim, 2026-11-09) -- see
+// updateChillerPlacement(), which glides between the two.
+function computeChillerTargetPosition() {
   if (!chillerObject || !robotRoot) {
-    return;
+    return null;
+  }
+  const chillerBounds = getChillerLocalBounds();
+  if (!chillerBounds) {
+    return null;
   }
   robotRoot.updateMatrixWorld(true);
   const machineBounds = new THREE.Box3().setFromObject(robotRoot);
   if (machineBounds.isEmpty()) {
-    return;
+    return null;
   }
-
-  // Measure the chiller from a zeroed offset so the alignment is exact.
-  chillerObject.position.set(0, 0, 0);
-  chillerObject.updateMatrixWorld(true);
-  const chillerBounds = new THREE.Box3().setFromObject(chillerObject);
-  if (chillerBounds.isEmpty()) {
-    return;
-  }
-
   const machineCenter = machineBounds.getCenter(new THREE.Vector3());
   const chillerCenter = chillerBounds.getCenter(new THREE.Vector3());
   const chillerHalfX = (chillerBounds.max.x - chillerBounds.min.x) * 0.5;
-
   // X: just beyond the machine's +X (left) face, clearing the footprint + gap.
   const targetX = machineBounds.max.x + CHILLER_GAP_X + chillerHalfX;
   // Y (depth): shift forward from the machine centre.
   const targetY = machineCenter.y + CHILLER_DEPTH_OFFSET;
+  return new THREE.Vector3(
+    targetX - chillerCenter.x,
+    targetY - chillerCenter.y,
+    // Z (up): rest on the same floor as the machine.
+    machineBounds.min.z - chillerBounds.min.z,
+  );
+}
 
-  const deltaX = targetX - chillerCenter.x;
-  const deltaY = targetY - chillerCenter.y;
-  // Z (up): rest on the same floor as the machine.
-  const deltaZ = machineBounds.min.z - chillerBounds.min.z;
-
-  chillerObject.position.set(deltaX, deltaY, deltaZ);
+function positionChillerBesideMachine() {
+  const target = computeChillerTargetPosition();
+  if (!target) {
+    return;
+  }
+  chillerObject.position.copy(target);
   chillerObject.updateMatrixWorld(true);
+  chillerPlacementTarget = target.clone();
+}
+
+// Per-frame: while the front door is swinging (or its state just settled), the
+// chiller glides to the placement that matches the machine's new footprint.
+let chillerPlacementTarget = null;
+let chillerLastDoorValue = null;
+const CHILLER_GLIDE_RATE = 7; // 1/s -- ~0.4 s to settle
+function updateChillerPlacement(deltaSeconds) {
+  if (!chillerObject || !chillerObject.visible || !robotRoot) {
+    return false;
+  }
+  const door = getFrontDoorControlData();
+  const doorValue = door ? door.state.value : 0;
+  if (chillerLastDoorValue === null || Math.abs(doorValue - chillerLastDoorValue) > 1e-5) {
+    chillerLastDoorValue = doorValue;
+    const target = computeChillerTargetPosition();
+    if (target) {
+      chillerPlacementTarget = target;
+    }
+  }
+  if (!chillerPlacementTarget) {
+    return false;
+  }
+  const remaining = chillerPlacementTarget.distanceTo(chillerObject.position);
+  if (remaining < 1e-4) {
+    return false;
+  }
+  const t = 1 - Math.exp(-CHILLER_GLIDE_RATE * deltaSeconds);
+  chillerObject.position.lerp(chillerPlacementTarget, remaining < 0.002 ? 1 : t);
+  chillerObject.updateMatrixWorld(true);
+  requestRender();
+  return true;
 }
 
 // Show/hide the chiller in step with the topbar toggle. Instant, no camera move.
@@ -7187,6 +7235,8 @@ function clearRobot() {
     });
   }
   robotRoot = null;
+  chillerPlacementTarget = null;
+  chillerLastDoorValue = null;
   jointStates = [];
   userStepMaterials = [];
   displayMaterials = [];
@@ -7508,6 +7558,25 @@ function centerCameraStateOnBounds(state, boxes) {
 // The canonical main view: settled machine (+ chiller when shown), yaw/tilt/zoom
 // applied, centred in the visible band.
 function computeResetViewState(zoomOutFactor = RESET_VIEW_EXTRA_ZOOM_OUT_FACTOR) {
+  // The home view is the SETTLED view: measure it without the transient scene
+  // slide a menu applies (camera view offset). Computed at Files close with
+  // the slide still on, the centring compensated for it and the machine ended
+  // up off-centre once the slide eased away (Maksim, 2026-11-10).
+  const view = camera.view;
+  const viewWasEnabled = Boolean(view && view.enabled);
+  if (viewWasEnabled) {
+    view.enabled = false;
+  }
+  try {
+    return computeResetViewStateUnshifted(zoomOutFactor);
+  } finally {
+    if (viewWasEnabled) {
+      view.enabled = true;
+    }
+  }
+}
+
+function computeResetViewStateUnshifted(zoomOutFactor) {
   // Frame the settled machine (doors closed), not a door caught mid-close, so
   // resets triggered while a panel is still swinging shut still land on the
   // canonical reset view. See measureRobotBoundsAtRest().
@@ -7622,6 +7691,75 @@ if (resetViewFabEl) {
     markUserActivity();
     resetCameraToRobotView({ smooth: true, forceExactView: true });
   });
+}
+
+// First view == reset view (Maksim, 2026-11-09). The load-time reset is
+// computed against whatever layout exists at that instant; the topbar / bottom
+// nav / canvas can still move for a moment afterwards (fonts, the permissions
+// pass showing or hiding nav items, a late resize, a viewport that was 0 px
+// while hidden), which left the first view slightly off the Reset view. For
+// Until the operator first touches the camera (or a menu takes the view), any
+// change of the layout signature re-applies the exact reset. Checked every
+// FIRST_VIEW_SETTLE_POLL_MS, a handful of DOM reads, no mesh walk unless the
+// layout really changed. No time limit: a window that loads minimised or in a
+// hidden tab still gets its proper first view when it is finally shown.
+const FIRST_VIEW_SETTLE_POLL_MS = 250;
+let firstViewSettleActive = false;
+let firstViewSettleNextCheckMs = 0;
+let firstViewLayoutSignature = "";
+
+function getLayoutSignature() {
+  const topBarEl = document.querySelector(".app-topbar");
+  const bottomNavEl = document.querySelector(".bottom-nav");
+  const canvasEl = renderer.domElement;
+  const shift = typeof sceneViewShiftCurrentPx === "number" ? Math.round(sceneViewShiftCurrentPx) : 0;
+  return [
+    window.innerWidth, window.innerHeight,
+    canvasEl ? canvasEl.clientWidth : 0, canvasEl ? canvasEl.clientHeight : 0,
+    topBarEl ? Math.round(topBarEl.getBoundingClientRect().height) : 0,
+    bottomNavEl ? Math.round(bottomNavEl.getBoundingClientRect().height) : 0,
+    shift,
+    Math.round(window.devicePixelRatio * 100),
+  ].join("|");
+}
+
+function beginFirstViewSettle(nowMs = performance.now()) {
+  firstViewSettleActive = true;
+  firstViewSettleNextCheckMs = nowMs + FIRST_VIEW_SETTLE_POLL_MS;
+  firstViewLayoutSignature = getLayoutSignature();
+}
+
+function endFirstViewSettle() {
+  firstViewSettleActive = false;
+}
+
+function updateFirstViewSettle(nowMs) {
+  if (!firstViewSettleActive || !robotRoot) {
+    return false;
+  }
+  if (nowMs < firstViewSettleNextCheckMs) {
+    return false;
+  }
+  firstViewSettleNextCheckMs = nowMs + FIRST_VIEW_SETTLE_POLL_MS;
+  if (isUserCameraGestureActive || cameraTransitionState) {
+    return false;
+  }
+  if (isMainViewOwnedElsewhere()) {
+    // A menu owns the view now: the first view is over.
+    firstViewSettleActive = false;
+    return false;
+  }
+  const signature = getLayoutSignature();
+  if (signature === firstViewLayoutSignature) {
+    return false;
+  }
+  firstViewLayoutSignature = signature;
+  // Layout moved under the first view: land on the exact reset again.
+  camera.aspect = window.innerWidth / Math.max(1, window.innerHeight);
+  camera.updateProjectionMatrix();
+  resetCameraToRobotView();
+  requestRender();
+  return true;
 }
 
 function resetCameraToRobotView(options = {}) {
@@ -8068,6 +8206,319 @@ function updateQuickFrontDoorToggleButton() {
   updateBottomNavState();
 }
 
+// ---------------------------------------------------------------------------
+// Door icons in the bottom bar. Both are Maksim's web components and follow
+// the real door positions: <m600-front-door> (updateNavFrontDoorIcon) and
+// <m600-top-door> (updateNavTopDoorIcon). This block holds what they share:
+// the last position sent to each icon, the QA preview hook and the underline.
+const navStoryState = { front: { p: -1, motion: "idle" }, top: { p: -1, motion: "idle" } };
+let navStoryPreview = null;
+// Debug/QA: window.__navStoryPreview({ front: 0..1, top: 0..1 }) pins the icon
+// positions; call with no argument to follow the real doors again.
+window.__navStoryPreview = (override) => { navStoryPreview = override || null; };
+
+function navStoryFraction(value, closedValue, openValue) {
+  const span = openValue - closedValue;
+  if (!(Math.abs(span) > 1e-9)) {
+    return 0;
+  }
+  return THREE.MathUtils.clamp((value - closedValue) / span, 0, 1);
+}
+
+function syncNavStorySize() {
+  const nav = navDoorToggleEl ? navDoorToggleEl.closest(".bottom-nav") : null;
+  // Any plain light-DOM glyph still in the bar gives the base icon height; the
+  // CSS falls back to 46px (the pinned nav icon size) when there is none.
+  const reference = nav
+    ? Array.from(nav.querySelectorAll(".bottom-nav-item > svg")).find(
+      (svg) => svg.getBoundingClientRect().height > 0,
+    )
+    : null;
+  const height = reference ? reference.getBoundingClientRect().height : 0;
+  if (nav && height > 0) {
+    nav.style.setProperty("--nav-icon-h", `${height.toFixed(1)}px`);
+  }
+}
+window.addEventListener("resize", syncNavStorySize);
+
+// The underline under the label of all four bar buttons.
+function ensureNavDoorTrack(buttonEl) {
+  if (!buttonEl.querySelector(".nav-door-track")) {
+    const track = document.createElement("i");
+    track.className = "nav-door-track";
+    track.setAttribute("aria-hidden", "true");
+    track.appendChild(document.createElement("b"));
+    buttonEl.appendChild(track);
+    syncNavStorySize();
+  }
+}
+
+// 2026-11-11 (Maksim): the Front door icon is his <m600-front-door> web
+// component (ui/m600-front-door.js, "option D": solid slab, knob cut out, turns
+// 45 degrees with a soft stop) plus the separate cat Easter egg
+// (ui/m600-cat-egg.js). Both files are his hand-off and are used unmodified;
+// this is only the wiring: the icon gets the real door position every time it
+// changes, and the cat plays on Easter-egg opens (by default one random open
+// in every block of 50; Settings > "Door cat" cycles 1 in 50 / every open /
+// off). The module only knows "every Nth", so the 1-in-50 draw lives here:
+// the module is held at "off" and play() is called on the picked open.
+const navFrontDoorIconEl = document.getElementById("navFrontDoorIcon");
+const settingsDoorCatButtonEl = document.getElementById("settingsDoorCatButton");
+const FRONT_DOOR_CAT_MODE_KEY = "m600.frontDoor.catMode";
+const FRONT_DOOR_CAT_MODES = ["random50", "always", "off"];
+const FRONT_DOOR_CAT_DEFAULT_MODE = "random50";
+const FRONT_DOOR_CAT_LABELS = {
+  random50: "Door cat: 1 in 50 opens",
+  always: "Door cat: every open",
+  off: "Door cat: off",
+};
+const FRONT_DOOR_CAT_BLOCK_SIZE = 50;
+const FRONT_DOOR_CAT_BLOCK_KEY = "m600.frontDoor.catBlock";
+let navFrontDoorCatEgg = null;
+let frontDoorCatBlockFallback = null;
+
+// What the module itself is told: it has no random mode, and any name it does
+// not know silently means "every 3rd".
+function frontDoorCatEggMode(mode) {
+  return mode === "always" ? "always" : "off";
+}
+
+function newFrontDoorCatBlock() {
+  return { n: 0, pick: Math.floor(Math.random() * FRONT_DOOR_CAT_BLOCK_SIZE) };
+}
+
+function readFrontDoorCatBlock() {
+  let block = frontDoorCatBlockFallback;
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(FRONT_DOOR_CAT_BLOCK_KEY) || "null");
+    if (stored) {
+      block = stored;
+    }
+  } catch (error) {
+    // storage blocked or unreadable: keep the in-memory block
+  }
+  const valid = block
+    && Number.isInteger(block.n) && block.n >= 0 && block.n < FRONT_DOOR_CAT_BLOCK_SIZE
+    && Number.isInteger(block.pick) && block.pick >= 0 && block.pick < FRONT_DOOR_CAT_BLOCK_SIZE;
+  return valid ? { n: block.n, pick: block.pick } : newFrontDoorCatBlock();
+}
+
+// One call per completed opening. True exactly once in every block of 50
+// openings, at a position drawn at random when the block starts. The block is
+// persisted so a restart neither re-rolls it nor loses the count.
+function rollFrontDoorCat() {
+  let block = readFrontDoorCatBlock();
+  const plays = block.n === block.pick;
+  block.n += 1;
+  if (block.n >= FRONT_DOOR_CAT_BLOCK_SIZE) {
+    block = newFrontDoorCatBlock();
+  }
+  frontDoorCatBlockFallback = block;
+  try {
+    window.localStorage.setItem(FRONT_DOOR_CAT_BLOCK_KEY, JSON.stringify(block));
+  } catch (error) {
+    // storage blocked: the block lasts for this session only
+  }
+  return plays;
+}
+// Debug/QA: one draw, exactly as a completed opening would make it.
+window.__frontDoorCatRoll = rollFrontDoorCat;
+
+function onNavFrontDoorOpened() {
+  if (!navFrontDoorCatEgg || readFrontDoorCatMode() !== "random50") {
+    return;
+  }
+  if (!rollFrontDoorCat()) {
+    return;
+  }
+  // play() skips the module's own reduced-motion check, so it is repeated here.
+  if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    return;
+  }
+  navFrontDoorCatEgg.play();
+}
+
+function readFrontDoorCatMode() {
+  try {
+    const stored = window.localStorage.getItem(FRONT_DOOR_CAT_MODE_KEY);
+    if (FRONT_DOOR_CAT_MODES.includes(stored)) {
+      return stored;
+    }
+  } catch (error) {
+    // storage blocked: fall through to the default
+  }
+  return FRONT_DOOR_CAT_DEFAULT_MODE;
+}
+
+function applyFrontDoorCatMode(mode, { persist = false } = {}) {
+  const next = FRONT_DOOR_CAT_MODES.includes(mode) ? mode : FRONT_DOOR_CAT_DEFAULT_MODE;
+  if (persist) {
+    try {
+      window.localStorage.setItem(FRONT_DOOR_CAT_MODE_KEY, next);
+    } catch (error) {
+      // storage blocked: the choice lasts for this session only
+    }
+  }
+  if (navFrontDoorCatEgg) {
+    navFrontDoorCatEgg.mode = frontDoorCatEggMode(next);
+    if (next === "off") {
+      navFrontDoorCatEgg.reset();
+    }
+  }
+  if (settingsDoorCatButtonEl) {
+    settingsDoorCatButtonEl.textContent = FRONT_DOOR_CAT_LABELS[next];
+  }
+  return next;
+}
+// Debug/QA: window.__frontDoorCat("always" | "random50" | "off")
+window.__frontDoorCat = (mode) => applyFrontDoorCatMode(mode, { persist: true });
+applyFrontDoorCatMode(readFrontDoorCatMode());
+
+if (settingsDoorCatButtonEl) {
+  settingsDoorCatButtonEl.addEventListener("click", () => {
+    markUserActivity();
+    const current = readFrontDoorCatMode();
+    const next = FRONT_DOOR_CAT_MODES[(FRONT_DOOR_CAT_MODES.indexOf(current) + 1) % FRONT_DOOR_CAT_MODES.length];
+    applyFrontDoorCatMode(next, { persist: true });
+  });
+}
+
+// Materials icon without the wire that used to run up from the spool when the
+// tab is selected (Maksim, 2026-11-11). ui/m600-materials-icon.js stays
+// byte-identical to his hand-off and no documented custom property reaches the
+// wire, so it is hidden with one rule in the icon's shadow root (the cat module
+// adds its styles to the door icon the same way). The spool turn stays.
+function hideNavMaterialsWire() {
+  const icon = document.getElementById("navMaterialsIcon");
+  const root = icon ? icon.shadowRoot : null;
+  if (!root || root.querySelector("#m600-nav-no-wire")) {
+    return;
+  }
+  const style = document.createElement("style");
+  style.id = "m600-nav-no-wire";
+  style.textContent = ".wwrap{display:none}";
+  root.appendChild(style);
+}
+customElements.whenDefined("m600-materials-icon").then(hideNavMaterialsWire);
+
+// Materials icon without the spring at the end of its activation (Maksim,
+// 2026-11-11: "remove the last spring movement, activation and deactivation
+// should remain"). The module turns the spool back past its end position and
+// lets it bounce twice (-140 -> -106 -> -128 -> -117 -> -120 deg, 1.37 s).
+// The module stays unmodified, so its own running animation is re-keyed right
+// after it starts: one turn straight to the end position, with the easing and
+// length of the module's first segment, and then it stops. The animation
+// object is still the module's, so its interrupt / reverse handling keeps
+// working. Deactivation (two keyframes) is left exactly as it is.
+const NAV_MATERIALS_TURN_MS = 640;
+function removeNavMaterialsSpring(icon) {
+  const spool = icon && icon.shadowRoot ? icon.shadowRoot.querySelector(".spool") : null;
+  if (!spool || typeof spool.getAnimations !== "function") {
+    return;
+  }
+  spool.getAnimations().forEach((animation) => {
+    const effect = animation.effect;
+    const frames = effect && typeof effect.getKeyframes === "function" ? effect.getKeyframes() : [];
+    // Only the bouncing activation has more than two keyframes; the instant /
+    // reduced-motion state has one and deactivation has two.
+    if (frames.length <= 2) {
+      return;
+    }
+    effect.setKeyframes([
+      { transform: frames[0].transform, easing: "cubic-bezier(.3,.7,.3,1)" },
+      { transform: "rotate(-120deg)" },
+    ]);
+    effect.updateTiming({ duration: NAV_MATERIALS_TURN_MS });
+  });
+}
+
+function updateNavFrontDoorIcon() {
+  const icon = navFrontDoorIconEl;
+  if (!navDoorToggleEl || !icon || typeof icon.setState !== "function") {
+    return;
+  }
+  ensureNavDoorTrack(navDoorToggleEl);
+  if (!navFrontDoorCatEgg) {
+    navFrontDoorCatEgg = new M600CatEgg(icon, { mode: frontDoorCatEggMode(readFrontDoorCatMode()) });
+    icon.addEventListener("door-opened", onNavFrontDoorOpened);
+  }
+  const data = getFrontDoorControlData();
+  const live = data ? navStoryFraction(data.state.value, data.closedValue, data.openValue) : 0;
+  let p = navStoryPreview && typeof navStoryPreview.front === "number" ? navStoryPreview.front : live;
+  // The component reports "opened" only at exactly 1 and "closed" only at
+  // exactly 0, while the joint transition ends within 1e-4 of its target.
+  if (p < 0.001) {
+    p = 0;
+  } else if (p > 0.999) {
+    p = 1;
+  }
+  const state = navStoryState.front;
+  if (Math.abs(p - state.p) > 0.0005) {
+    const motion = state.p < 0 ? "idle" : (p > state.p ? "opening" : "closing");
+    state.p = p;
+    state.motion = motion;
+    icon.setState({ position: p, motion });
+    // Underline: lit from the moment the door starts to open, released the
+    // moment it starts to close (aria-pressed only flips at half travel).
+    navDoorToggleEl.classList.toggle("is-line-on", motion === "idle" ? p > 0.5 : motion === "opening");
+  } else if (state.motion !== "idle") {
+    state.motion = "idle";
+    icon.setState({ motion: "idle" });
+  }
+}
+
+// 2026-11-11 (Maksim): the Top door icon is his <m600-top-door> web component
+// (ui/m600-top-door.js, used unmodified; it replaces the cooking pot). Solid
+// enclosure with a front window; the hatch turns up to 45 degrees, a dotted
+// swing arc is drawn in step with it and a slot opens on top. Wired like the
+// front door: the icon gets the real lid position every time it changes.
+const navTopDoorIconEl = document.getElementById("navTopDoorIcon");
+
+function updateNavTopDoorIcon() {
+  const icon = navTopDoorIconEl;
+  if (!annotationNavTopCoverEl || !icon || typeof icon.setState !== "function") {
+    return;
+  }
+  ensureNavDoorTrack(annotationNavTopCoverEl);
+  const data = getTopCoverControlData();
+  const live = data ? navStoryFraction(data.topCoverState.value, data.closedValue, data.openValue) : 0;
+  let p = navStoryPreview && typeof navStoryPreview.top === "number" ? navStoryPreview.top : live;
+  // The end mark needs the position at 1 and the component reports
+  // "opened" / "closed" only at exactly 1 / 0, while the joint transition
+  // ends within 1e-4 of its target.
+  if (p < 0.001) {
+    p = 0;
+  } else if (p > 0.999) {
+    p = 1;
+  }
+  const state = navStoryState.top;
+  if (Math.abs(p - state.p) > 0.0005) {
+    const motion = state.p < 0 ? "idle" : (p > state.p ? "opening" : "closing");
+    state.p = p;
+    state.motion = motion;
+    icon.setState({ position: p, motion });
+    // Underline: lit from the moment the lid starts to open, released the
+    // moment it starts to close.
+    annotationNavTopCoverEl.classList.toggle("is-line-on", motion === "idle" ? p > 0.5 : motion === "opening");
+  } else if (state.motion !== "idle") {
+    state.motion = "idle";
+    icon.setState({ motion: "idle" });
+  }
+}
+
+function updateNavDoorStories() {
+  updateNavFrontDoorIcon();
+  // Materials and Files carry the same bar; CSS lights it off the selected
+  // state, so the element only has to exist.
+  if (navMaterialsToggleEl) {
+    ensureNavDoorTrack(navMaterialsToggleEl);
+  }
+  if (navFilesToggleEl) {
+    ensureNavDoorTrack(navFilesToggleEl);
+  }
+  updateNavTopDoorIcon();
+}
+
 // Same per-frame observation / change-only DOM write pattern as the quick
 // front-door button above.
 let lastTopDoorShortcutKey = "";
@@ -8098,17 +8549,6 @@ function updateTopDoorShortcutButton() {
   const topLabelEl = annotationNavTopCoverEl.querySelector("span");
   if (topLabelEl) {
     topLabelEl.textContent = isOpen ? t("nav.topDoorOpen") : t("nav.topDoor");
-  }
-
-  const topIconEl = annotationNavTopCoverEl.querySelector("svg");
-  const topIconMode = isOpen ? "top-open" : "top-closed";
-  if (topIconEl && topIconEl.dataset.mode !== topIconMode) {
-    // One animated drawing: install it once, then only the mode flips (the
-    // lid motion is CSS off aria-pressed). Re-setting innerHTML would reset it.
-    if (!topIconEl.querySelector(".lid-cover")) {
-      topIconEl.innerHTML = TOP_DOOR_ICON_SVG;
-    }
-    topIconEl.dataset.mode = topIconMode;
   }
 
   // Keep the Controls-panel Top Door button in sync (it drives the same action
@@ -9974,6 +10414,7 @@ async function loadUrdf(urdfUrl) {
     feederSavedHeadTransparencyEnabled = null;
     updateFeederCameraAnchorButtons();
     resetCameraToRobotView();
+    beginFirstViewSettle();
 
     modelStatusEl.textContent = `Model: ${parsed.robotName}`;
     meshStatusEl.textContent = "Mesh: loaded";
@@ -10112,6 +10553,7 @@ function setControlsPanelOpen(isOpen) {
     topbarPanToggleEl.setAttribute("aria-pressed", isControlsPanelOpen ? "true" : "false");
     topbarPanToggleEl.classList.toggle("is-active", isControlsPanelOpen);
   }
+  setTopbarIconActive(topbarMoveIconEl, isControlsPanelOpen);
 
   if (isControlsPanelOpen) {
     window.requestAnimationFrame(() => {
@@ -10509,7 +10951,7 @@ function updateBottomNavState() {
   const dockedPrint = filesListCollapsedForPrint;
 
   if (navFilesToggleEl) {
-    const navFilesIconEl = navFilesToggleEl.querySelector("svg");
+    const navFilesIconEl = navFilesToggleEl.querySelector("m600-files-icon");
     const navFilesLabelEl = navFilesToggleEl.querySelector("span");
     const isFilesModeActive = isCloudModelMenuOpen;
 
@@ -10525,16 +10967,10 @@ function updateBottomNavState() {
       navFilesLabelEl.textContent = t("nav.files");
     }
 
-    if (navFilesIconEl) {
-      const filesIconMode = isFilesModeActive ? "solid" : "outline";
-      if (navFilesIconEl.dataset.mode !== filesIconMode) {
-        // One animated drawing (sheets fan out via CSS off aria-pressed);
-        // install once, never re-set on a state flip.
-        if (!navFilesIconEl.querySelector(".file-s1")) {
-          navFilesIconEl.innerHTML = FILES_ICON_SVG;
-        }
-        navFilesIconEl.dataset.mode = filesIconMode;
-      }
+    // <m600-files-icon>: its activate / deactivate animation starts together
+    // with the selected state (and so with the underline).
+    if (navFilesIconEl && navFilesIconEl.hasAttribute("active") !== isFilesModeActive) {
+      navFilesIconEl.toggleAttribute("active", isFilesModeActive);
     }
   }
 
@@ -10573,19 +11009,14 @@ function updateBottomNavState() {
     navMaterialsToggleEl.setAttribute("aria-pressed", isMaterialsMenuOpen ? "true" : "false");
     navMaterialsToggleEl.classList.toggle("is-active", isMaterialsMenuOpen);
     navMaterialsToggleEl.disabled = false;
-    const matIconEl = navMaterialsToggleEl.querySelector("svg");
-    if (matIconEl) {
-      // Isometric cube-family glyph (2026-08): idle cube vs. active (menu
-      // open) right face lifted in accent — same swap pattern as Open Door /
-      // Top Door / Files above.
-      const matIconMode = isMaterialsMenuOpen ? "materials-active" : "materials-idle";
-      if (matIconEl.dataset.mode !== matIconMode) {
-        // One animated drawing (reel spins via CSS off aria-pressed);
-        // install once, never re-set on a state flip.
-        if (!matIconEl.querySelector(".spool-reel")) {
-          matIconEl.innerHTML = SPOOL_ICON_SOLID_SVG;
-        }
-        matIconEl.dataset.mode = matIconMode;
+    // <m600-materials-icon>: same as Files above.
+    const matIconEl = navMaterialsToggleEl.querySelector("m600-materials-icon");
+    if (matIconEl && matIconEl.hasAttribute("active") !== isMaterialsMenuOpen) {
+      // The component starts its animation synchronously on the attribute
+      // change, so the activation can be re-keyed in the same task.
+      matIconEl.toggleAttribute("active", isMaterialsMenuOpen);
+      if (isMaterialsMenuOpen) {
+        removeNavMaterialsSpring(matIconEl);
       }
     }
   }
@@ -10645,15 +11076,11 @@ function updateBottomNavState() {
       if (labelEl) {
         labelEl.textContent = doorLabel;
       }
-      const doorIconMode = isOpen ? "door-open" : "door-closed";
-      if (iconEl && iconEl.dataset.mode !== doorIconMode) {
-        // One animated drawing (leaf swings via CSS off aria-pressed);
-        // (re)install only when the svg holds something else — e.g. the Stop
-        // square after a print — never on a plain open/close flip.
-        if (!iconEl.querySelector(".door-panel")) {
-          iconEl.innerHTML = NAV_DOOR_ICON_DOOR_SVG;
-        }
-        iconEl.dataset.mode = doorIconMode;
+      // The door itself is drawn by <m600-front-door> (updateNavFrontDoorIcon);
+      // this svg only ever holds the print Stop square and is hidden otherwise.
+      if (iconEl && iconEl.dataset.mode !== "door") {
+        iconEl.innerHTML = "";
+        iconEl.dataset.mode = "door";
       }
     }
   }
@@ -10869,6 +11296,8 @@ function animate(nowMs = performance.now()) {
   updateFilesMenuDoorSeeThrough();
   updateMaterialsModelLift(deltaSeconds);
   updateCameraTransition(nowMs);
+  updateChillerPlacement(deltaSeconds);
+  updateFirstViewSettle(nowMs);
   updateIdleReset(nowMs);
   updateResetViewFab(nowMs);
   settingsUi.tick(nowMs);
@@ -10907,6 +11336,7 @@ function animate(nowMs = performance.now()) {
   }
   updateQuickFrontDoorToggleButton();
   updateTopDoorShortcutButton();
+  updateNavDoorStories();
 }
 
 reloadModelEl.addEventListener("click", () => {
@@ -10956,6 +11386,15 @@ if (lightModeToggleEl) {
 window.addEventListener("pointerdown", (event) => {
   const target = event.target;
   if (!(target instanceof Node)) {
+    return;
+  }
+
+  // The DS listbox (ui/dsSelect.js) renders its option panel at document.body,
+  // so it is physically OUTSIDE whatever menu owns the <select>. Touching an
+  // option used to count as an outside tap and dismiss the Materials menu
+  // before the choice could land (Maksim, 2026-11-09). An option tap is never a
+  // dismiss of anything.
+  if (target instanceof Element && target.closest(".ds-select-panel")) {
     return;
   }
 
@@ -11741,6 +12180,7 @@ controls.addEventListener("end", () => {
 canvas.addEventListener("pointerdown", () => {
   markUserActivity();
   beginInteractionQuality();
+  endFirstViewSettle(); // the operator took the camera: stop re-seating the first view
 }, { capture: true });
 
 canvas.addEventListener("pointerdown", (event) => {
@@ -11762,6 +12202,7 @@ canvas.addEventListener("dblclick", (event) => {
 canvas.addEventListener("wheel", () => {
   markUserActivity();
   beginInteractionQuality();
+  endFirstViewSettle();
 }, { passive: true });
 
 canvas.addEventListener("touchstart", () => {

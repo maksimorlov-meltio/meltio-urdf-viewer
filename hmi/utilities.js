@@ -13,6 +13,10 @@ let deps = {};
 
 const topbarFanToggleEl = document.getElementById("topbarFanToggle");
 const topbarChillerToggleEl = document.getElementById("topbarChillerToggle");
+// The icons inside the two buttons: <m600-ventilation> and <m600-chiller>
+// (Maksim's components, registered by the app entry -- see hmi/ui/topbarIcons.js).
+const topbarFanIconEl = topbarFanToggleEl ? topbarFanToggleEl.querySelector("m600-ventilation") : null;
+const topbarChillerIconEl = topbarChillerToggleEl ? topbarChillerToggleEl.querySelector("m600-chiller") : null;
 
 let isTopbarChillerEnabled = topbarChillerToggleEl
   ? topbarChillerToggleEl.getAttribute("aria-pressed") === "true"
@@ -28,6 +32,22 @@ function setTopbarUtilityToggleState(buttonEl, isEnabled) {
 
   buttonEl.setAttribute("aria-pressed", isEnabled ? "true" : "false");
   buttonEl.classList.toggle("is-active", isEnabled);
+  // <m600-chiller>: blue, column running and snowflake turning while the
+  // chiller is on. Driven from here so the boot call and setChillerOn can
+  // never disagree with the icon.
+  if (buttonEl === topbarChillerToggleEl && topbarChillerIconEl) {
+    const nextState = isEnabled ? "cooling" : "idle";
+    if (topbarChillerIconEl.getAttribute("state") !== nextState) {
+      topbarChillerIconEl.setAttribute("state", nextState);
+    }
+  }
+  // <m600-ventilation>: blades spin up and wind blows out while the fan is on.
+  if (buttonEl === topbarFanToggleEl && topbarFanIconEl) {
+    const nextState = isEnabled ? "running" : "stopped";
+    if (topbarFanIconEl.getAttribute("state") !== nextState) {
+      topbarFanIconEl.setAttribute("state", nextState);
+    }
+  }
 }
 
 function syncTopbarUtilityErrorNotifications() {
@@ -129,14 +149,55 @@ const topbarFanSettingsEl = document.getElementById("topbarFanSettings");
 const topbarChillerSettingsEl = document.getElementById("topbarChillerSettings");
 
 
-function applyFanSpin() {
-  if (!topbarFanToggleEl) return;
-  // Higher speed -> shorter spin duration (0.6s at 100%, 4s at 0%).
-  const dur = 0.6 + ((100 - Math.max(0, Math.min(100, fanState.speed))) / 100) * 3.4;
-  topbarFanToggleEl.style.setProperty("--fan-spin-duration", `${dur.toFixed(2)}s`);
+// Top bar fan icon and the fan speed (Maksim, 2026-11-12):
+//   - the icon is red (the component's `alarm` look) only while the fan RUNS AT
+//     MAXIMUM speed; off, or running below maximum, it is white like the other
+//     top bar icons;
+//   - the blades turn faster as the speed rises. Turns per second are
+//     proportional to the speed, anchored so the default 60 % gives the
+//     component's own 1.1 s per turn (100 % = 0.66 s, 30 % = 2.2 s; below 10 %
+//     it stays at the 10 % rate). The wind gusts keep the same ratio.
+// The module is unmodified: only the duration of its own CSS animations is
+// re-timed, so its soft start / soft stop keep working. Called from
+// refreshFanSettingsUI, i.e. on every change of fanState; nothing is written
+// unless a value changed.
+const FAN_ICON_BASE_SPEED_PCT = 60;
+const FAN_ICON_BASE_SPIN_MS = 1100;
+const FAN_ICON_BASE_GUST_MS = 500;
+let topbarFanIconSpinMs = 0;
+
+function syncTopbarFanIcon() {
+  if (!topbarFanIconEl) {
+    return;
+  }
+  const speed = Math.max(0, Math.min(100, Number(fanState.speed) || 0));
+  const atMaximum = Boolean(fanState.on) && speed >= 100;
+  if (topbarFanIconEl.hasAttribute("alarm") !== atMaximum) {
+    topbarFanIconEl.toggleAttribute("alarm", atMaximum);
+  }
+  const ratio = FAN_ICON_BASE_SPEED_PCT / Math.max(10, speed);
+  const spinMs = Math.round(FAN_ICON_BASE_SPIN_MS * ratio);
+  const root = topbarFanIconEl.shadowRoot;
+  if (spinMs === topbarFanIconSpinMs || !root) {
+    return;
+  }
+  const retime = (el, duration) => {
+    if (!el || typeof el.getAnimations !== "function") {
+      return;
+    }
+    el.getAnimations().forEach((animation) => {
+      if (animation.effect && typeof animation.effect.updateTiming === "function") {
+        animation.effect.updateTiming({ duration });
+      }
+    });
+  };
+  retime(root.querySelector(".rotor"), spinMs);
+  root.querySelectorAll(".wa").forEach((el) => retime(el, Math.round(FAN_ICON_BASE_GUST_MS * ratio)));
+  topbarFanIconSpinMs = spinMs;
 }
 
 function refreshFanSettingsUI() {
+  syncTopbarFanIcon();
   const power = document.getElementById("fanSettingsPower");
   if (power) {
     power.setAttribute("aria-pressed", fanState.on ? "true" : "false");
@@ -180,7 +241,6 @@ function setFanOn(on) {
   }
   setTopbarUtilityToggleState(topbarFanToggleEl, on);
   syncTopbarUtilityErrorNotifications();
-  applyFanSpin();
   deps.syncDustExhaustFan();
   refreshFanSettingsUI();
   persistUtilitySettings();
@@ -261,7 +321,6 @@ export function initUtilities(nextDeps) {
     deps.markUserActivity();
     fanState.speed = Number(e.target.value) || 0;
     if (fanState.mode === "auto") { fanState.mode = "manual"; }
-    applyFanSpin();
     deps.syncDustExhaustFan();
     refreshFanSettingsUI();
     persistUtilitySettings();
@@ -368,7 +427,6 @@ export function initUtilities(nextDeps) {
     onApply: (n) => {
       fanState.speed = n;
       if (fanState.mode === "auto") fanState.mode = "manual";
-      applyFanSpin();
       deps.syncDustExhaustFan();
       refreshFanSettingsUI();
       persistUtilitySettings();
@@ -403,7 +461,6 @@ export function initUtilities(nextDeps) {
   });
 
   // Sync initial UI from (possibly persisted) state.
-  applyFanSpin();
   refreshFanSettingsUI();
   refreshChillerSettingsUI();
 

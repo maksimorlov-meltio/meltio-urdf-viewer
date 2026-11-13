@@ -3,8 +3,8 @@
   "contractVersion": 2,
   "totals": {
     "modules": 28,
-    "domIds": 216,
-    "assemblyDomIds": 126,
+    "domIds": 215,
+    "assemblyDomIds": 130,
     "globals": 8
   },
   "domIds": [
@@ -219,7 +219,6 @@
     "topbarChillerToggle",
     "topbarFanSettings",
     "topbarFanToggle",
-    "topbarNotificationBadge",
     "topbarNotificationCenter",
     "topbarNotificationsToggle",
     "topbarSettingsMenu",
@@ -309,9 +308,12 @@
     "motionStatus",
     "navDoorToggle",
     "navFilesToggle",
+    "navFrontDoorIcon",
+    "navMaterialsIcon",
     "navMaterialsToggle",
     "navPlayToggle",
     "navSlicerToggle",
+    "navTopDoorIcon",
     "palpadorSweepButton",
     "printCompleteAccept",
     "printCompleteAtmosphere",
@@ -339,6 +341,7 @@
     "resetView",
     "resetViewFab",
     "scene",
+    "settingsDoorCatButton",
     "slicerLoadToViewer",
     "startPrintPreviewBar",
     "startPrintPreviewCancel",
@@ -685,7 +688,6 @@
         "notificationSettings",
         "notificationToastLayer",
         "notificationViewHistory",
-        "topbarNotificationBadge",
         "topbarNotificationCenter",
         "topbarNotificationsToggle"
       ],

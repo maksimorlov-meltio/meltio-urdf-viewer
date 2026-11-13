@@ -4,6 +4,8 @@
 // window.MeltioAdvanced bridge permissions.js drives. Extracted verbatim
 // from urdf_viewer.js (step-5 phase B3c-1). Owns its DOM, state, listeners.
 
+import { setTopbarIconActive } from "./ui/topbarIcons.js";
+
 export function createSettingsUi(deps) {
 const {
   markUserActivity,
@@ -23,6 +25,8 @@ const {
 } = deps;
 
 const topbarSettingsToggleEl = document.getElementById("topbarSettingsToggle");
+// <m600-settings> inside the button (hmi/ui/topbarIcons.js): `active` while the menu is open.
+const topbarSettingsIconEl = topbarSettingsToggleEl ? topbarSettingsToggleEl.querySelector("m600-settings") : null;
 const topbarSettingsMenuEl = document.getElementById("topbarSettingsMenu");
 const settingsWizardsButtonEl = document.getElementById("settingsWizardsButton");
 const settingsCalibrateToggleEl = document.getElementById("settingsCalibrateToggle");
@@ -235,6 +239,7 @@ function setTopbarSettingsMenuOpen(isOpen) {
     topbarSettingsToggleEl.setAttribute("aria-expanded", isTopbarSettingsMenuOpen ? "true" : "false");
     topbarSettingsToggleEl.classList.toggle("is-active", isTopbarSettingsMenuOpen);
   }
+  setTopbarIconActive(topbarSettingsIconEl, isTopbarSettingsMenuOpen);
 }
 // --- Listener wiring (moved with the domain) -------------------------------
 if (settingsLightToggleEl) {
