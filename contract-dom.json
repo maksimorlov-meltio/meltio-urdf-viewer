@@ -4,7 +4,7 @@
   "totals": {
     "modules": 30,
     "domIds": 223,
-    "assemblyDomIds": 126,
+    "assemblyDomIds": 127,
     "globals": 8
   },
   "domIds": [
@@ -310,6 +310,7 @@
     "jointControls",
     "lightModeToggle",
     "maintenancePositionButton",
+    "materialsMenuPopup",
     "meshStatus",
     "modelSelect",
     "modelStatus",
@@ -624,6 +625,7 @@
         "loadSlicerIframeForFile",
         "markUserActivity",
         "persistFeederFeedType",
+        "reframeMaterialsView",
         "refreshFeedstockVisibility",
         "setActiveHotspotPanel",
         "setCloudModelMenuOpen",

@@ -1182,6 +1182,11 @@ function wireMaterialsUi() {
       updateMaterialsFeederTypeUI();
       // Reveal/hide spools + drum right away to match the new feed type.
       deps.refreshFeedstockVisibility();
+      // A drum appears beside the machine (or goes away): the host re-frames
+      // the Materials view so spools and drums are both in it.
+      if (typeof deps.reframeMaterialsView === "function") {
+        deps.reframeMaterialsView();
+      }
     });
     const switchEl = document.getElementById("materialsFeedTypeSwitch");
     if (switchEl) {

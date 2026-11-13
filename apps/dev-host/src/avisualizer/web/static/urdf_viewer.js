@@ -650,6 +650,26 @@ const FEEDER_HEAD_RESTORE_DELAY_MS = Math.max((TOP_COVER_OPEN_DURATION_SEC * 100
 const SPOOLS_DOOR_BUTTON_CAMERA_DURATION_MS = 940;
 const SPOOLS_DOOR_BUTTON_CLOSE_RESET_DURATION_MS = 980;
 const SPOOLS_DOOR_BUTTON_PERP_X_SIDE = -1;
+// Materials view with a drum shown (2026-11-09): yaw from the spools side toward
+// the machine front so the drum sits beside the spools instead of in front.
+// 10 deg: the OPEN compartment door swings toward the front and stands in the
+// way from ~15 deg on (24 and 38 deg verified blocked); toward the back the
+// drum walks in front of the spools. Measured 2026-11-09 with a yaw/elevation
+// sweep against the live scene.
+// 2026-11-10: SUPERSEDED by Maksim's own orbit (screenshot): look from the
+// spools side rounded toward the machine BACK and from above, so the open
+// compartment door swings away to the left and the camera sees over the drums
+// onto the spools. Used for the spools-only view too.
+const MATERIALS_VIEW_YAW_RAD = THREE.MathUtils.degToRad(-25);
+const MATERIALS_VIEW_ELEVATION_RAD = THREE.MathUtils.degToRad(22);
+// Spools only (his second screenshot): a close-up on the two spools, a little
+// further round and flatter, with breathing room so the compartment reads.
+const MATERIALS_SPOOLS_VIEW_YAW_RAD = THREE.MathUtils.degToRad(-35);
+const MATERIALS_SPOOLS_VIEW_ELEVATION_RAD = THREE.MathUtils.degToRad(14);
+const MATERIALS_SPOOLS_VIEW_MARGIN = 1.45;
+// Two spools active: the pair sits this fraction of the free region's height
+// BELOW its centre, well clear of the popup (Maksim, 2026-11-10: "lower").
+const MATERIALS_SPOOLS_VIEW_DROP_FRACTION = 0.13;
 const TOP_COVER_BUTTON_CAMERA_DURATION_MS = 980;
 const TOP_COVER_BUTTON_CLOSE_RESET_DURATION_MS = 980;
 const TOP_COVER_BUTTON_PERP_Y_SIDE = -1;
@@ -1757,13 +1777,12 @@ function updateIdleReset(nowMs) {
     return;
   }
 
-  if (isAnyAssemblyActionActive()) {
-    return;
-  }
-
-  // Materials / Controls / Files / hotspot panels frame the scene their own
-  // way and glide back by themselves; the idle return is for the main screen.
-  if (isMainViewOwnedElsewhere()) {
+  // Maksim, 2026-11-10: the idle return works on EVERY screen. A menu with its
+  // own prescribed view (Materials, Files) glides back to THAT view; panels
+  // without one (Controls, Notifications, Settings) and the main screen glide
+  // back to the default view. A docked print and the feeder close-up own the
+  // camera and are left alone, as is a menu that has no framing yet.
+  if (isPrintOwningView() || activeFeederCameraAnchorSide) {
     return;
   }
 
@@ -1772,6 +1791,26 @@ function updateIdleReset(nowMs) {
   }
 
   if (cameraTransitionState || isUserCameraGestureActive) {
+    return;
+  }
+
+  refreshMenuViewHome();
+  const home = getResetViewHomeState();
+  if (home.kind === "menu") {
+    if (home.state && !isCameraCloseToState(home.state, RESET_VIEW_MENU_HOME_TOLERANCE_M, RESET_VIEW_MENU_HOME_TOLERANCE_M)) {
+      beginCameraTransition(home.state, IDLE_RESET_TRANSITION_MS, { distanceLock: null });
+    }
+    lastUserActivityMs = nowMs;
+    return;
+  }
+  if (isMaterialsMenuOpen || isCloudModelMenuOpen) {
+    return; // menu open but its framing is not set yet
+  }
+  // Main screen / plain panels: a door the operator opened by hand keeps the
+  // view where they left it. (This guard used to sit above the menu branch and
+  // silently blocked the Materials and Files returns too: both menus open a
+  // door themselves.)
+  if (isAnyAssemblyActionActive()) {
     return;
   }
 
@@ -5269,6 +5308,7 @@ function setCloudModelMenuOpen(isOpen, options = {}) {
   isCloudModelMenuOpen = Boolean(isOpen);
 
   if (!isCloudModelMenuOpen) {
+    clearMenuViewCameraState("files");
     slicerPaneUi.setMenuOpen(false);
     // Closing the menu ends any docked-print collapse. Reset it so a later fresh
     // open shows the normal file browser (three base bottom-nav buttons, no
@@ -7677,11 +7717,17 @@ function clearRobot() {
 // silhouette far more tightly than the corners of the single union box, which
 // is what the on-screen centring and the band fit need.
 const visibleBoundsScratchBox = new THREE.Box3();
-function measureVisibleBounds(root, collect = null) {
+// `collect` (optional array) receives one world-space Box3 per mesh: the
+// per-mesh boxes trace the silhouette far more tightly than the corners of the
+// single union box, which is what the on-screen centring needs.
+function measureVisibleBounds(root, collect = null, skip = null, ignoreVisibility = false) {
   const bounds = new THREE.Box3();
   root.updateMatrixWorld(true);
   const walk = (object) => {
-    if (object.visible === false) {
+    if (object.visible === false && !ignoreVisibility) {
+      return;
+    }
+    if (skip && skip(object)) {
       return;
     }
     if (object.isMesh && object.geometry) {
@@ -7701,6 +7747,44 @@ function measureVisibleBounds(root, collect = null) {
     }
   };
   walk(root);
+  return bounds;
+}
+
+// Bounds of every drum whose feeder is drum-fed, regardless of its current
+// reveal state (a hidden drum 1 is measured with visibility ignored; a
+// detached drum 2 is attached for the measurement and detached again).
+function measureDrumRestBounds(collect = null) {
+  const bounds = new THREE.Box3();
+  if (!robotRoot) {
+    return bounds;
+  }
+  const measureIgnoringVisibility = (object) => {
+    const box = new THREE.Box3();
+    object.updateMatrixWorld(true);
+    object.traverse((node) => {
+      if (node.isMesh && node.geometry) {
+        if (!node.geometry.boundingBox) node.geometry.computeBoundingBox();
+        if (node.geometry.boundingBox) {
+          visibleBoundsScratchBox.copy(node.geometry.boundingBox).applyMatrix4(node.matrixWorld);
+          box.union(visibleBoundsScratchBox);
+          if (collect) {
+            collect.push(visibleBoundsScratchBox.clone());
+          }
+        }
+      }
+    });
+    return box;
+  };
+  if (isFeederDrumFed("spool1")) {
+    const link = robotRoot.getObjectByName(`link:${WIRE_DRUM_LINK}`);
+    if (link) bounds.union(measureIgnoringVisibility(link));
+  }
+  if (isFeederDrumFed("spool2") && wireDrum2Frame && wireDrum2Parent) {
+    const wasAttached = wireDrum2Frame.parent === wireDrum2Parent;
+    if (!wasAttached) wireDrum2Parent.add(wireDrum2Frame);
+    bounds.union(measureIgnoringVisibility(wireDrum2Frame));
+    if (!wasAttached) wireDrum2Parent.remove(wireDrum2Frame);
+  }
   return bounds;
 }
 
@@ -7727,7 +7811,15 @@ function measureRobotBoundsAtRest(collect = null) {
     });
   }
 
+  // The Materials-menu model lift eases back over ~0.5 s after close; measure
+  // the SETTLED pose (lift 0) so the reset view lands where the machine ends.
+  const savedLiftZ = robotRoot.position.z;
+  robotRoot.position.z = 0;
   const bounds = measureVisibleBounds(robotRoot, collect);
+  // Drums that belong in the default view but are currently hidden/faded
+  // (e.g. the reset computed at Materials close, while they are still hidden).
+  bounds.union(measureDrumRestBounds(collect));
+  robotRoot.position.z = savedLiftZ;
 
   for (let i = restorers.length - 1; i >= 0; i -= 1) {
     restorers[i]();
@@ -8026,15 +8118,103 @@ function resetViewAfterLayoutChange() {
   resetCameraToRobotView({ smooth: true, forceExactView: true });
 }
 
+// --- Menu home view ------------------------------------------------------------
+// Files and Materials each move the camera to a prescribed framing when they
+// open. That framing is the menu's HOME VIEW for as long as the menu is open
+// (Maksim, 2026-11-09/10): the Reset view button shows when the operator has
+// orbited away from it and glides back to it, and so does the 15 s idle
+// return. The menu itself stays open. A docked print owns the camera outright.
+let menuViewReturn = null; // { owner: "files" | "materials", state }
+
+function isMenuViewOwnerActive(owner) {
+  if (owner === "materials") {
+    return isMaterialsMenuOpen;
+  }
+  if (owner === "files") {
+    return isCloudModelMenuOpen && !filesListCollapsedForPrint && !isDockedPrintActive;
+  }
+  return false;
+}
+
+function rememberMenuViewCameraState(owner, state) {
+  menuViewReturn = state
+    ? { owner, state: { ...state, position: state.position.clone(), target: state.target.clone(), up: state.up.clone() } }
+    : null;
+}
+
+function clearMenuViewCameraState(owner) {
+  if (menuViewReturn && menuViewReturn.owner === owner) {
+    menuViewReturn = null;
+  }
+}
+
+// The Materials framing depends on live state (feed types, drum slots, popup
+// size, window size): recompute it whenever it is about to be used, so a
+// snapshot taken at a bad moment (menu opened from Files/Controls, a door
+// action, a resize) can never be the reset target (Maksim, 2026-11-10).
+function refreshMenuViewHome() {
+  if (menuViewReturn && menuViewReturn.owner === "materials" && isMaterialsMenuOpen && robotRoot) {
+    const fresh = buildMaterialsMenuCameraState();
+    if (fresh) {
+      menuViewReturn.state = { ...fresh, position: fresh.position.clone(), target: fresh.target.clone(), up: fresh.up.clone() };
+    }
+  }
+}
+
+// Glide back to the open menu's home view (the Reset view button's action while
+// a menu owns the view). Returns false when no menu does.
+function returnToMenuViewCameraState() {
+  if (!menuViewReturn || !isMenuViewOwnerActive(menuViewReturn.owner)) {
+    return false;
+  }
+  refreshMenuViewHome();
+  beginCameraTransition(menuViewReturn.state, SPOOLS_DOOR_BUTTON_CAMERA_DURATION_MS, { distanceLock: null });
+  return true;
+}
+
+// The framing Reset view returns to right now: the open menu's home view when
+// a menu owns the camera, else the main reset view.
+function getResetViewHomeState() {
+  if (menuViewReturn && isMenuViewOwnerActive(menuViewReturn.owner)) {
+    return { kind: "menu", state: menuViewReturn.state };
+  }
+  return { kind: "main", state: getCachedResetViewState() };
+}
+
+// The Materials menu opened or closed, by whatever path (hmi/materials.js calls
+// this through its setModelLift dep on every toggle): raise / lower the model
+// and keep the menu's home view in step.
+function onMaterialsMenuToggled(isOpen) {
+  materialsModelLiftTargetM = isOpen ? MATERIALS_MENU_MODEL_LIFT_M : 0;
+  if (!isOpen) {
+    clearMenuViewCameraState("materials");
+  } else if (!menuViewReturn || menuViewReturn.owner !== "materials") {
+    // Whatever the camera shows when Materials opens; runBottomNavMaterialsAction
+    // replaces it with the framing it animates to.
+    rememberMenuViewCameraState("materials", (robotRoot && buildMaterialsMenuCameraState()) || captureCameraState());
+  }
+}
+
 // Small "Reset view" button under the model: shows once the operator has
-// orbited / zoomed / panned away from the main view, hides again at home or
-// while another surface owns the camera (Maksim, 2026-10-30).
+// orbited / zoomed / panned away from the current home view, hides again at
+// home. 2026-10-30: main view only. 2026-11-09 (Maksim): also while a menu or
+// panel is open -- there the home view is the open menu's own framing
+// (Materials, Files) or the main reset view (Controls, hotspot panels), and the
+// button glides back to it. Print playback still owns the camera outright.
 const resetViewFabEl = document.getElementById("resetViewFab");
 let resetViewFabVisible = false;
 let resetViewFabLastCheckMs = -Infinity;
 const resetViewFabLastCamPos = new THREE.Vector3(NaN, NaN, NaN);
 const resetViewFabLastTarget = new THREE.Vector3(NaN, NaN, NaN);
 let resetViewFabLastAtHome = true;
+let resetViewFabLastHomeState = null;
+const RESET_VIEW_MENU_HOME_TOLERANCE_M = 0.01; // a menu framing is exact: any visible nudge counts
+
+function isPrintOwningView() {
+  const printState = printSim?.getState?.();
+  return printState === "playing" || printState === "paused" || filesListCollapsedForPrint
+    || Boolean(printSim?.isActive?.());
+}
 function updateResetViewFab(nowMs) {
   if (!resetViewFabEl) {
     return;
@@ -8044,13 +8224,16 @@ function updateResetViewFab(nowMs) {
   }
   resetViewFabLastCheckMs = nowMs;
   let show = false;
-  if (robotRoot && !cameraTransitionState && !isUserCameraGestureActive && !isMainViewOwnedElsewhere()) {
-    // Measuring the home view walks the mesh tree; only redo it when the camera
-    // has actually moved since the last answer (or the cache was invalidated).
+  if (robotRoot && !cameraTransitionState && !isUserCameraGestureActive && !isPrintOwningView()) {
+    const home = getResetViewHomeState();
+    // Measuring the main home view walks the mesh tree; only redo the test when
+    // the camera has actually moved since the last answer or the home changed.
     const cameraMoved = !camera.position.equals(resetViewFabLastCamPos)
       || !controls.target.equals(resetViewFabLastTarget);
-    if (cameraMoved || !cachedResetViewState) {
-      resetViewFabLastAtHome = isCameraAtMainView();
+    if (cameraMoved || home.state !== resetViewFabLastHomeState) {
+      const tolerance = home.kind === "menu" ? RESET_VIEW_MENU_HOME_TOLERANCE_M : RESET_VIEW_AT_HOME_TOLERANCE_M;
+      resetViewFabLastAtHome = Boolean(home.state) && isCameraCloseToState(home.state, tolerance, tolerance);
+      resetViewFabLastHomeState = home.state;
       resetViewFabLastCamPos.copy(camera.position);
       resetViewFabLastTarget.copy(controls.target);
     }
@@ -8071,6 +8254,11 @@ function updateResetViewFab(nowMs) {
 if (resetViewFabEl) {
   resetViewFabEl.addEventListener("click", () => {
     markUserActivity();
+    // While a menu owns the view, Reset view means "back to this menu's framing"
+    // (Maksim, 2026-11-09); the menu stays open.
+    if (returnToMenuViewCameraState()) {
+      return;
+    }
     resetCameraToRobotView({ smooth: true, forceExactView: true });
   });
 }
@@ -9754,6 +9942,7 @@ function applyFilesMenuOpenDoorAndCameraBehavior() {
     beginCameraTransition(cameraState, FRONT_DOOR_BUTTON_CAMERA_DURATION_MS, {
       distanceLock: null,
     });
+    rememberMenuViewCameraState("files", cameraState);
   }
 
   updateQuickFrontDoorToggleButton();
@@ -9835,6 +10024,271 @@ function buildSpoolsDoorButtonCameraState(spoolsWorldPoint) {
   };
 }
 
+// True for anything under either wire-drum link (so machine measurements can
+// leave the drums out and add them back only when their feeder is drum-fed).
+function isWireDrumObject(object) {
+  return object.name === `link:${WIRE_DRUM_LINK}` || object.name === `link:${WIRE_DRUM_2_LINK}`;
+}
+
+// World boxes of the drums whose feeder is drum-fed, measured where they WILL
+// stand (drum 2 at its target slot, even mid-glide) and ignoring the fade.
+function getVisibleDrumWorldBoxes() {
+  const boxes = [];
+  if (isFeederDrumFed("spool1") && robotRoot) {
+    const drum1 = robotRoot.getObjectByName(`link:${WIRE_DRUM_LINK}`);
+    if (drum1) {
+      drum1.updateMatrixWorld(true);
+      const box = measureVisibleBounds(drum1, null, null, true); // may still be hidden / fading in
+      if (!box.isEmpty()) boxes.push(box);
+    }
+  }
+  if (isFeederDrumFed("spool2") && wireDrum2Frame && wireDrum2Parent) {
+    const wasAttached = wireDrum2Frame.parent === wireDrum2Parent;
+    const savedPosition = wireDrum2Frame.position.clone();
+    if (!wasAttached) wireDrum2Parent.add(wireDrum2Frame);
+    wireDrum2Frame.position.copy(computeWireDrum2SlotTargetLocal());
+    wireDrum2Frame.updateMatrixWorld(true);
+    const box = measureVisibleBounds(wireDrum2Frame, null, null, true);
+    wireDrum2Frame.position.copy(savedPosition);
+    wireDrum2Frame.updateMatrixWorld(true);
+    if (!wasAttached) wireDrum2Parent.remove(wireDrum2Frame);
+    if (!box.isEmpty()) boxes.push(box);
+  }
+  return boxes;
+}
+
+// The Materials menu view (Maksim, 2026-11-09): the spools framing as before,
+// and when a feeder is set to Drum the camera pulls back along the same side so
+// the spool compartment AND the drum(s) beside the machine are both in view.
+// Gap kept between the Materials popup's edge and the framed machine (CSS px).
+const MATERIALS_POPUP_CLEAR_GAP_PX = 28;
+
+// The Materials popup's on-screen rect, measured even while it is still
+// [hidden] (the camera state is built BEFORE the popup is shown): the hidden
+// attribute is lifted for one synchronous layout read with visibility:hidden,
+// so nothing paints. Returns null when the viewport is unmeasurable (0 x 0).
+function measureMaterialsPopupRect() {
+  const popup = document.getElementById("materialsMenuPopup");
+  const viewW = window.innerWidth;
+  const viewH = window.innerHeight;
+  if (!popup || viewW < 50 || viewH < 50) {
+    return null;
+  }
+  const wasHidden = popup.hasAttribute("hidden");
+  let rect;
+  if (wasHidden) {
+    const prevVisibility = popup.style.visibility;
+    popup.style.visibility = "hidden";
+    popup.removeAttribute("hidden");
+    rect = popup.getBoundingClientRect();
+    popup.setAttribute("hidden", "");
+    popup.style.visibility = prevVisibility;
+  } else {
+    rect = popup.getBoundingClientRect();
+  }
+  if (!rect || rect.width <= 0 || rect.height <= 0) {
+    return null;
+  }
+  return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, viewW, viewH };
+}
+
+// The free screen region (CSS px) for the Materials view: the band between
+// topbar and bottom nav, minus the popup -- whichever of "beside the popup" or
+// "below the popup" is the larger area wins (Maksim, 2026-11-09: on the
+// portrait HMI the popup is a tall left column and the machine + drums must
+// sit below it, not under it). Null when nothing can be measured.
+function getMaterialsFreeScreenRegion() {
+  const popup = measureMaterialsPopupRect();
+  if (!popup) {
+    return null;
+  }
+  const topBarEl = document.querySelector(".app-topbar");
+  const bottomNavEl = document.querySelector(".bottom-nav");
+  const topBarRect = topBarEl ? topBarEl.getBoundingClientRect() : null;
+  const bottomNavRect = bottomNavEl ? bottomNavEl.getBoundingClientRect() : null;
+  const bandTop = (topBarRect && topBarRect.height > 0 ? topBarRect.bottom : 0) + MATERIALS_POPUP_CLEAR_GAP_PX * 0.5;
+  const bandBottom = (bottomNavRect && bottomNavRect.height > 0 ? bottomNavRect.top : popup.viewH) - MATERIALS_POPUP_CLEAR_GAP_PX * 0.5;
+  const gap = MATERIALS_POPUP_CLEAR_GAP_PX;
+  const beside = {
+    left: Math.min(popup.viewW, popup.right + gap), right: popup.viewW,
+    top: bandTop, bottom: bandBottom,
+  };
+  const below = {
+    left: gap * 0.5, right: popup.viewW - gap * 0.5,
+    top: Math.min(bandBottom, popup.bottom + gap), bottom: bandBottom,
+  };
+  const area = (r) => Math.max(0, r.right - r.left) * Math.max(0, r.bottom - r.top);
+  const pick = area(below) > area(beside) ? below : beside;
+  if (area(pick) <= 0) {
+    return null;
+  }
+  return { ...pick, viewW: popup.viewW, viewH: popup.viewH, placement: pick === below ? "below" : "beside" };
+}
+
+function buildMaterialsMenuCameraState() {
+  // Materials has no scene slide of its own; one left over from Files/Controls
+  // (still easing out when Materials opens) must not skew the framing.
+  const view = camera.view;
+  const viewWasEnabled = Boolean(view && view.enabled);
+  if (viewWasEnabled) {
+    view.enabled = false;
+  }
+  try {
+    return buildMaterialsMenuCameraStateUnshifted();
+  } finally {
+    if (viewWasEnabled) {
+      view.enabled = true;
+    }
+  }
+}
+
+function buildMaterialsMenuCameraStateUnshifted() {
+  const spoolsState = buildSpoolsDoorButtonCameraState(getSpoolsPairWorldPoint(controls.target));
+  if (!robotRoot) {
+    return spoolsState;
+  }
+  const drumBoxes = getVisibleDrumWorldBoxes();
+  const hasDrums = drumBoxes.length > 0;
+  // The framed set (Maksim, 2026-11-09: nothing of it may sit behind the
+  // Materials popup). With a drum active: the WHOLE visible machine (per-mesh
+  // boxes, like the reset view), the chiller while shown, and the drum(s).
+  // Spools only: the spools compartment -- its door and the visible spools.
+  const framedBoxes = [];
+  const union = new THREE.Box3();
+  if (hasDrums) {
+    // Drums come from drumBoxes (active feeders only, at their target slots):
+    // a just-deselected drum is still fading out and must not hold the view.
+    union.union(measureVisibleBounds(robotRoot, framedBoxes, isWireDrumObject));
+    if (chillerObject && chillerObject.visible) {
+      union.union(measureVisibleBounds(chillerObject, framedBoxes));
+    }
+    for (const box of drumBoxes) {
+      union.union(box);
+      framedBoxes.push(box);
+    }
+  } else {
+    // Just the two spools (measured even while the door is still opening and
+    // they are hidden); the door and compartment fall into the margin.
+    for (const linkName of [SPOOL_1_LINK, SPOOL_2_LINK]) {
+      const link = robotRoot.getObjectByName(`link:${linkName}`);
+      if (link) {
+        union.union(measureVisibleBounds(link, framedBoxes, null, true));
+      }
+    }
+  }
+  if (union.isEmpty() || !framedBoxes.length) {
+    return spoolsState;
+  }
+  const center = union.getCenter(new THREE.Vector3());
+  // Straight on from the spools side a drum stands between the camera and the
+  // compartment and hides the spools: with drums, yaw the view toward the
+  // machine front so the drums land beside the spools on screen, keeping the
+  // spools view's elevation. Spools only: the spools view's own direction.
+  const spoolsDir = spoolsState.position.clone().sub(spoolsState.target).normalize(); // target -> camera
+  const yaw = hasDrums ? MATERIALS_VIEW_YAW_RAD : MATERIALS_SPOOLS_VIEW_YAW_RAD;
+  const elevation = hasDrums ? MATERIALS_VIEW_ELEVATION_RAD : MATERIALS_SPOOLS_VIEW_ELEVATION_RAD;
+  const viewDir = new THREE.Vector3(
+    SPOOLS_DOOR_BUTTON_PERP_X_SIDE * Math.cos(yaw) * Math.cos(elevation),
+    Math.sin(yaw) * Math.cos(elevation),
+    Math.sin(elevation),
+  ).normalize();
+  const up = new THREE.Vector3(0, 0, 1);
+  const right = new THREE.Vector3().crossVectors(up, viewDir).normalize();
+  const camUp = new THREE.Vector3().crossVectors(viewDir, right).normalize();
+  let halfW = 0;
+  let halfH = 0;
+  let halfD = 0;
+  const corner = new THREE.Vector3();
+  for (let i = 0; i < 8; i += 1) {
+    corner.set(
+      (i & 1) ? union.max.x : union.min.x,
+      (i & 2) ? union.max.y : union.min.y,
+      (i & 4) ? union.max.z : union.min.z,
+    ).sub(center);
+    halfW = Math.max(halfW, Math.abs(corner.dot(right)));
+    halfH = Math.max(halfH, Math.abs(corner.dot(camUp)));
+    halfD = Math.max(halfD, Math.abs(corner.dot(viewDir)));
+  }
+  const tanHalfFov = Math.tan(THREE.MathUtils.degToRad(camera.fov) * 0.5);
+  const aspect = Math.max(0.5, camera.aspect || 1);
+  // Fit the set into the screen region the popup leaves free (beside it on a
+  // wide screen, below it on the portrait HMI) and centre it there. Without a
+  // measurable viewport fall back to the old assumption: popup covers the left
+  // 45 %, content centred in the remaining 55 %.
+  const region = getMaterialsFreeScreenRegion();
+  let widthFraction = 0.55;
+  let heightFraction = Math.max(0.3, getVisibleBandFraction ? getVisibleBandFraction() : 0.8);
+  let ndcCenterX = 1 - widthFraction; // +0.45
+  let ndcCenterY = 0;
+  if (region) {
+    widthFraction = Math.max(0.2, (region.right - region.left) / region.viewW);
+    heightFraction = Math.max(0.2, (region.bottom - region.top) / region.viewH);
+    ndcCenterX = ((region.left + region.right) * 0.5 / region.viewW) * 2 - 1;
+    ndcCenterY = 1 - ((region.top + region.bottom) * 0.5 / region.viewH) * 2;
+  }
+  if (!hasDrums) {
+    ndcCenterY -= 2 * heightFraction * MATERIALS_SPOOLS_VIEW_DROP_FRACTION;
+  }
+  // Distance: the per-mesh boxes' projected RANGE fits the region (the union
+  // box's corners overshoot the real outline); the coarse half-extent estimate
+  // only seeds the refinement. Small margin on top -- the region already keeps
+  // a gap from the popup, topbar and nav.
+  const coarseDistance = Math.max(
+    halfH / (tanHalfFov * heightFraction),
+    halfW / (tanHalfFov * aspect * widthFraction),
+  ) + halfD;
+  const distance = fitDistanceForBounds(framedBoxes, center, viewDir, coarseDistance, widthFraction, heightFraction)
+    * (hasDrums ? 1.06 : MATERIALS_SPOOLS_VIEW_MARGIN);
+  // Centre the set's PROJECTED outline on the region's centre: probe the view
+  // from the fitted distance, find the outline's NDC midpoint, and slide the
+  // look-at point by the difference (moving the target along +right moves the
+  // picture toward -x on screen, so the shift carries the midpoint's sign).
+  const probe = camera.clone();
+  probe.aspect = aspect;
+  probe.up.set(0, 0, 1);
+  probe.position.copy(center).addScaledVector(viewDir, distance);
+  probe.lookAt(center);
+  probe.updateMatrixWorld(true);
+  probe.updateProjectionMatrix();
+  let ndcMinX = Infinity; let ndcMaxX = -Infinity; let ndcMinY = Infinity; let ndcMaxY = -Infinity;
+  for (const box of framedBoxes) {
+    for (let i = 0; i < 8; i += 1) {
+      corner.set(
+        (i & 1) ? box.max.x : box.min.x,
+        (i & 2) ? box.max.y : box.min.y,
+        (i & 4) ? box.max.z : box.min.z,
+      ).project(probe);
+      ndcMinX = Math.min(ndcMinX, corner.x); ndcMaxX = Math.max(ndcMaxX, corner.x);
+      ndcMinY = Math.min(ndcMinY, corner.y); ndcMaxY = Math.max(ndcMaxY, corner.y);
+    }
+  }
+  const midX = Number.isFinite(ndcMinX) ? (ndcMinX + ndcMaxX) * 0.5 : 0;
+  const midY = Number.isFinite(ndcMinY) ? (ndcMinY + ndcMaxY) * 0.5 : 0;
+  const halfWidthAtDistance = tanHalfFov * aspect * distance;
+  const halfHeightAtDistance = tanHalfFov * distance;
+  const target = center.clone()
+    .addScaledVector(right, (midX - ndcCenterX) * halfWidthAtDistance)
+    .addScaledVector(camUp, (midY - ndcCenterY) * halfHeightAtDistance);
+  return {
+    position: target.clone().addScaledVector(viewDir, distance),
+    target,
+    up,
+    near: spoolsState.near,
+    far: Math.max(spoolsState.far, distance * 4),
+  };
+}
+
+// Re-frame the open Materials menu view (feed type changed): glide to the new
+// framing and make it the menu-view return target.
+function reframeMaterialsMenuView() {
+  if (!isMaterialsMenuOpen) {
+    return;
+  }
+  const cameraState = buildMaterialsMenuCameraState();
+  beginCameraTransition(cameraState, SPOOLS_DOOR_BUTTON_CAMERA_DURATION_MS, { distanceLock: null });
+  rememberMenuViewCameraState("materials", cameraState);
+}
+
 function runSpoolsDoorButtonAction(spoolsDoorWorldPoint) {
   if (activeFeederCameraAnchorSide) {
     clearFeederFocusState();
@@ -9855,6 +10309,10 @@ function runSpoolsDoorButtonAction(spoolsDoorWorldPoint) {
   beginCameraTransition(cameraState, SPOOLS_DOOR_BUTTON_CAMERA_DURATION_MS, {
     distanceLock: null,
   });
+
+  if (isMaterialsMenuOpen) {
+    rememberMenuViewCameraState("materials", buildMaterialsMenuCameraState() || cameraState);
+  }
 
   return setSpoolsDoorOpenState(true);
 }
@@ -11255,8 +11713,9 @@ function runBottomNavMaterialsAction() {
   // The front door and the top door stay in the state the operator chose when
   // Materials opens (Maksim, 2026-10-30); only the spools door is driven here.
 
-  const pairPoint = getSpoolsPairWorldPoint(controls.target);
-  const cameraState = buildSpoolsDoorButtonCameraState(pairPoint);
+  // Materials view = the spool compartment, plus the drum(s) of any drum-fed
+  // feeder beside the machine (Maksim, 2026-11-09; buildMaterialsMenuCameraState).
+  const cameraState = buildMaterialsMenuCameraState();
   beginCameraTransition(cameraState, SPOOLS_DOOR_BUTTON_CAMERA_DURATION_MS, {
     distanceLock: null,
   });
@@ -11267,6 +11726,9 @@ function runBottomNavMaterialsAction() {
     skipBottomNavUpdate: true,
     closeFilesOnOpen: false,
   });
+  // Remember AFTER setMaterialsMenuOpen: opening records the view the camera
+  // had at that instant, this is the framing it is gliding to.
+  rememberMenuViewCameraState("materials", cameraState);
   updateBottomNavState();
   return nextIsOpen;
 }
@@ -12403,7 +12865,8 @@ initMaterialsUi({
   closeMaterialsFromPopup: () => runBottomNavMaterialsAction(),
   clamp,
   OVERLAY_MENU_SAFE_MARGIN_PX,
-  setModelLift: (isRaised) => { materialsModelLiftTargetM = isRaised ? MATERIALS_MENU_MODEL_LIFT_M : 0; },
+  setModelLift: (isRaised) => onMaterialsMenuToggled(isRaised),
+  reframeMaterialsView: () => reframeMaterialsMenuView(),
   setCloudModelMenuOpen: (open, opts) => setCloudModelMenuOpen(open, opts),
   isCloudModelMenuOpen: () => isCloudModelMenuOpen,
   setSlicerFullscreen: (open, opts) => slicerPaneUi.setFullscreen(open, opts),
