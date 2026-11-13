@@ -671,6 +671,19 @@ const NAV_DOOR_ICON_CONSOLE = '<rect x="12.6" y="12.4" width="3.6" height="4.6" 
 // Front door: drawn by the <m600-front-door> component (see updateNavFrontDoorIcon).
 const NAV_DOOR_ICON_STOP_SVG = '<rect x="6" y="6" width="12" height="12" rx="1.5" />';
 // Top door: drawn by the <m600-top-door> component (see updateNavTopDoorIcon).
+// The front door's chamber window. The name is the contract with
+// apps/dev-host/tools/build_textured_assembly.py, which gives the pane this
+// material when it builds Front Door_2611.glb -- rename it in one place and
+// you must rename it in the other.
+// 2026-11-10 (Maksim): the window is drawn as real laser-protection glazing
+// for the 450 nm blue lasers. Such filters absorb roughly 190-540 nm (UV,
+// violet, blue, green) at OD 6+ and pass about half of the visible light, i.e.
+// only yellow-to-red -- so the pane is ORANGE and what is seen through it is
+// orange-filtered. This is model realism, not UI chrome (the DS v3 "no orange
+// accent" rule does not apply here).
+const CHAMBER_WINDOW_MATERIAL_NAME = "Chamber Window Glass";
+const CHAMBER_WINDOW_OPACITY = 0.5;
+const CHAMBER_WINDOW_COLOR = 0xf06a12;
 const ANNOTATION_UPDATE_INTERVAL_MS = 0;
 const ANNOTATION_CLICK_ACTIVE_HOLD_MS = 2200;
 const ENABLE_ANNOTATION_OCCLUSION = false;
@@ -3196,6 +3209,34 @@ function styleMeshTree(object3d) {
     if ("clearcoat" in mat) {
       mat.clearcoat = 0.1;
       mat.clearcoatRoughness = 0.5;
+    }
+
+    // PERF: glass imported with KHR_materials_transmission becomes a
+    // MeshPhysicalMaterial with transmission > 0. THREE handles those by
+    // re-rendering the ENTIRE opaque scene into a transmission buffer (plus a
+    // mipmap chain) every single frame, which doubles the per-frame GPU cost.
+    // An HMI does not need physically based refraction: convert the glass to a
+    // cheap alpha-blended pane that keeps the see-through look and costs one
+    // ordinary draw. The door see-through / chamber-purge fades are opacity
+    // based, so they keep working (they snapshot these values on first use,
+    // after this styling runs).
+    if (typeof mat.transmission === "number" && mat.transmission > 0) {
+      const isChamberWindow = mat.name === CHAMBER_WINDOW_MATERIAL_NAME;
+      const seeThrough = isChamberWindow
+        ? CHAMBER_WINDOW_OPACITY
+        : THREE.MathUtils.clamp(1 - (mat.transmission * 0.68), 0.22, 0.6);
+      mat.transmission = 0;
+      if ("thickness" in mat) {
+        mat.thickness = 0;
+      }
+      mat.transparent = true;
+      mat.opacity = seeThrough;
+      mat.depthWrite = false;
+      if (isChamberWindow) {
+        mat.color.setHex(CHAMBER_WINDOW_COLOR);
+        if ("roughness" in mat) mat.roughness = 0.08;
+        if ("metalness" in mat) mat.metalness = 0;
+      }
     }
 
     if (mat.color && typeof mat.color.r === "number") {
