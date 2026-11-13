@@ -38,6 +38,7 @@ import { createNotificationsUi } from "/hmi/notifications.js";
 import { createSettingsUi } from "/hmi/settings.js";
 import { createMovePanelUi, canOperateMotion } from "/hmi/movePanel.js";
 import { createNavIconsUi } from "/hmi/navIcons.js";
+import { createMaterialsPeekUi } from "/hmi/materialsPeek.js";
 import { createSlicerPaneUi } from "/hmi/slicerPane.js";
 import {
   createPrintDialogsUi,
@@ -115,6 +116,7 @@ import "./ui/m600-topbar-icons.js";
 import "./ui/m600-ventilation.js";
 import { setTopbarIconActive } from "/hmi/ui/topbarIcons.js";
 import { createAssemblyAnnotationManager } from "/viewer/overlays/assemblyAnnotations.js";
+import { createDoorTouchHotspots } from "/viewer/overlays/doorTouchHotspots.js";
 import {
   initFeederWheelFloatOverlay,
   updateFeederWheelFloatingControls,
@@ -6045,6 +6047,11 @@ function tryRelocateCloudStlByDoubleClick(event) {
   if (cloudStlDragState) {
     return false;
   }
+  // A double tap that just opened a door via its 3D hotspot is not a request
+  // to relocate the cloud STL.
+  if (doorTouchHotspots.consumedDoubleTapRecently()) {
+    return false;
+  }
 
   return tryStartCloudStlDrag(event);
 }
@@ -11852,6 +11859,90 @@ function updateMaterialsModelLift(deltaSeconds) {
   robotRoot.position.z = materialsModelLiftCurrentM;
 }
 
+// Touch on the model (viewer/overlays/doorTouchHotspots.js): a DOUBLE TAP on the
+// front door or the top door opens it through the same action + guards as the
+// bottom-nav button (2026-09-16/17, Maksim; open only -- closing stays on the
+// buttons). A double tap on the materials door, a spool or a drum opens
+// Materials (2026-10-13); a LONG PRESS there pops up the read-only Materials
+// card instead (hmi/materialsPeek.js, 2026-11-10).
+const materialsPeekUi = createMaterialsPeekUi({
+  isMaterialsMenuOpen: () => isMaterialsMenuOpen,
+  feederFeedType,
+});
+const doorTouchHotspots = createDoorTouchHotspots({
+  THREE,
+  camera,
+  canvas,
+  getRobotRoot: () => robotRoot,
+  getPointerNdc: (event, target) => getCanvasPointerNdc(event, target),
+  requestRender: () => requestRender(),
+  hotspots: [
+    {
+      id: "frontDoor",
+      linkName: FRONT_DOOR_LINK,
+      isEnabled: () =>
+        Boolean(getFrontDoorControlData()) &&
+        !isFrontDoorOpen() &&
+        !(navDoorToggleEl && navDoorToggleEl.classList.contains("is-stop-mode")),
+      hint: "Double-tap to open the front door",
+      activate: () => {
+        markUserActivity();
+        if (isFrontDoorOpen()) return;
+        runBottomNavDoorToggleAction();
+        updateQuickFrontDoorToggleButton();
+      },
+    },
+    {
+      id: "topCover",
+      linkName: TOP_COVER_LINK,
+      isEnabled: () => Boolean(getTopCoverControlData()) && !isTopCoverOpen(),
+      hint: "Double-tap to open the top door",
+      activate: () => {
+        markUserActivity();
+        if (isTopCoverOpen()) return;
+        runTopCoverButtonAction();
+        updateTopDoorShortcutButton();
+      },
+    },
+    // Materials (2026-10-13, Maksim): a double tap on the materials door or on a
+    // drum runs the same action as the Materials nav button (door swings open,
+    // camera frames the spools, menu opens). A drum tap focuses ITS feeder's
+    // card. Open only; closing stays on the nav button. The door's child links
+    // (drum door, handle) are aliases so a tap on the handle counts as the door.
+    ...["spools_door_link", "wire_spool_door_link", "handle_x_pivot_link", "handle_link", SPOOL_1_LINK, SPOOL_2_LINK].map((linkName) => ({
+      id: "materialsDoor",
+      linkName,
+      isEnabled: () => !isMaterialsMenuOpen,
+      hint: "Double-tap to open Materials · hold to preview",
+      longPress: (clientX, clientY) => {
+        markUserActivity();
+        materialsPeekUi.show(["spool1", "spool2"], clientX, clientY);
+      },
+      activate: () => {
+        markUserActivity();
+        if (isMaterialsMenuOpen) return;
+        runBottomNavMaterialsAction();
+      },
+    })),
+    ...[[WIRE_DRUM_LINK, "spool1"], [WIRE_DRUM_2_LINK, "spool2"]].map(([linkName, spoolKey]) => ({
+      id: `wireDrum:${spoolKey}`,
+      linkName,
+      isEnabled: () => !isMaterialsMenuOpen,
+      hint: "Double-tap to open Materials · hold to preview",
+      longPress: (clientX, clientY) => {
+        markUserActivity();
+        materialsPeekUi.show([spoolKey], clientX, clientY);
+      },
+      activate: () => {
+        markUserActivity();
+        if (isMaterialsMenuOpen) return;
+        setHotspotMaterialsFocusSpool(spoolKey);
+        runBottomNavMaterialsAction();
+      },
+    })),
+  ],
+});
+
 function animate(nowMs = performance.now()) {
   requestAnimationFrame(animate);
   const rawDeltaSeconds = Math.min(Math.max((nowMs - previousAnimationMs) / 1000, 0), 0.1);
@@ -11882,6 +11973,7 @@ function animate(nowMs = performance.now()) {
   const sceneViewShiftActive = updateSceneViewShift(deltaSeconds);
   updateSpoolAssemblyHighlight(nowMs);
   updateFeederWheelFloatingControls();
+  doorTouchHotspots.update(nowMs);
 
   // On-demand draw: render while anything is moving (sceneActive) OR when a
   // one-off/async change requested it (renderDirty, e.g. a joint move, drum fade,
