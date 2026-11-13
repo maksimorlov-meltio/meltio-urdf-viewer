@@ -14,6 +14,7 @@
  * Options: mode 'every3rd' (default) | 'always' | 'off' | number N (every Nth open) · storageKey for the open counter
  *          onPhase(phase) callback. Methods: play() · flee() · reset() · destroy().
  * The Easter egg is skipped entirely when prefers-reduced-motion is set.
+ * 2026-11-13 (Maksim): the sleeping z's are 1.5x bigger (were 2.6 / 3.1 / 3.6), offsets scaled with them.
  */
 const CAT_CSS = `/* ===== cat ===== */
 .cat{transform:translate(12px,20.6px) scale(.3);opacity:0;transition:transform .8s cubic-bezier(.2,.8,.2,1),opacity .5s}
@@ -167,9 +168,9 @@ const CAT_SVG = `<g class="cat ph-in">
 <path class="ltail" stroke-width="1.3" d="M-6 -0.3C-6.6 0.5 -3 0.7 1.4 0.5C3 0.45 4.6 0.2 6.2 -0.6"></path>
 <path class="bgs" stroke-width="0.3" d="M-1 0.6V0.2M1.4 0.55V0.15"></path>
 <g fill="currentColor" stroke="none" font-family="IBM Plex Mono, monospace" font-weight="500">
-<text class="z" x="9.6" y="-6.5" font-size="2.6">z</text>
-<text class="z z2" x="10.8" y="-8.4" font-size="3.1">z</text>
-<text class="z z3" x="12" y="-10.6" font-size="3.6">z</text>
+<text class="z" x="9.6" y="-6.5" font-size="3.9">z</text>
+<text class="z z2" x="11.4" y="-9.35" font-size="4.65">z</text>
+<text class="z z3" x="13.2" y="-12.65" font-size="5.4">z</text>
 </g>
 </g>
 <g class="psc"><g class="shv">

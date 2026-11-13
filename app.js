@@ -30,6 +30,7 @@ import { createMachineLink } from "./hmi/ports/machineLink.js";
 import { createPrePrintCheck } from "./hmi/prePrintCheck.js";
 import { createBoundedQueue } from "./hmi/boundedQueue.js";
 import { createDustExhaust } from "./viewer/effects/dustExhaust.js";
+import { createFeedstockHighlight } from "./viewer/effects/feedstockHighlight.js";
 import { createChamberInert } from "./viewer/effects/chamberInert.js";
 import { t, applyDomTranslations, getLocale } from "./hmi/i18n/index.js";
 import { createCalendarUi, formatCalendarDateTime } from "./hmi/calendar.js";
@@ -37,6 +38,7 @@ import { createNotificationsUi } from "./hmi/notifications.js";
 import { createSettingsUi } from "./hmi/settings.js";
 import { createMovePanelUi, canOperateMotion } from "./hmi/movePanel.js";
 import { createNavIconsUi } from "./hmi/navIcons.js";
+import { createMaterialsPeekUi } from "./hmi/materialsPeek.js";
 import { createSlicerPaneUi } from "./hmi/slicerPane.js";
 import {
   createPrintDialogsUi,
@@ -68,6 +70,7 @@ import {
   setMaterialsMenuOpen,
   isMaterialsMenuOpen,
   hotspotMaterialsFocusSpoolKey,
+  selectedHotspotMaterialId,
   clearMaterialsFocusSpool,
   ensureHotspotMaterialsFocusSpool,
   syncHotspotMaterialSelectionForSpool,
@@ -113,6 +116,7 @@ import "./ui/m600-topbar-icons.js";
 import "./ui/m600-ventilation.js";
 import { setTopbarIconActive } from "./hmi/ui/topbarIcons.js";
 import { createAssemblyAnnotationManager } from "./viewer/overlays/assemblyAnnotations.js";
+import { createDoorTouchHotspots } from "./viewer/overlays/doorTouchHotspots.js";
 import {
   initFeederWheelFloatOverlay,
   updateFeederWheelFloatingControls,
@@ -122,6 +126,7 @@ import {
   DEFAULT_PRINT_JOB_USAGE_GRAMS,
   hotspotMaterialAssignments,
   spoolRemainingAmountGramsByKey,
+  isFeederLoaded,
   normalizeSpoolKey,
   restorePersistedMaterialsState,
   getSelectedPrintJobRequiredGrams,
@@ -235,12 +240,13 @@ const feederDriveStopEl = document.getElementById("feederDriveStop");
 const feederDriveRightEl = document.getElementById("feederDriveRight");
 const feederDriveUpEl = document.getElementById("feederDriveUp");
 const feederDriveDownEl = document.getElementById("feederDriveDown");
-const feederCameraAnchorLeftEl = document.getElementById("feederCameraAnchorLeft");
 // Controls ▸ Feeder panel per-wheel jog (replaces the old wheel-switch + single
 // Up/Stop/Down "Feeder Drive"). Each button is a TOGGLE: click drives that
 // wheel, clicking the active one again stops it (see the click wiring below).
 const feederJogLeftUpEl = document.getElementById("feederJogLeftUp");
 const feederJogLeftDownEl = document.getElementById("feederJogLeftDown");
+const feederJogLeftStopEl = document.getElementById("feederJogLeftStop");
+const feederJogRightStopEl = document.getElementById("feederJogRightStop");
 const feederJogRightUpEl = document.getElementById("feederJogRightUp");
 const feederJogRightDownEl = document.getElementById("feederJogRightDown");
 const hotspotContextPanelEl = document.getElementById("hotspotContextPanel");
@@ -425,6 +431,10 @@ void ambientLight; void viewerLight; // owned by sceneCore; kept for symmetry
 // Fume/dust extraction plume from the top exhaust port — driven by the fan (see
 // setFanOn / the animate loop). Cosmetic; anchored to the top cover on load.
 const dustExhaust = createDustExhaust({ THREE, scene, camera, renderer });
+// Materials-menu highlight of the focused spool / drum (viewer/effects/feedstockHighlight.js).
+const feedstockHighlight = createFeedstockHighlight({ THREE, scene, requestRender: () => requestRender() });
+// Reference renders: window.__feedstockHighlightTune({ color, spinStyle, wave }).
+window.__feedstockHighlightTune = (options) => feedstockHighlight.tune(options);
 
 // Argon inertization fill — a rising cool-cyan gas that floods the build chamber
 // while a print is inerting; the front door fades see-through so it's visible
@@ -470,6 +480,22 @@ const WIRE_SPOOL_DOOR_LINK = "wire_spool_door_link";
 const TOP_COVER_LINK = "top_cover_link";
 const WIRE_SPOOL_DOOR_JOINT = "wire_spool_door_joint";
 const WIRE_DRUM_LINK = "wire_drum_link";
+// Second wire drum (2026-10-13, Maksim): when Feeder 2 is also drum-fed a
+// second drum assembly stands beside the first. It is a runtime clone of the
+// first drum's joint frame (buildSecondWireDrum).
+// 2026-11-09 (Maksim): the drums stand in a row PARALLEL to the machine's side
+// wall (chassis-local +z = world -y, i.e. toward the back), not outward from
+// it. Slot A is the URDF drum position, right under the drum door and nearest
+// the materials compartment; slot B is one diameter + gap behind it. A lone
+// active drum always takes slot A: when only Feeder 2 is drum-fed its drum
+// slides into slot A, when both are, Feeder 1's drum has A and Feeder 2's B.
+const WIRE_DRUM_2_LINK = "wire_drum_2_link";
+const WIRE_DRUM_2_FRAME_NAME = "joint_frame:wire_drum_2_joint";
+const WIRE_DRUM_DIAMETER_M = 0.519;
+const WIRE_DRUM_2_GAP_M = 0.12;
+const WIRE_DRUM_SLOT_B_OFFSET_LOCAL = Object.freeze([0, 0, WIRE_DRUM_DIAMETER_M + WIRE_DRUM_2_GAP_M]); // chassis frame
+const WIRE_DRUM_SLOT_SLIDE_SMOOTHING = 0.14; // per-frame approach fraction while a drum changes slot
+let wireDrum2SlotBaseLocal = null; // slot A in the chassis frame (the URDF drum frame position)
 const HANDLE_PRIMARY_JOINT = "handle_joint";
 const HANDLE_SECONDARY_JOINT = "handle_z_joint";
 const HANDLE_TRANSITION_SMOOTH_FRACTION = 0.12;
@@ -628,6 +654,26 @@ const FEEDER_HEAD_RESTORE_DELAY_MS = Math.max((TOP_COVER_OPEN_DURATION_SEC * 100
 const SPOOLS_DOOR_BUTTON_CAMERA_DURATION_MS = 940;
 const SPOOLS_DOOR_BUTTON_CLOSE_RESET_DURATION_MS = 980;
 const SPOOLS_DOOR_BUTTON_PERP_X_SIDE = -1;
+// Materials view with a drum shown (2026-11-09): yaw from the spools side toward
+// the machine front so the drum sits beside the spools instead of in front.
+// 10 deg: the OPEN compartment door swings toward the front and stands in the
+// way from ~15 deg on (24 and 38 deg verified blocked); toward the back the
+// drum walks in front of the spools. Measured 2026-11-09 with a yaw/elevation
+// sweep against the live scene.
+// 2026-11-10: SUPERSEDED by Maksim's own orbit (screenshot): look from the
+// spools side rounded toward the machine BACK and from above, so the open
+// compartment door swings away to the left and the camera sees over the drums
+// onto the spools. Used for the spools-only view too.
+const MATERIALS_VIEW_YAW_RAD = THREE.MathUtils.degToRad(-25);
+const MATERIALS_VIEW_ELEVATION_RAD = THREE.MathUtils.degToRad(22);
+// Spools only (his second screenshot): a close-up on the two spools, a little
+// further round and flatter, with breathing room so the compartment reads.
+const MATERIALS_SPOOLS_VIEW_YAW_RAD = THREE.MathUtils.degToRad(-35);
+const MATERIALS_SPOOLS_VIEW_ELEVATION_RAD = THREE.MathUtils.degToRad(14);
+const MATERIALS_SPOOLS_VIEW_MARGIN = 1.45;
+// Two spools active: the pair sits this fraction of the free region's height
+// BELOW its centre, well clear of the popup (Maksim, 2026-11-10: "lower").
+const MATERIALS_SPOOLS_VIEW_DROP_FRACTION = 0.13;
 const TOP_COVER_BUTTON_CAMERA_DURATION_MS = 980;
 const TOP_COVER_BUTTON_CLOSE_RESET_DURATION_MS = 980;
 const TOP_COVER_BUTTON_PERP_Y_SIDE = -1;
@@ -814,6 +860,37 @@ let wireDrumRevealTarget = 0;
 // Manual "Wire Drum" appearance override (Appearance button / print-sim reveal).
 // The per-frame drum logic ORs this with the door/feeder-driven rules.
 let manualWireDrumConnect = false;
+// Second wire drum: a runtime clone of the first one, for Feeder 2 (buildSecondWireDrum).
+let wireDrum2Meshes = [];
+let wireDrum2Materials = [];
+let wireDrum2Frame = null;
+let wireDrum2Parent = null;
+let wireDrum2RevealProgress = 0;
+let wireDrum2RevealTarget = 0;
+// Set when a drum joins or leaves the scene; getCachedResetViewState() then
+// re-measures the main view (it frames the machine plus the shown drums).
+let wireDrumSetChanged = false;
+// A non-active spool stays SOLID (Maksim 2026-11-09: spools are never
+// transparent); the highlight alone marks the active one.
+const FEEDSTOCK_DIM_OPACITY = 1.0;
+// The wire COIL of each spool shows the material the operator LOADED in the
+// Materials menu (Maksim, 2026-11-09). Both spool GLBs sample the same neutral
+// steel texel of Metal_Atlas_01 (155,150,132 -- build_textured_assembly.py
+// NEUTRAL_COIL moves the copper spool's coil onto it), and these are `color`
+// multipliers on that texel, keyed by MELTIO_MATERIAL_LIBRARY id. The blue
+// plastic flanges are never touched. Bronze lands on the delivery's copper
+// patch (163,107,64); the others are subtle casts of steel.
+const SPOOL_COIL_TINT_BY_MATERIAL = Object.freeze({
+  "316l-stainless": 0xffffff,
+  "17-4ph-stainless": 0xf4f6f8,
+  "inconel-718": 0xfff2d6,
+  "ti64": 0xdfe4ee,
+  "bronze-cu-sn": 0xffad75,
+});
+const SPOOL_COIL_TINT_UNASSIGNED = 0xffffff; // nothing loaded: plain steel
+// Per-spool private clone of the coil material (the GLB material may be shared
+// with other meshes of the same file; tinting must never bleed into them).
+const spoolCoilMaterialByKey = { spool1: null, spool2: null };
 let cameraTransitionState = null;
 let gasSpringAlignmentOffsets = null;
 let activeFeederCameraAnchorSide = null;
@@ -1275,40 +1352,10 @@ function applyCameraState(state) {
   camera.updateProjectionMatrix();
 }
 
+// The Controls "Feeder view" button this used to drive is gone (Maksim,
+// 2026-11-13); what remains is the refresh of the floating wheel controls that
+// follows every change of the feeder camera anchor.
 function updateFeederCameraAnchorButtons() {
-  const hasModel = Boolean(robotRoot);
-  // The Feeder View button now lives inside #feederDriveSection
-  // (data-requires-permission="machine.motion"). That permission gate
-  // snapshots/restores `.disabled` around deny/grant, which would otherwise
-  // fight with the hasModel-driven disable below (e.g. a deny snapshot taken
-  // before the model finished loading gets restored stale after sign-in).
-  // Re-check the live permission here so this function is always the final,
-  // correct word, in both directions, whenever it re-runs (model load,
-  // camera-anchor changes, or the MeltioPermissions.onChange hook below).
-  const permissionDenied = Boolean(
-    window.MeltioPermissions
-    && typeof window.MeltioPermissions.can === "function"
-    && !window.MeltioPermissions.can("machine.motion"),
-  );
-  const buttonConfigs = [
-    [feederCameraAnchorLeftEl, "left"],
-  ];
-
-  for (const [buttonEl, side] of buttonConfigs) {
-    if (!buttonEl) {
-      continue;
-    }
-
-    const isActive = hasModel && activeFeederCameraAnchorSide === side;
-    buttonEl.disabled = !hasModel || permissionDenied;
-    buttonEl.classList.toggle("active", isActive);
-    buttonEl.setAttribute("aria-pressed", isActive ? "true" : "false");
-  }
-
-  // The Feeder section (Feeder View toggle + per-wheel jog) is always visible
-  // in Controls now, regardless of whether the Feeder camera view is active
-  // (permission gating via data-requires-permission still applies).
-
   updateFeederWheelFloatingControls();
 }
 
@@ -1707,13 +1754,12 @@ function updateIdleReset(nowMs) {
     return;
   }
 
-  if (isAnyAssemblyActionActive()) {
-    return;
-  }
-
-  // Materials / Controls / Files / hotspot panels frame the scene their own
-  // way and glide back by themselves; the idle return is for the main screen.
-  if (isMainViewOwnedElsewhere()) {
+  // Maksim, 2026-11-10: the idle return works on EVERY screen. A menu with its
+  // own prescribed view (Materials, Files) glides back to THAT view; panels
+  // without one (Controls, Notifications, Settings) and the main screen glide
+  // back to the default view. A docked print and the feeder close-up own the
+  // camera and are left alone, as is a menu that has no framing yet.
+  if (isPrintOwningView() || activeFeederCameraAnchorSide) {
     return;
   }
 
@@ -1722,6 +1768,26 @@ function updateIdleReset(nowMs) {
   }
 
   if (cameraTransitionState || isUserCameraGestureActive) {
+    return;
+  }
+
+  refreshMenuViewHome();
+  const home = getResetViewHomeState();
+  if (home.kind === "menu") {
+    if (home.state && !isCameraCloseToState(home.state, RESET_VIEW_MENU_HOME_TOLERANCE_M, RESET_VIEW_MENU_HOME_TOLERANCE_M)) {
+      beginCameraTransition(home.state, IDLE_RESET_TRANSITION_MS, { distanceLock: null });
+    }
+    lastUserActivityMs = nowMs;
+    return;
+  }
+  if (isMaterialsMenuOpen || isCloudModelMenuOpen) {
+    return; // menu open but its framing is not set yet
+  }
+  // Main screen / plain panels: a door the operator opened by hand keeps the
+  // view where they left it. (This guard used to sit above the menu branch and
+  // silently blocked the Materials and Files returns too: both menus open a
+  // door themselves.)
+  if (isAnyAssemblyActionActive()) {
     return;
   }
 
@@ -2002,11 +2068,14 @@ function updateFeederDriveButtons() {
   setToggleButtonState(feederDriveRightEl, rightActive);
   setToggleButtonState(feederDriveUpEl, upActive);
   setToggleButtonState(feederDriveDownEl, downActive);
-  // Controls ▸ Feeder panel per-wheel jog buttons (one active at a time).
+  // Controls ▸ Feeder panel, per wheel: Up / Stop / Down. Exactly one of the
+  // three is lit in each column; Stop while that wheel stands still.
   setToggleButtonState(feederJogLeftUpEl, leftActive && upActive);
   setToggleButtonState(feederJogLeftDownEl, leftActive && downActive);
+  setToggleButtonState(feederJogLeftStopEl, !(leftActive && (upActive || downActive)));
   setToggleButtonState(feederJogRightUpEl, rightActive && upActive);
   setToggleButtonState(feederJogRightDownEl, rightActive && downActive);
+  setToggleButtonState(feederJogRightStopEl, !(rightActive && (upActive || downActive)));
   updateFilesSelectedSpoolFeederButtons();
 
   updateFeederDriveDirectionIndicator();
@@ -2322,11 +2391,14 @@ function syncFeederWheelStates() {
   updateFeederDriveButtons();
 }
 
-function applyWireDrumAppearance() {
-  const clampedProgress = clamp(wireDrumRevealProgress, 0, 1);
-  const easedProgress = (clampedProgress * clampedProgress) * (3 - (2 * clampedProgress));
+function easeDrumReveal(progress) {
+  const p = clamp(progress, 0, 1);
+  return (p * p) * (3 - (2 * p));
+}
+
+function applyDrumMeshVisibility(meshList, easedProgress) {
   const isHidden = easedProgress <= 0.001;
-  for (const meshNode of wireDrumMeshes) {
+  for (const meshNode of meshList) {
     meshNode.visible = !isHidden;
     // In light mode, disable near-invisible shadow casting to avoid ghost shadows.
     if (isLightMode) {
@@ -2335,17 +2407,83 @@ function applyWireDrumAppearance() {
       meshNode.castShadow = ENABLE_REALTIME_SHADOWS && !isHidden;
     }
   }
+}
 
-  // Spool models follow each feeder's feed type (a drum-fed feeder hides its
-  // spool); spool 1 also hides while the drum is revealed (shared bay).
-  applySpoolFeedTypeVisibility();
+// The feeder whose card is focused in Materials. The legacy "wiredrum" focus
+// key means "Feeder 1 drawing from the drum".
+function focusedFeederKey() {
+  const key = normalizeSpoolKey(hotspotMaterialsFocusSpoolKey) || "spool1";
+  return key === "spool2" ? "spool2" : "spool1";
+}
 
-  for (const material of wireDrumMaterials) {
-    setMaterialOpacity(material, easedProgress);
+// Where Feeder 2's drum belongs right now (chassis frame): slot B behind
+// Feeder 1's drum while that one is active too, otherwise slot A by the door.
+function computeWireDrum2SlotTargetLocal() {
+  const target = wireDrum2SlotBaseLocal ? wireDrum2SlotBaseLocal.clone() : new THREE.Vector3();
+  if (isFeederDrumShown("spool1")) {
+    target.x += WIRE_DRUM_SLOT_B_OFFSET_LOCAL[0];
+    target.y += WIRE_DRUM_SLOT_B_OFFSET_LOCAL[1];
+    target.z += WIRE_DRUM_SLOT_B_OFFSET_LOCAL[2];
+  }
+  return target;
+}
+
+// Per frame: glide drum 2 to its slot while it is shown, snap while hidden
+// (so it always appears in the right place). Returns true while moving.
+function updateWireDrum2Slot() {
+  if (!wireDrum2Frame || !wireDrum2SlotBaseLocal) {
+    return false;
+  }
+  const target = computeWireDrum2SlotTargetLocal();
+  const distance = wireDrum2Frame.position.distanceTo(target);
+  if (distance < 0.0005) {
+    if (distance > 0) wireDrum2Frame.position.copy(target);
+    return false;
+  }
+  if (wireDrum2RevealProgress <= 0.001) {
+    wireDrum2Frame.position.copy(target);
+    return false;
+  }
+  wireDrum2Frame.position.lerp(target, WIRE_DRUM_SLOT_SLIDE_SMOOTHING);
+  requestRender();
+  return true;
+}
+
+function applyWireDrumAppearance() {
+  const clampedProgress = clamp(wireDrumRevealProgress, 0, 1);
+  const easedProgress = easeDrumReveal(clampedProgress);
+  const eased2 = easeDrumReveal(wireDrum2RevealProgress);
+  applyDrumMeshVisibility(wireDrumMeshes, easedProgress);
+  applyDrumMeshVisibility(wireDrum2Meshes, eased2);
+  updateWireDrum2Slot();
+
+  // Drum 2 lives in the scene graph only while it shows: a hidden clone would
+  // still count in Box3.setFromObject() and push the reset view / chiller
+  // placement outward by a drum that is not there.
+  if (wireDrum2Frame && wireDrum2Parent) {
+    const shouldAttach = eased2 > 0.001;
+    if (shouldAttach && wireDrum2Frame.parent !== wireDrum2Parent) {
+      wireDrum2Parent.add(wireDrum2Frame);
+    } else if (!shouldAttach && wireDrum2Frame.parent) {
+      wireDrum2Frame.parent.remove(wireDrum2Frame);
+    }
   }
 
-  // Keep the Materials-menu "Connect wire drum" toggle in sync (it drives the
-  // same reveal). Done before the early returns below so it always updates.
+  // Spool models follow each feeder's feed type + the Materials-menu focus/glow
+  // (single writer). Called here so the drum reveal keeps them in sync each frame.
+  applyFeedstockPresentation();
+
+  // Each drum follows ITS feeder (Maksim, 2026-10-13): the focused feeder's drum
+  // is solid, the other feeder's drum is dimmed like a non-active spool.
+  const focused = focusedFeederKey();
+  const dim1 = focused === "spool1" ? 1 : FEEDSTOCK_DIM_OPACITY;
+  const dim2 = focused === "spool2" ? 1 : FEEDSTOCK_DIM_OPACITY;
+  for (const material of wireDrumMaterials) {
+    setMaterialOpacity(material, easedProgress * dim1);
+  }
+  for (const material of wireDrum2Materials) {
+    setMaterialOpacity(material, eased2 * dim2);
+  }
 
   if (!wireDrumAppearButtonEl) {
     return;
@@ -2382,35 +2520,126 @@ function applyWireDrumAppearance() {
   wireDrumAppearButtonEl.setAttribute("aria-pressed", "false");
 }
 
-// Each feeder (Materials menu) can be fed by its spool or by the shared wire drum.
-// A spool's 3D model is hidden ONLY when ITS OWN feeder is set to "drum":
-// Feeder 1 -> spool 1 model, Feeder 2 -> spool 2 model, fully independent. So a
-// spool-fed feeder keeps its spool visible even while the other feeder is on drum
-// (e.g. Feeder 1 = Spool + Feeder 2 = Drum shows Spool 1 AND the drum, hides
-// Spool 2). The drum's own visibility is handled by computeWireDrumVisibleTarget.
-function applySpoolFeedTypeVisibility() {
-  // A spool model is visible only when ITS feeder is on "spool" AND it still has
-  // material loaded (amount loaded > 0). A drum-fed feeder OR an empty spool
-  // (0 g loaded) hides that spool.
-  const grams = (key) => Number(spoolRemainingAmountGramsByKey[key]) || 0;
-  const spool1Visible = feederFeedType.spool1 !== "drum" && grams("spool1") > 0;
-  const spool2Visible = feederFeedType.spool2 !== "drum" && grams("spool2") > 0;
-  for (const meshNode of spool1Meshes) {
-    meshNode.visible = spool1Visible;
-    meshNode.castShadow = ENABLE_REALTIME_SHADOWS && spool1Visible;
+// The mesh's real material(s).
+function getFeedstockBaseMaterials(meshNode) {
+  return Array.isArray(meshNode.material) ? meshNode.material : [meshNode.material];
+}
+
+// Apply visibility + opacity + glow to one spool's meshes together. Hidden meshes
+// are still restored to base (opaque, no glow) so no residual dim/glow lingers on
+// a material that later becomes visible through another path.
+function applySpoolMeshPresentation(meshList, visible, opacity, glow) {
+  for (const meshNode of meshList) {
+    meshNode.visible = visible;
+    meshNode.castShadow = ENABLE_REALTIME_SHADOWS && visible;
+    const baseMaterials = getFeedstockBaseMaterials(meshNode);
+    // The highlight never touches the materials, so the coil keeps its
+    // loaded-material tint.
+    feedstockHighlight.set(meshNode, visible && glow);
+    for (const material of baseMaterials) {
+      if (!material) {
+        continue;
+      }
+      setMaterialOpacity(material, visible ? opacity : 1);
+    }
   }
-  for (const meshNode of spool2Meshes) {
-    meshNode.visible = spool2Visible;
-    meshNode.castShadow = ENABLE_REALTIME_SHADOWS && spool2Visible;
+}
+
+// SINGLE writer for Materials-menu feedstock presentation (spool + drum). Driven
+// by: whether the Materials panel is open, which feeder is focused, each feeder's
+// feed type, and its loaded amount.
+//   Panel OPEN, focused feeder on Spool -> that spool shown + highlighted; the
+//     other feeder's spool shown plain for context.
+//   Panel OPEN, focused feeder on Drum   -> that feeder's spool HIDDEN; its drum
+//     shown + highlighted (visibility handled by the reveal animation).
+//   Panel CLOSED -> plain feed-type visibility, no highlight (resting look).
+// Idempotent and cheap, so it is safe to call every frame (the drum reveal calls
+// it): opacity goes through setMaterialOpacity (needsUpdate only on a mode
+// change) and the highlight is a Set membership.
+function applyFeedstockPresentation() {
+  // The ACTIVE feedstock source is the focused feeder's spool, or the wire drum
+  // when that feeder is set to Drum. This holds AT ALL TIMES, not only while the
+  // Materials menu is open: the active spool is fully opaque, every other spool is
+  // transparent, and the drum only exists while it is the active source. The glow
+  // stays menu-only — it marks "you are configuring this", the opacity carries the
+  // active/non-active state on its own.
+  // Highlight only while the Materials menu itself is open (Maksim, 2026-11-10);
+  // the Files menu's materials panel no longer lights it.
+  const materialsOpen = isMaterialsMenuOpen;
+  const focusedKey = normalizeSpoolKey(hotspotMaterialsFocusSpoolKey) || "spool1";
+  // Legacy "wiredrum" focus (removed card, may still be restored from storage) is
+  // treated as "the drum is the active source".
+  const focusedIsDrum = focusedKey === "wiredrum" || feederFeedType[focusedKey] === "drum";
+  const focusedFeeder = (focusedKey === "spool1" || focusedKey === "spool2") ? focusedKey : null;
+
+  for (const spoolKey of ["spool1", "spool2"]) {
+    const meshList = spoolKey === "spool1" ? spool1Meshes : spool2Meshes;
+    const ownIsDrum = feederFeedType[spoolKey] === "drum";
+    // Loaded = material assigned and some left (Maksim, 2026-11-13: an unloaded
+    // feeder shows no spool; stock alone used to be enough, so a fresh install
+    // showed two spools of "Not assigned").
+    const hasStock = isFeederLoaded(spoolKey);
+    const isFocusedFeeder = spoolKey === focusedFeeder;
+
+    let visible;
+    let opacity = 1;
+    let glow = false;
+
+    if (isFocusedFeeder && !focusedIsDrum) {
+      // ACTIVE source — fully opaque, never dimmed.
+      visible = hasStock;
+      glow = hasStock && materialsOpen;
+    } else if (isFocusedFeeder && focusedIsDrum) {
+      // This feeder draws from the drum, so its own spool is not in play at all.
+      visible = false;
+    } else {
+      // NON-ACTIVE spool — shown transparent (when it is spool-fed and has stock).
+      visible = !ownIsDrum && hasStock;
+      opacity = FEEDSTOCK_DIM_OPACITY;
+    }
+
+    applySpoolMeshPresentation(meshList, visible, opacity, glow);
   }
+  applySpoolCoilTints();
+
+  // Drum glow follows the active source; the drum's VISIBILITY is owned by the
+  // reveal animation (computeWireDrumVisibleTarget / applyWireDrumAppearance).
+  const drumGlow1 = materialsOpen && focusedIsDrum && focusedFeeder !== "spool2";
+  const drumGlow2 = materialsOpen && focusedIsDrum && focusedFeeder === "spool2";
+  // The drum's reveal fades its BASE materials; swap the highlight in only once
+  // it is fully shown so the fade is never fought.
+  for (const meshNode of wireDrumMeshes) {
+    feedstockHighlight.set(meshNode, drumGlow1 && wireDrumRevealProgress > 0.98);
+  }
+  for (const meshNode of wireDrum2Meshes) {
+    feedstockHighlight.set(meshNode, drumGlow2 && wireDrum2RevealProgress > 0.98);
+  }
+}
+
+// The wire drum is the ACTIVE feedstock source: the focused feeder is set to Drum.
+// Not gated on the Materials menu — the drum's presence IS the state cue, and when
+// it is the active source it must read as solid, not the translucent reveal fade.
+function isDrumSelectedSource() {
+  const focusedKey = normalizeSpoolKey(hotspotMaterialsFocusSpoolKey) || "spool1";
+  return focusedKey === "wiredrum" || feederFeedType[focusedKey] === "drum";
 }
 
 // Recompute all feedstock (spool + drum) visibility from the current feed types
 // and loaded amounts, then repaint. Call after any feed-type or amount change.
 function refreshFeedstockVisibility() {
-  applySpoolFeedTypeVisibility();
-  wireDrumRevealTarget = computeWireDrumVisibleTarget();
+  syncWireDrumRevealTargets();
+  // A freshly SELECTED drum should appear solid at once (no translucent fade-in) —
+  // snap its reveal to fully shown so the active source is never "dimmed". The
+  // fade-out on deselect is untouched.
+  if (wireDrumRevealTarget >= 1) {
+    wireDrumRevealProgress = 1;
+  }
+  if (wireDrum2RevealTarget >= 1) {
+    wireDrum2RevealProgress = 1;
+  }
+  applyFeedstockPresentation();
   applyWireDrumAppearance();
+  requestRender();
 }
 
 function registerWireDrumMaterials(object3d) {
@@ -2445,6 +2674,58 @@ function registerSpool1Meshes(object3d) {
   registerMeshNodes(object3d, spool1Meshes);
 }
 
+// The coil is the spool mesh on a METAL atlas material (the flanges are on
+// Plastic_Atlas_01). Returns the mesh, or null until the spool is loaded.
+function findSpoolCoilMesh(meshList) {
+  for (const meshNode of meshList) {
+    const materials = getFeedstockBaseMaterials(meshNode);
+    if (materials.some((material) => material && /^Metal_Atlas/i.test(String(material.name || "")))) {
+      return meshNode;
+    }
+  }
+  return null;
+}
+
+// Give the coil mesh its own material clone once (after styleMeshTree tuned the
+// original, so envMap / factors carry over) and return it.
+function getSpoolCoilMaterial(spoolKey) {
+  const meshList = spoolKey === "spool1" ? spool1Meshes : spool2Meshes;
+  const coil = findSpoolCoilMesh(meshList);
+  if (!coil || Array.isArray(coil.material)) {
+    return null;
+  }
+  let material = spoolCoilMaterialByKey[spoolKey];
+  if (!material || coil.material !== material) {
+    material = coil.material.clone();
+    material.name = coil.material.name; // keep the atlas name: shareAtlasTextures / isAtlasMaterial key on it
+    coil.material = material;
+    spoolCoilMaterialByKey[spoolKey] = material;
+  }
+  return material;
+}
+
+// Idempotent: colour each spool's coil from the material loaded on that feeder.
+// Called from applyFeedstockPresentation (the single feedstock writer), so it
+// runs on every assignment change, on load, and when state is restored.
+function applySpoolCoilTints() {
+  for (const spoolKey of ["spool1", "spool2"]) {
+    const material = getSpoolCoilMaterial(spoolKey);
+    if (!material || !material.color) {
+      continue;
+    }
+    // Live preview (Maksim, 2026-11-09): while the Materials view is open the
+    // focused feeder's coil shows the material picked in the dropdown at once,
+    // before Load; closing without loading falls back to the loaded material.
+    const previewing = isMaterialsViewOpen() && focusedFeederKey() === spoolKey && selectedHotspotMaterialId;
+    const materialId = previewing ? selectedHotspotMaterialId : hotspotMaterialAssignments[spoolKey];
+    const tint = (materialId && SPOOL_COIL_TINT_BY_MATERIAL[materialId]) || SPOOL_COIL_TINT_UNASSIGNED;
+    if (material.color.getHex() !== tint) {
+      material.color.setHex(tint);
+      requestRender();
+    }
+  }
+}
+
 function registerSpool2Meshes(object3d) {
   registerMeshNodes(object3d, spool2Meshes);
 }
@@ -2455,6 +2736,50 @@ function registerSpoolsDoorMeshes(object3d) {
 
 function registerWireSpoolDoorMeshes(object3d) {
   registerMeshNodes(object3d, wireSpoolDoorMeshes);
+}
+
+// Second drum = a clone of the first drum's joint frame + link, placed beside it
+// (chassis -x, outward) and given its OWN materials so opacity/glow are per drum.
+// Not added to the scene here: applyWireDrumAppearance attaches it while shown.
+function buildSecondWireDrum() {
+  if (!robotRoot) {
+    return;
+  }
+  const frame = robotRoot.getObjectByName("joint_frame:wire_drum_joint");
+  const link = robotRoot.getObjectByName(`link:${WIRE_DRUM_LINK}`);
+  if (!frame || !link || !frame.parent) {
+    return;
+  }
+  const frame2 = new THREE.Group();
+  frame2.name = WIRE_DRUM_2_FRAME_NAME;
+  frame2.position.copy(frame.position);
+  frame2.quaternion.copy(frame.quaternion);
+  frame2.scale.copy(frame.scale);
+  wireDrum2SlotBaseLocal = frame.position.clone();
+  frame2.position.copy(computeWireDrum2SlotTargetLocal());
+  const link2 = link.clone(true);
+  link2.name = `link:${WIRE_DRUM_2_LINK}`;
+  const meshes = [];
+  const materials = [];
+  link2.traverse((node) => {
+    if (!node.isMesh) {
+      return;
+    }
+    if (Array.isArray(node.material)) {
+      node.material = node.material.map((m) => (m ? m.clone() : m));
+    } else if (node.material) {
+      node.material = node.material.clone();
+    }
+    meshes.push(node);
+    for (const m of (Array.isArray(node.material) ? node.material : [node.material])) {
+      if (m && !materials.includes(m)) materials.push(m);
+    }
+  });
+  frame2.add(link2);
+  wireDrum2Frame = frame2;
+  wireDrum2Parent = frame.parent;
+  wireDrum2Meshes = meshes;
+  wireDrum2Materials = materials;
 }
 
 function registerMeshNodes(object3d, targetMeshList) {
@@ -2791,7 +3116,7 @@ function isWireDrumConnected() {
 // route through here so their states stay in sync.
 function setWireDrumConnected(connected) {
   manualWireDrumConnect = Boolean(connected);
-  wireDrumRevealTarget = computeWireDrumVisibleTarget();
+  syncWireDrumRevealTargets();
   markUserActivity();
   applyWireDrumAppearance();
 }
@@ -2806,17 +3131,51 @@ function isDrumFeederAssigned() {
 function isFeederRunning() {
   return Boolean(feederDriveSide && feederDriveVertical);
 }
-// Drum ASSEMBLY visible when: the materials/spools compartment door is open, OR a
-// drum-type feeder is actively running, OR the manual Appearance override is on.
-function computeWireDrumVisibleTarget() {
-  const spoolsOpen = typeof isSpoolsDoorOpen === "function" && isSpoolsDoorOpen();
-  // The drum reveals when a feeder's feed type is Drum (as soon as it is selected —
-  // it no longer has to be actively running) AND the drum still has material loaded
-  // (amount loaded > 0); an empty drum stays hidden. The door-open and manual
-  // "Wire Drum" appearance overrides still force it visible for inspection.
-  const drumHasStock = (Number(spoolRemainingAmountGramsByKey.wiredrum) || 0) > 0;
-  const drumFeederWantsReveal = isDrumFeederAssigned() && drumHasStock;
-  return (spoolsOpen || drumFeederWantsReveal || manualWireDrumConnect) ? 1 : 0;
+// One drum per drum-fed feeder.
+// The drum exists ONLY while it is the active feedstock source (the focused feeder
+// is set to Drum) — not active means removed from the scene, at all times. Shown
+// even when empty so it can still be configured. This deliberately replaces the
+// older door-open / any-feeder / manual-override reveals: the controls that drove
+// those (the Appearance "Wire Drum" button and the retired wire-drum card) are no
+// longer reachable in the operator UI, so nothing live depends on them.
+function isFeederDrumFed(spoolKey) {
+  return Boolean(typeof feederFeedType === "object" && feederFeedType && feederFeedType[spoolKey] === "drum");
+}
+// This feeder's drum stands in the scene: the feeder is drum-fed AND loaded
+// (isFeederLoaded: material assigned and some left). Everything that shows,
+// places or frames a feeder's drum asks this, so the camera never makes room
+// for a drum that is not there (Maksim, 2026-11-13).
+function isFeederDrumShown(spoolKey) {
+  return isFeederDrumFed(spoolKey) && isFeederLoaded(spoolKey);
+}
+// Both drums' reveal targets from the feeders' state (feed type + loaded, plus
+// the Wire Drum card's connect for drum 1).
+function syncWireDrumRevealTargets() {
+  const next1 = computeWireDrumVisibleTarget("spool1");
+  const next2 = computeWireDrumVisibleTarget("spool2");
+  if (next1 !== wireDrumRevealTarget || next2 !== wireDrum2RevealTarget) {
+    wireDrumRevealTarget = next1;
+    wireDrum2RevealTarget = next2;
+    wireDrumSetChanged = true;
+  }
+}
+function isMaterialsViewOpen() {
+  return Boolean(isMaterialsMenuOpen || activeHotspotPanelId === HOTSPOT_PANEL_MATERIALS_ID);
+}
+function computeWireDrumVisibleTarget(spoolKey = "spool1") {
+  // Per feeder (Maksim, 2026-10-13): drum 1 shows while Feeder 1 is set to
+  // Drum, drum 2 while Feeder 2 is -- independent of which card is focused.
+  // 2026-11-09 (Maksim): the drums stay visible while the Materials menu is
+  // open too (they used to hide), and the menu view frames spools + drum
+  // together -- see buildMaterialsMenuCameraState.
+  // 2026-11-13 (Maksim): only while that feeder is loaded.
+  if (isFeederDrumShown(spoolKey)) {
+    return 1;
+  }
+  // The Wire Drum card of this repo: confirming a material on it, or a print
+  // that draws from it, "connects" the drum (setWireDrumConnected) -- that
+  // still shows drum 1, by the door.
+  return spoolKey === "spool1" && manualWireDrumConnect ? 1 : 0;
 }
 // The drum's OWN door opens only when the compartment door is CLOSED and a drum
 // feeder is actively running (so you can watch it feed); if the materials door is
@@ -2830,31 +3189,44 @@ function triggerWireDrumAppearance() {
   setWireDrumConnected(!isWireDrumConnected());
 }
 
+const WIRE_DRUM_HIDE_SPEED_PER_SEC = 2.0; // hide fast (Materials opening), reveal at the slower appear speed
+function stepDrumReveal(progress, target, deltaSeconds) {
+  const isShowing = target > progress;
+  let revealSpeed = isShowing ? WIRE_DRUM_APPEAR_SPEED_PER_SEC : WIRE_DRUM_HIDE_SPEED_PER_SEC;
+  if (isShowing) {
+    const endPhase = clamp(
+      (progress - WIRE_DRUM_APPEAR_END_BOOST_START)
+        / (1 - WIRE_DRUM_APPEAR_END_BOOST_START),
+      0,
+      1,
+    );
+    revealSpeed *= 1 + (endPhase * (WIRE_DRUM_APPEAR_END_BOOST_MULTIPLIER - 1));
+  }
+  return approachValue(progress, target, revealSpeed * deltaSeconds);
+}
+
 function animateWireDrumAppearance(deltaSeconds) {
   // Recompute the drum-assembly visibility + door targets from the live door /
   // feeder state each frame (decoupled: the compartment door can show the drum
-  // without opening the drum's own door).
-  wireDrumRevealTarget = computeWireDrumVisibleTarget();
+  // without opening the drum's own door). One reveal per drum.
+  syncWireDrumRevealTargets();
 
+  let changed = false;
   if (Math.abs(wireDrumRevealProgress - wireDrumRevealTarget) > 1e-6) {
-    const isShowing = wireDrumRevealTarget > wireDrumRevealProgress;
-    let revealSpeed = WIRE_DRUM_APPEAR_SPEED_PER_SEC;
-
-    if (isShowing) {
-      const endPhase = clamp(
-        (wireDrumRevealProgress - WIRE_DRUM_APPEAR_END_BOOST_START)
-          / (1 - WIRE_DRUM_APPEAR_END_BOOST_START),
-        0,
-        1,
-      );
-      revealSpeed *= 1 + (endPhase * (WIRE_DRUM_APPEAR_END_BOOST_MULTIPLIER - 1));
-    }
-
-    wireDrumRevealProgress = approachValue(
-      wireDrumRevealProgress,
-      wireDrumRevealTarget,
-      revealSpeed * deltaSeconds,
-    );
+    wireDrumRevealProgress = stepDrumReveal(wireDrumRevealProgress, wireDrumRevealTarget, deltaSeconds);
+    changed = true;
+  }
+  if (Math.abs(wireDrum2RevealProgress - wireDrum2RevealTarget) > 1e-6) {
+    wireDrum2RevealProgress = stepDrumReveal(wireDrum2RevealProgress, wireDrum2RevealTarget, deltaSeconds);
+    changed = true;
+  }
+  // Drum 2's slot glide runs on its own clock: a freshly selected drum snaps
+  // to fully shown (no reveal frames), so the glide must not depend on them
+  // (2026-11-10: the two drums were left overlapping -- Maksim's screenshot).
+  if (updateWireDrum2Slot()) {
+    changed = true;
+  }
+  if (changed) {
     applyWireDrumAppearance();
     requestRender();
   }
@@ -4940,6 +5312,7 @@ function setCloudModelMenuOpen(isOpen, options = {}) {
   isCloudModelMenuOpen = Boolean(isOpen);
 
   if (!isCloudModelMenuOpen) {
+    clearMenuViewCameraState("files");
     slicerPaneUi.setMenuOpen(false);
     // Closing the menu ends any docked-print collapse. Reset it so a later fresh
     // open shows the normal file browser (three base bottom-nav buttons, no
@@ -5674,6 +6047,11 @@ function relocateCloudStlToWorldXY(targetWorldX, targetWorldY, options = {}) {
 
 function tryRelocateCloudStlByDoubleClick(event) {
   if (cloudStlDragState) {
+    return false;
+  }
+  // A double tap that just opened a door via its 3D hotspot is not a request
+  // to relocate the cloud STL.
+  if (doorTouchHotspots.consumedDoubleTapRecently()) {
     return false;
   }
 
@@ -7102,7 +7480,10 @@ const CHILLER_MM_TO_M = 1;
 // "left" in both the default 3/4 view and top-down). Tuned against the operator's
 // requested top-down layout. All metres, machine-relative so it is deterministic.
 const CHILLER_GAP_X = 0.087;        // gap beyond the machine's +X (left) face
-const CHILLER_DEPTH_OFFSET = 0.29;  // shift toward +Y (front) from machine centre
+// 0.19 (was 0.29 until 2026-11-13): the unit stays put while the front door
+// opens, so it stands 100 mm further back -- there the fully open door (135 deg)
+// passes its front corner with 20 mm to spare instead of cutting into it.
+const CHILLER_DEPTH_OFFSET = 0.19;  // shift toward +Y (front) from machine centre
 const CHILLER_Z_SPIN = -Math.PI / 2; // 90° clockwise viewed from above
 let chillerObject = null;
 let chillerLoadPromise = null;
@@ -7164,11 +7545,14 @@ function getChillerLocalBounds() {
   return chillerLocalBounds.isEmpty() ? null : chillerLocalBounds;
 }
 
-// Where the chiller belongs for the machine's CURRENT pose: just past the +X
-// (left) face, forward in depth, on the floor. The front door swings out past
-// that face, so with the door open the unit sits beside the open door and with
-// the door closed it tucks in beside the body (Maksim, 2026-11-09) -- see
-// updateChillerPlacement(), which glides between the two.
+// Where the chiller stands: just past the +X (left) face of the machine's BODY,
+// forward in depth, on the floor. It is a separate unit on the floor and it does
+// not move (Maksim, 2026-11-13: "when the door is opening the chiller shouldn't
+// move"). The machine is therefore measured with the front door CLOSED and
+// without the Materials lift, whatever it is doing right now, so the spot is the
+// same every time. (From 2026-11-09 it glided out beside the opened door: the
+// swung door widens the machine's bounding box. The door itself swings in front
+// of the unit and does not reach it.)
 function computeChillerTargetPosition() {
   if (!chillerObject || !robotRoot) {
     return null;
@@ -7177,8 +7561,21 @@ function computeChillerTargetPosition() {
   if (!chillerBounds) {
     return null;
   }
+  const frontDoor = getFrontDoorControlData();
+  const savedDoorValue = frontDoor ? frontDoor.state.value : 0;
+  if (frontDoor) {
+    setJointValue(frontDoor.state, frontDoor.closedValue, { syncSlider: false });
+  }
+  const savedLiftZ = robotRoot.position.z;
+  robotRoot.position.z = 0;
   robotRoot.updateMatrixWorld(true);
   const machineBounds = new THREE.Box3().setFromObject(robotRoot);
+  // Restored before anything is drawn, so a door in mid-swing carries on untouched.
+  robotRoot.position.z = savedLiftZ;
+  if (frontDoor) {
+    setJointValue(frontDoor.state, savedDoorValue, { syncSlider: false });
+  }
+  robotRoot.updateMatrixWorld(true);
   if (machineBounds.isEmpty()) {
     return null;
   }
@@ -7204,39 +7601,6 @@ function positionChillerBesideMachine() {
   }
   chillerObject.position.copy(target);
   chillerObject.updateMatrixWorld(true);
-  chillerPlacementTarget = target.clone();
-}
-
-// Per-frame: while the front door is swinging (or its state just settled), the
-// chiller glides to the placement that matches the machine's new footprint.
-let chillerPlacementTarget = null;
-let chillerLastDoorValue = null;
-const CHILLER_GLIDE_RATE = 7; // 1/s -- ~0.4 s to settle
-function updateChillerPlacement(deltaSeconds) {
-  if (!chillerObject || !chillerObject.visible || !robotRoot) {
-    return false;
-  }
-  const door = getFrontDoorControlData();
-  const doorValue = door ? door.state.value : 0;
-  if (chillerLastDoorValue === null || Math.abs(doorValue - chillerLastDoorValue) > 1e-5) {
-    chillerLastDoorValue = doorValue;
-    const target = computeChillerTargetPosition();
-    if (target) {
-      chillerPlacementTarget = target;
-    }
-  }
-  if (!chillerPlacementTarget) {
-    return false;
-  }
-  const remaining = chillerPlacementTarget.distanceTo(chillerObject.position);
-  if (remaining < 1e-4) {
-    return false;
-  }
-  const t = 1 - Math.exp(-CHILLER_GLIDE_RATE * deltaSeconds);
-  chillerObject.position.lerp(chillerPlacementTarget, remaining < 0.002 ? 1 : t);
-  chillerObject.updateMatrixWorld(true);
-  requestRender();
-  return true;
 }
 
 // Show/hide the chiller in step with the topbar toggle. Instant, no camera move.
@@ -7278,8 +7642,6 @@ function clearRobot() {
     });
   }
   robotRoot = null;
-  chillerPlacementTarget = null;
-  chillerLastDoorValue = null;
   jointStates = [];
   userStepMaterials = [];
   displayMaterials = [];
@@ -7288,6 +7650,13 @@ function clearRobot() {
   wireDrumMaterials = [];
   wireDrumRevealProgress = 0;
   wireDrumRevealTarget = 0;
+  wireDrum2Meshes = [];
+  wireDrum2Materials = [];
+  wireDrum2Frame = null;
+  wireDrum2SlotBaseLocal = null;
+  wireDrum2Parent = null;
+  wireDrum2RevealProgress = 0;
+  wireDrum2RevealTarget = 0;
   manualWireDrumConnect = false;
   clearJointControlTransitions();
   cameraTransitionState = null;
@@ -7300,6 +7669,9 @@ function clearRobot() {
   spoolHighlightInfoByKey.spool2 = null;
   spool1Meshes = [];
   spool2Meshes = [];
+  spoolCoilMaterialByKey.spool1 = null;
+  spoolCoilMaterialByKey.spool2 = null;
+  feedstockHighlight.clear();
   spoolsDoorMeshes = [];
   wireSpoolDoorMeshes = [];
   leftFeederWheelState = null;
@@ -7338,11 +7710,17 @@ function clearRobot() {
 // silhouette far more tightly than the corners of the single union box, which
 // is what the on-screen centring and the band fit need.
 const visibleBoundsScratchBox = new THREE.Box3();
-function measureVisibleBounds(root, collect = null) {
+// `collect` (optional array) receives one world-space Box3 per mesh: the
+// per-mesh boxes trace the silhouette far more tightly than the corners of the
+// single union box, which is what the on-screen centring needs.
+function measureVisibleBounds(root, collect = null, skip = null, ignoreVisibility = false) {
   const bounds = new THREE.Box3();
   root.updateMatrixWorld(true);
   const walk = (object) => {
-    if (object.visible === false) {
+    if (object.visible === false && !ignoreVisibility) {
+      return;
+    }
+    if (skip && skip(object)) {
       return;
     }
     if (object.isMesh && object.geometry) {
@@ -7362,6 +7740,44 @@ function measureVisibleBounds(root, collect = null) {
     }
   };
   walk(root);
+  return bounds;
+}
+
+// Bounds of every drum whose feeder is drum-fed, regardless of its current
+// reveal state (a hidden drum 1 is measured with visibility ignored; a
+// detached drum 2 is attached for the measurement and detached again).
+function measureDrumRestBounds(collect = null) {
+  const bounds = new THREE.Box3();
+  if (!robotRoot) {
+    return bounds;
+  }
+  const measureIgnoringVisibility = (object) => {
+    const box = new THREE.Box3();
+    object.updateMatrixWorld(true);
+    object.traverse((node) => {
+      if (node.isMesh && node.geometry) {
+        if (!node.geometry.boundingBox) node.geometry.computeBoundingBox();
+        if (node.geometry.boundingBox) {
+          visibleBoundsScratchBox.copy(node.geometry.boundingBox).applyMatrix4(node.matrixWorld);
+          box.union(visibleBoundsScratchBox);
+          if (collect) {
+            collect.push(visibleBoundsScratchBox.clone());
+          }
+        }
+      }
+    });
+    return box;
+  };
+  if (isFeederDrumShown("spool1")) {
+    const link = robotRoot.getObjectByName(`link:${WIRE_DRUM_LINK}`);
+    if (link) bounds.union(measureIgnoringVisibility(link));
+  }
+  if (isFeederDrumShown("spool2") && wireDrum2Frame && wireDrum2Parent) {
+    const wasAttached = wireDrum2Frame.parent === wireDrum2Parent;
+    if (!wasAttached) wireDrum2Parent.add(wireDrum2Frame);
+    bounds.union(measureIgnoringVisibility(wireDrum2Frame));
+    if (!wasAttached) wireDrum2Parent.remove(wireDrum2Frame);
+  }
   return bounds;
 }
 
@@ -7388,7 +7804,15 @@ function measureRobotBoundsAtRest(collect = null) {
     });
   }
 
+  // The Materials-menu model lift eases back over ~0.5 s after close; measure
+  // the SETTLED pose (lift 0) so the reset view lands where the machine ends.
+  const savedLiftZ = robotRoot.position.z;
+  robotRoot.position.z = 0;
   const bounds = measureVisibleBounds(robotRoot, collect);
+  // Drums that belong in the default view but are currently hidden/faded
+  // (e.g. the reset computed at Materials close, while they are still hidden).
+  bounds.union(measureDrumRestBounds(collect));
+  robotRoot.position.z = savedLiftZ;
 
   for (let i = restorers.length - 1; i >= 0; i -= 1) {
     restorers[i]();
@@ -7649,6 +8073,10 @@ function computeResetViewStateUnshifted(zoomOutFactor) {
 // mesh tree, so it must not run every frame.
 let cachedResetViewState = null;
 function getCachedResetViewState() {
+  if (wireDrumSetChanged) {
+    wireDrumSetChanged = false;
+    cachedResetViewState = null;
+  }
   if (!cachedResetViewState) {
     cachedResetViewState = computeResetViewState();
   }
@@ -7687,15 +8115,115 @@ function resetViewAfterLayoutChange() {
   resetCameraToRobotView({ smooth: true, forceExactView: true });
 }
 
+// --- Menu home view ------------------------------------------------------------
+// Files and Materials each move the camera to a prescribed framing when they
+// open. That framing is the menu's HOME VIEW for as long as the menu is open
+// (Maksim, 2026-11-09/10): the Reset view button shows when the operator has
+// orbited away from it and glides back to it, and so does the 15 s idle
+// return. The menu itself stays open. A docked print owns the camera outright.
+let menuViewReturn = null; // { owner: "files" | "materials", state }
+
+function isMenuViewOwnerActive(owner) {
+  if (owner === "materials") {
+    return isMaterialsMenuOpen;
+  }
+  if (owner === "files") {
+    return isCloudModelMenuOpen && !filesListCollapsedForPrint && !isDockedPrintActive;
+  }
+  return false;
+}
+
+// Which drums the remembered Materials view frames ("10" = Feeder 1's only).
+// Load and Unload change the set; the open view then follows at once
+// (reframeMaterialsMenuViewIfDrumsChanged) instead of at the next reset.
+let materialsViewDrumSignature = "";
+function getMaterialsViewDrumSignature() {
+  return `${isFeederDrumShown("spool1") ? 1 : 0}${isFeederDrumShown("spool2") ? 1 : 0}`;
+}
+
+function rememberMenuViewCameraState(owner, state) {
+  menuViewReturn = state
+    ? { owner, state: { ...state, position: state.position.clone(), target: state.target.clone(), up: state.up.clone() } }
+    : null;
+  if (owner === "materials") {
+    materialsViewDrumSignature = getMaterialsViewDrumSignature();
+  }
+}
+
+function clearMenuViewCameraState(owner) {
+  if (menuViewReturn && menuViewReturn.owner === owner) {
+    menuViewReturn = null;
+  }
+}
+
+// The Materials framing depends on live state (feed types, drum slots, popup
+// size, window size): recompute it whenever it is about to be used, so a
+// snapshot taken at a bad moment (menu opened from Files/Controls, a door
+// action, a resize) can never be the reset target (Maksim, 2026-11-10).
+function refreshMenuViewHome() {
+  if (menuViewReturn && menuViewReturn.owner === "materials" && isMaterialsMenuOpen && robotRoot) {
+    const fresh = buildMaterialsMenuCameraState();
+    if (fresh) {
+      menuViewReturn.state = { ...fresh, position: fresh.position.clone(), target: fresh.target.clone(), up: fresh.up.clone() };
+      materialsViewDrumSignature = getMaterialsViewDrumSignature();
+    }
+  }
+}
+
+// Glide back to the open menu's home view (the Reset view button's action while
+// a menu owns the view). Returns false when no menu does.
+function returnToMenuViewCameraState() {
+  if (!menuViewReturn || !isMenuViewOwnerActive(menuViewReturn.owner)) {
+    return false;
+  }
+  refreshMenuViewHome();
+  beginCameraTransition(menuViewReturn.state, SPOOLS_DOOR_BUTTON_CAMERA_DURATION_MS, { distanceLock: null });
+  return true;
+}
+
+// The framing Reset view returns to right now: the open menu's home view when
+// a menu owns the camera, else the main reset view.
+function getResetViewHomeState() {
+  if (menuViewReturn && isMenuViewOwnerActive(menuViewReturn.owner)) {
+    return { kind: "menu", state: menuViewReturn.state };
+  }
+  return { kind: "main", state: getCachedResetViewState() };
+}
+
+// The Materials menu opened or closed, by whatever path (hmi/materials.js calls
+// this through its setModelLift dep on every toggle): raise / lower the model
+// and keep the menu's home view in step.
+function onMaterialsMenuToggled(isOpen) {
+  materialsModelLiftTargetM = isOpen ? MATERIALS_MENU_MODEL_LIFT_M : 0;
+  if (!isOpen) {
+    clearMenuViewCameraState("materials");
+  } else if (!menuViewReturn || menuViewReturn.owner !== "materials") {
+    // Whatever the camera shows when Materials opens; runBottomNavMaterialsAction
+    // replaces it with the framing it animates to.
+    rememberMenuViewCameraState("materials", (robotRoot && buildMaterialsMenuCameraState()) || captureCameraState());
+  }
+}
+
 // Small "Reset view" button under the model: shows once the operator has
-// orbited / zoomed / panned away from the main view, hides again at home or
-// while another surface owns the camera (Maksim, 2026-10-30).
+// orbited / zoomed / panned away from the current home view, hides again at
+// home. 2026-10-30: main view only. 2026-11-09 (Maksim): also while a menu or
+// panel is open -- there the home view is the open menu's own framing
+// (Materials, Files) or the main reset view (Controls, hotspot panels), and the
+// button glides back to it. Print playback still owns the camera outright.
 const resetViewFabEl = document.getElementById("resetViewFab");
 let resetViewFabVisible = false;
 let resetViewFabLastCheckMs = -Infinity;
 const resetViewFabLastCamPos = new THREE.Vector3(NaN, NaN, NaN);
 const resetViewFabLastTarget = new THREE.Vector3(NaN, NaN, NaN);
 let resetViewFabLastAtHome = true;
+let resetViewFabLastHomeState = null;
+const RESET_VIEW_MENU_HOME_TOLERANCE_M = 0.01; // a menu framing is exact: any visible nudge counts
+
+function isPrintOwningView() {
+  const printState = printSim?.getState?.();
+  return printState === "playing" || printState === "paused" || filesListCollapsedForPrint
+    || Boolean(printSim?.isActive?.());
+}
 function updateResetViewFab(nowMs) {
   if (!resetViewFabEl) {
     return;
@@ -7705,13 +8233,16 @@ function updateResetViewFab(nowMs) {
   }
   resetViewFabLastCheckMs = nowMs;
   let show = false;
-  if (robotRoot && !cameraTransitionState && !isUserCameraGestureActive && !isMainViewOwnedElsewhere()) {
-    // Measuring the home view walks the mesh tree; only redo it when the camera
-    // has actually moved since the last answer (or the cache was invalidated).
+  if (robotRoot && !cameraTransitionState && !isUserCameraGestureActive && !isPrintOwningView()) {
+    const home = getResetViewHomeState();
+    // Measuring the main home view walks the mesh tree; only redo the test when
+    // the camera has actually moved since the last answer or the home changed.
     const cameraMoved = !camera.position.equals(resetViewFabLastCamPos)
       || !controls.target.equals(resetViewFabLastTarget);
-    if (cameraMoved || !cachedResetViewState) {
-      resetViewFabLastAtHome = isCameraAtMainView();
+    if (cameraMoved || home.state !== resetViewFabLastHomeState) {
+      const tolerance = home.kind === "menu" ? RESET_VIEW_MENU_HOME_TOLERANCE_M : RESET_VIEW_AT_HOME_TOLERANCE_M;
+      resetViewFabLastAtHome = Boolean(home.state) && isCameraCloseToState(home.state, tolerance, tolerance);
+      resetViewFabLastHomeState = home.state;
       resetViewFabLastCamPos.copy(camera.position);
       resetViewFabLastTarget.copy(controls.target);
     }
@@ -7732,6 +8263,11 @@ function updateResetViewFab(nowMs) {
 if (resetViewFabEl) {
   resetViewFabEl.addEventListener("click", () => {
     markUserActivity();
+    // While a menu owns the view, Reset view means "back to this menu's framing"
+    // (Maksim, 2026-11-09); the menu stays open.
+    if (returnToMenuViewCameraState()) {
+      return;
+    }
     resetCameraToRobotView({ smooth: true, forceExactView: true });
   });
 }
@@ -8269,12 +8805,12 @@ navIconsUi = createNavIconsUi({
     const data = getTopCoverControlData();
     return data ? doorOpenFraction(data.topCoverState.value, data.closedValue, data.openValue) : 0;
   },
-  markUserActivity: () => markUserActivity(),
   createCatEgg: (iconEl, options) => new M600CatEgg(iconEl, options),
   prefersReducedMotion: () => Boolean(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches),
 });
 // Debug/QA (reference renders): pin the door icons at { front: 0..1, top: 0..1 },
-// set the cat mode ("random50" | "always" | "off"), make one 1-in-50 draw.
+// make every open a cat open for this page load ("always"; anything else goes
+// back to one in 50), make one 1-in-50 draw.
 window.__navStoryPreview = (override) => navIconsUi.setPreview(override);
 window.__frontDoorCat = (mode) => navIconsUi.setCatMode(mode);
 window.__frontDoorCatRoll = () => navIconsUi.rollCat();
@@ -9415,6 +9951,7 @@ function applyFilesMenuOpenDoorAndCameraBehavior() {
     beginCameraTransition(cameraState, FRONT_DOOR_BUTTON_CAMERA_DURATION_MS, {
       distanceLock: null,
     });
+    rememberMenuViewCameraState("files", cameraState);
   }
 
   updateQuickFrontDoorToggleButton();
@@ -9496,6 +10033,318 @@ function buildSpoolsDoorButtonCameraState(spoolsWorldPoint) {
   };
 }
 
+// True for anything under either wire-drum link (so machine measurements can
+// leave the drums out and add them back only when their feeder is drum-fed).
+function isWireDrumObject(object) {
+  return object.name === `link:${WIRE_DRUM_LINK}` || object.name === `link:${WIRE_DRUM_2_LINK}`;
+}
+
+// World boxes of the feeders' drums that are shown (drum-fed and loaded),
+// measured where they WILL stand (drum 2 at its target slot, even mid-glide)
+// and ignoring the fade.
+function getVisibleDrumWorldBoxes() {
+  const boxes = [];
+  if (isFeederDrumShown("spool1") && robotRoot) {
+    const drum1 = robotRoot.getObjectByName(`link:${WIRE_DRUM_LINK}`);
+    if (drum1) {
+      drum1.updateMatrixWorld(true);
+      const box = measureVisibleBounds(drum1, null, null, true); // may still be hidden / fading in
+      if (!box.isEmpty()) boxes.push(box);
+    }
+  }
+  if (isFeederDrumShown("spool2") && wireDrum2Frame && wireDrum2Parent) {
+    const wasAttached = wireDrum2Frame.parent === wireDrum2Parent;
+    const savedPosition = wireDrum2Frame.position.clone();
+    if (!wasAttached) wireDrum2Parent.add(wireDrum2Frame);
+    wireDrum2Frame.position.copy(computeWireDrum2SlotTargetLocal());
+    wireDrum2Frame.updateMatrixWorld(true);
+    const box = measureVisibleBounds(wireDrum2Frame, null, null, true);
+    wireDrum2Frame.position.copy(savedPosition);
+    wireDrum2Frame.updateMatrixWorld(true);
+    if (!wasAttached) wireDrum2Parent.remove(wireDrum2Frame);
+    if (!box.isEmpty()) boxes.push(box);
+  }
+  return boxes;
+}
+
+// The Materials menu view (Maksim, 2026-11-09): the spools framing as before,
+// and when a feeder is set to Drum the camera pulls back along the same side so
+// the spool compartment AND the drum(s) beside the machine are both in view.
+// Gap kept between the Materials popup's edge and the framed machine (CSS px).
+const MATERIALS_POPUP_CLEAR_GAP_PX = 28;
+
+// The Materials popup's on-screen rect, measured even while it is still
+// [hidden] (the camera state is built BEFORE the popup is shown): the hidden
+// attribute is lifted for one synchronous layout read with visibility:hidden,
+// so nothing paints. Returns null when the viewport is unmeasurable (0 x 0).
+const MATERIALS_POPUP_TRANSIENT_LINE_IDS = ["materialsConfirmStatus", "materialsSpoolAmountValidation"];
+function measureMaterialsPopupRect() {
+  const popup = document.getElementById("materialsMenuPopup");
+  const viewW = window.innerWidth;
+  const viewH = window.innerHeight;
+  if (!popup || viewW < 50 || viewH < 50) {
+    return null;
+  }
+  // Status lines come and go ("Feeder 1 loaded.", the amount validation
+  // message) and make the popup 33 px taller while they show. The view must not
+  // follow them: fitted around a taller popup, the next Reset view / idle
+  // return landed 5-15 cm away from the view on screen (Maksim, 2026-11-13).
+  // Measure the popup's RESTING rect -- those lines taken out for the one
+  // synchronous layout read, so nothing paints.
+  const transientLines = MATERIALS_POPUP_TRANSIENT_LINE_IDS
+    .map((id) => document.getElementById(id))
+    .filter((el) => el && !el.hidden);
+  for (const el of transientLines) {
+    el.hidden = true;
+  }
+  const wasHidden = popup.hasAttribute("hidden");
+  let rect;
+  if (wasHidden) {
+    const prevVisibility = popup.style.visibility;
+    popup.style.visibility = "hidden";
+    popup.removeAttribute("hidden");
+    rect = popup.getBoundingClientRect();
+    popup.setAttribute("hidden", "");
+    popup.style.visibility = prevVisibility;
+  } else {
+    rect = popup.getBoundingClientRect();
+  }
+  for (const el of transientLines) {
+    el.hidden = false;
+  }
+  if (!rect || rect.width <= 0 || rect.height <= 0) {
+    return null;
+  }
+  return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, viewW, viewH };
+}
+
+// The free screen region (CSS px) for the Materials view: the band between
+// topbar and bottom nav, minus the popup -- whichever of "beside the popup" or
+// "below the popup" is the larger area wins (Maksim, 2026-11-09: on the
+// portrait HMI the popup is a tall left column and the machine + drums must
+// sit below it, not under it). Null when nothing can be measured.
+function getMaterialsFreeScreenRegion() {
+  const popup = measureMaterialsPopupRect();
+  if (!popup) {
+    return null;
+  }
+  const topBarEl = document.querySelector(".app-topbar");
+  const bottomNavEl = document.querySelector(".bottom-nav");
+  const topBarRect = topBarEl ? topBarEl.getBoundingClientRect() : null;
+  const bottomNavRect = bottomNavEl ? bottomNavEl.getBoundingClientRect() : null;
+  const bandTop = (topBarRect && topBarRect.height > 0 ? topBarRect.bottom : 0) + MATERIALS_POPUP_CLEAR_GAP_PX * 0.5;
+  const bandBottom = (bottomNavRect && bottomNavRect.height > 0 ? bottomNavRect.top : popup.viewH) - MATERIALS_POPUP_CLEAR_GAP_PX * 0.5;
+  const gap = MATERIALS_POPUP_CLEAR_GAP_PX;
+  const beside = {
+    left: Math.min(popup.viewW, popup.right + gap), right: popup.viewW,
+    top: bandTop, bottom: bandBottom,
+  };
+  const below = {
+    left: gap * 0.5, right: popup.viewW - gap * 0.5,
+    top: Math.min(bandBottom, popup.bottom + gap), bottom: bandBottom,
+  };
+  const area = (r) => Math.max(0, r.right - r.left) * Math.max(0, r.bottom - r.top);
+  const pick = area(below) > area(beside) ? below : beside;
+  if (area(pick) <= 0) {
+    return null;
+  }
+  return { ...pick, viewW: popup.viewW, viewH: popup.viewH, placement: pick === below ? "below" : "beside" };
+}
+
+function buildMaterialsMenuCameraState() {
+  // Materials has no scene slide of its own; one left over from Files/Controls
+  // (still easing out when Materials opens) must not skew the framing.
+  const view = camera.view;
+  const viewWasEnabled = Boolean(view && view.enabled);
+  if (viewWasEnabled) {
+    view.enabled = false;
+  }
+  // The view is FOR the open menu, where the machine stands lifted by
+  // MATERIALS_MENU_MODEL_LIFT_M. It is built at the tap, before the lift has
+  // started, and again by Reset view and the idle return once it has finished.
+  // Measured at whatever height the machine had at that moment, those two came
+  // out 200 mm apart: the menu opened on one view and later "reset" to another
+  // (Maksim, 2026-11-13). Always measure the settled, lifted pose -- the same
+  // way measureRobotBoundsAtRest measures the main view at lift 0.
+  const savedLiftZ = robotRoot ? robotRoot.position.z : 0;
+  if (robotRoot) {
+    robotRoot.position.z = MATERIALS_MENU_MODEL_LIFT_M;
+    robotRoot.updateMatrixWorld(true);
+  }
+  try {
+    return buildMaterialsMenuCameraStateUnshifted();
+  } finally {
+    if (robotRoot) {
+      robotRoot.position.z = savedLiftZ;
+      robotRoot.updateMatrixWorld(true);
+    }
+    if (viewWasEnabled) {
+      view.enabled = true;
+    }
+  }
+}
+// Debug/QA: the Materials view as it would be built right now.
+window.__materialsViewState = () => {
+  const state = robotRoot ? buildMaterialsMenuCameraState() : null;
+  return state ? { position: state.position.toArray(), target: state.target.toArray() } : null;
+};
+
+function buildMaterialsMenuCameraStateUnshifted() {
+  const spoolsState = buildSpoolsDoorButtonCameraState(getSpoolsPairWorldPoint(controls.target));
+  if (!robotRoot) {
+    return spoolsState;
+  }
+  const drumBoxes = getVisibleDrumWorldBoxes();
+  const hasDrums = drumBoxes.length > 0;
+  // The framed set (Maksim, 2026-11-09: nothing of it may sit behind the
+  // Materials popup). With a drum active: the WHOLE visible machine (per-mesh
+  // boxes, like the reset view), the chiller while shown, and the drum(s).
+  // Spools only: the spools compartment -- its door and the visible spools.
+  const framedBoxes = [];
+  const union = new THREE.Box3();
+  if (hasDrums) {
+    // Drums come from drumBoxes (active feeders only, at their target slots):
+    // a just-deselected drum is still fading out and must not hold the view.
+    union.union(measureVisibleBounds(robotRoot, framedBoxes, isWireDrumObject));
+    if (chillerObject && chillerObject.visible) {
+      union.union(measureVisibleBounds(chillerObject, framedBoxes));
+    }
+    for (const box of drumBoxes) {
+      union.union(box);
+      framedBoxes.push(box);
+    }
+  } else {
+    // Just the two spools (measured even while the door is still opening and
+    // they are hidden); the door and compartment fall into the margin.
+    for (const linkName of [SPOOL_1_LINK, SPOOL_2_LINK]) {
+      const link = robotRoot.getObjectByName(`link:${linkName}`);
+      if (link) {
+        union.union(measureVisibleBounds(link, framedBoxes, null, true));
+      }
+    }
+  }
+  if (union.isEmpty() || !framedBoxes.length) {
+    return spoolsState;
+  }
+  const center = union.getCenter(new THREE.Vector3());
+  // Straight on from the spools side a drum stands between the camera and the
+  // compartment and hides the spools: with drums, yaw the view toward the
+  // machine front so the drums land beside the spools on screen, keeping the
+  // spools view's elevation. Spools only: the spools view's own direction.
+  const spoolsDir = spoolsState.position.clone().sub(spoolsState.target).normalize(); // target -> camera
+  const yaw = hasDrums ? MATERIALS_VIEW_YAW_RAD : MATERIALS_SPOOLS_VIEW_YAW_RAD;
+  const elevation = hasDrums ? MATERIALS_VIEW_ELEVATION_RAD : MATERIALS_SPOOLS_VIEW_ELEVATION_RAD;
+  const viewDir = new THREE.Vector3(
+    SPOOLS_DOOR_BUTTON_PERP_X_SIDE * Math.cos(yaw) * Math.cos(elevation),
+    Math.sin(yaw) * Math.cos(elevation),
+    Math.sin(elevation),
+  ).normalize();
+  const up = new THREE.Vector3(0, 0, 1);
+  const right = new THREE.Vector3().crossVectors(up, viewDir).normalize();
+  const camUp = new THREE.Vector3().crossVectors(viewDir, right).normalize();
+  let halfW = 0;
+  let halfH = 0;
+  let halfD = 0;
+  const corner = new THREE.Vector3();
+  for (let i = 0; i < 8; i += 1) {
+    corner.set(
+      (i & 1) ? union.max.x : union.min.x,
+      (i & 2) ? union.max.y : union.min.y,
+      (i & 4) ? union.max.z : union.min.z,
+    ).sub(center);
+    halfW = Math.max(halfW, Math.abs(corner.dot(right)));
+    halfH = Math.max(halfH, Math.abs(corner.dot(camUp)));
+    halfD = Math.max(halfD, Math.abs(corner.dot(viewDir)));
+  }
+  const tanHalfFov = Math.tan(THREE.MathUtils.degToRad(camera.fov) * 0.5);
+  const aspect = Math.max(0.5, camera.aspect || 1);
+  // Fit the set into the screen region the popup leaves free (beside it on a
+  // wide screen, below it on the portrait HMI) and centre it there. Without a
+  // measurable viewport fall back to the old assumption: popup covers the left
+  // 45 %, content centred in the remaining 55 %.
+  const region = getMaterialsFreeScreenRegion();
+  let widthFraction = 0.55;
+  let heightFraction = Math.max(0.3, getVisibleBandFraction ? getVisibleBandFraction() : 0.8);
+  let ndcCenterX = 1 - widthFraction; // +0.45
+  let ndcCenterY = 0;
+  if (region) {
+    widthFraction = Math.max(0.2, (region.right - region.left) / region.viewW);
+    heightFraction = Math.max(0.2, (region.bottom - region.top) / region.viewH);
+    ndcCenterX = ((region.left + region.right) * 0.5 / region.viewW) * 2 - 1;
+    ndcCenterY = 1 - ((region.top + region.bottom) * 0.5 / region.viewH) * 2;
+  }
+  if (!hasDrums) {
+    ndcCenterY -= 2 * heightFraction * MATERIALS_SPOOLS_VIEW_DROP_FRACTION;
+  }
+  // Distance: the per-mesh boxes' projected RANGE fits the region (the union
+  // box's corners overshoot the real outline); the coarse half-extent estimate
+  // only seeds the refinement. Small margin on top -- the region already keeps
+  // a gap from the popup, topbar and nav.
+  const coarseDistance = Math.max(
+    halfH / (tanHalfFov * heightFraction),
+    halfW / (tanHalfFov * aspect * widthFraction),
+  ) + halfD;
+  const distance = fitDistanceForBounds(framedBoxes, center, viewDir, coarseDistance, widthFraction, heightFraction)
+    * (hasDrums ? 1.06 : MATERIALS_SPOOLS_VIEW_MARGIN);
+  // Centre the set's PROJECTED outline on the region's centre: probe the view
+  // from the fitted distance, find the outline's NDC midpoint, and slide the
+  // look-at point by the difference (moving the target along +right moves the
+  // picture toward -x on screen, so the shift carries the midpoint's sign).
+  const probe = camera.clone();
+  probe.aspect = aspect;
+  probe.up.set(0, 0, 1);
+  probe.position.copy(center).addScaledVector(viewDir, distance);
+  probe.lookAt(center);
+  probe.updateMatrixWorld(true);
+  probe.updateProjectionMatrix();
+  let ndcMinX = Infinity; let ndcMaxX = -Infinity; let ndcMinY = Infinity; let ndcMaxY = -Infinity;
+  for (const box of framedBoxes) {
+    for (let i = 0; i < 8; i += 1) {
+      corner.set(
+        (i & 1) ? box.max.x : box.min.x,
+        (i & 2) ? box.max.y : box.min.y,
+        (i & 4) ? box.max.z : box.min.z,
+      ).project(probe);
+      ndcMinX = Math.min(ndcMinX, corner.x); ndcMaxX = Math.max(ndcMaxX, corner.x);
+      ndcMinY = Math.min(ndcMinY, corner.y); ndcMaxY = Math.max(ndcMaxY, corner.y);
+    }
+  }
+  const midX = Number.isFinite(ndcMinX) ? (ndcMinX + ndcMaxX) * 0.5 : 0;
+  const midY = Number.isFinite(ndcMinY) ? (ndcMinY + ndcMaxY) * 0.5 : 0;
+  const halfWidthAtDistance = tanHalfFov * aspect * distance;
+  const halfHeightAtDistance = tanHalfFov * distance;
+  const target = center.clone()
+    .addScaledVector(right, (midX - ndcCenterX) * halfWidthAtDistance)
+    .addScaledVector(camUp, (midY - ndcCenterY) * halfHeightAtDistance);
+  return {
+    position: target.clone().addScaledVector(viewDir, distance),
+    target,
+    up,
+    near: spoolsState.near,
+    far: Math.max(spoolsState.far, distance * 4),
+  };
+}
+
+// Re-frame the open Materials menu view (feed type changed): glide to the new
+// framing and make it the menu-view return target.
+function reframeMaterialsMenuView() {
+  if (!isMaterialsMenuOpen) {
+    return;
+  }
+  const cameraState = buildMaterialsMenuCameraState();
+  beginCameraTransition(cameraState, SPOOLS_DOOR_BUTTON_CAMERA_DURATION_MS, { distanceLock: null });
+  rememberMenuViewCameraState("materials", cameraState);
+}
+
+// Load / Unload in the open menu: a drum appeared or went away, so the framed
+// set changed -- glide to the view for the new set now (Maksim, 2026-11-13).
+// Nothing happens when the set is the same (a spool loaded, an amount edited).
+function reframeMaterialsMenuViewIfDrumsChanged() {
+  if (isMaterialsMenuOpen && getMaterialsViewDrumSignature() !== materialsViewDrumSignature) {
+    reframeMaterialsMenuView();
+  }
+}
+
 function runSpoolsDoorButtonAction(spoolsDoorWorldPoint) {
   if (activeFeederCameraAnchorSide) {
     clearFeederFocusState();
@@ -9516,6 +10365,10 @@ function runSpoolsDoorButtonAction(spoolsDoorWorldPoint) {
   beginCameraTransition(cameraState, SPOOLS_DOOR_BUTTON_CAMERA_DURATION_MS, {
     distanceLock: null,
   });
+
+  if (isMaterialsMenuOpen) {
+    rememberMenuViewCameraState("materials", buildMaterialsMenuCameraState() || cameraState);
+  }
 
   return setSpoolsDoorOpenState(true);
 }
@@ -10163,6 +11016,10 @@ async function loadUrdf(urdfUrl) {
     }
     initializeSceneAnchorsFromRobot();
     enhanceFeederWheelMaterials();
+    buildSecondWireDrum();
+    // Apply the active/non-active feedstock look to the freshly built meshes. The
+    // presentation is otherwise only refreshed on a state CHANGE.
+    refreshFeedstockVisibility();
     rebuildJointControls();
     synchronizeTopCoverControlState();
     initDustExhaustAnchor();
@@ -10178,6 +11035,11 @@ async function loadUrdf(urdfUrl) {
 
     modelStatusEl.textContent = `Model: ${parsed.robotName}`;
     meshStatusEl.textContent = "Mesh: loaded";
+    // Debug handles for the browser console / verification scripts (read-only use).
+    window.__robotRoot = robotRoot;
+    window.__scene = scene;
+    window.__camera = camera;
+    window.__controls = controls;
     // Async load finished (may be well after the triggering click) — draw it.
     requestRender();
 
@@ -10907,8 +11769,9 @@ function runBottomNavMaterialsAction() {
   // The front door and the top door stay in the state the operator chose when
   // Materials opens (Maksim, 2026-10-30); only the spools door is driven here.
 
-  const pairPoint = getSpoolsPairWorldPoint(controls.target);
-  const cameraState = buildSpoolsDoorButtonCameraState(pairPoint);
+  // Materials view = the spool compartment, plus the drum(s) of any drum-fed
+  // feeder beside the machine (Maksim, 2026-11-09; buildMaterialsMenuCameraState).
+  const cameraState = buildMaterialsMenuCameraState();
   beginCameraTransition(cameraState, SPOOLS_DOOR_BUTTON_CAMERA_DURATION_MS, {
     distanceLock: null,
   });
@@ -10919,6 +11782,9 @@ function runBottomNavMaterialsAction() {
     skipBottomNavUpdate: true,
     closeFilesOnOpen: false,
   });
+  // Remember AFTER setMaterialsMenuOpen: opening records the view the camera
+  // had at that instant, this is the framing it is gliding to.
+  rememberMenuViewCameraState("materials", cameraState);
   updateBottomNavState();
   return nextIsOpen;
 }
@@ -11042,6 +11908,90 @@ function updateMaterialsModelLift(deltaSeconds) {
   robotRoot.position.z = materialsModelLiftCurrentM;
 }
 
+// Touch on the model (viewer/overlays/doorTouchHotspots.js): a DOUBLE TAP on the
+// front door or the top door opens it through the same action + guards as the
+// bottom-nav button (2026-09-16/17, Maksim; open only -- closing stays on the
+// buttons). A double tap on the materials door, a spool or a drum opens
+// Materials (2026-10-13); a LONG PRESS there pops up the read-only Materials
+// card instead (hmi/materialsPeek.js, 2026-11-10).
+const materialsPeekUi = createMaterialsPeekUi({
+  isMaterialsMenuOpen: () => isMaterialsMenuOpen,
+  feederFeedType,
+});
+const doorTouchHotspots = createDoorTouchHotspots({
+  THREE,
+  camera,
+  canvas,
+  getRobotRoot: () => robotRoot,
+  getPointerNdc: (event, target) => getCanvasPointerNdc(event, target),
+  requestRender: () => requestRender(),
+  hotspots: [
+    {
+      id: "frontDoor",
+      linkName: FRONT_DOOR_LINK,
+      isEnabled: () =>
+        Boolean(getFrontDoorControlData()) &&
+        !isFrontDoorOpen() &&
+        !(navDoorToggleEl && navDoorToggleEl.classList.contains("is-stop-mode")),
+      hint: "Double-tap to open the front door",
+      activate: () => {
+        markUserActivity();
+        if (isFrontDoorOpen()) return;
+        runBottomNavDoorToggleAction();
+        updateQuickFrontDoorToggleButton();
+      },
+    },
+    {
+      id: "topCover",
+      linkName: TOP_COVER_LINK,
+      isEnabled: () => Boolean(getTopCoverControlData()) && !isTopCoverOpen(),
+      hint: "Double-tap to open the top door",
+      activate: () => {
+        markUserActivity();
+        if (isTopCoverOpen()) return;
+        runTopCoverButtonAction();
+        updateTopDoorShortcutButton();
+      },
+    },
+    // Materials (2026-10-13, Maksim): a double tap on the materials door or on a
+    // drum runs the same action as the Materials nav button (door swings open,
+    // camera frames the spools, menu opens). A drum tap focuses ITS feeder's
+    // card. Open only; closing stays on the nav button. The door's child links
+    // (drum door, handle) are aliases so a tap on the handle counts as the door.
+    ...["spools_door_link", "wire_spool_door_link", "handle_x_pivot_link", "handle_link", SPOOL_1_LINK, SPOOL_2_LINK].map((linkName) => ({
+      id: "materialsDoor",
+      linkName,
+      isEnabled: () => !isMaterialsMenuOpen,
+      hint: "Double-tap to open Materials · hold to preview",
+      longPress: (clientX, clientY) => {
+        markUserActivity();
+        materialsPeekUi.show(["spool1", "spool2"], clientX, clientY);
+      },
+      activate: () => {
+        markUserActivity();
+        if (isMaterialsMenuOpen) return;
+        runBottomNavMaterialsAction();
+      },
+    })),
+    ...[[WIRE_DRUM_LINK, "spool1"], [WIRE_DRUM_2_LINK, "spool2"]].map(([linkName, spoolKey]) => ({
+      id: `wireDrum:${spoolKey}`,
+      linkName,
+      isEnabled: () => !isMaterialsMenuOpen,
+      hint: "Double-tap to open Materials · hold to preview",
+      longPress: (clientX, clientY) => {
+        markUserActivity();
+        materialsPeekUi.show([spoolKey], clientX, clientY);
+      },
+      activate: () => {
+        markUserActivity();
+        if (isMaterialsMenuOpen) return;
+        setHotspotMaterialsFocusSpool(spoolKey);
+        runBottomNavMaterialsAction();
+      },
+    })),
+  ],
+});
+
 function animate(nowMs = performance.now()) {
   requestAnimationFrame(animate);
   const rawDeltaSeconds = Math.min(Math.max((nowMs - previousAnimationMs) / 1000, 0), 0.1);
@@ -11056,8 +12006,8 @@ function animate(nowMs = performance.now()) {
   updateFilesMenuDoorSeeThrough();
   updateMaterialsModelLift(deltaSeconds);
   updateCameraTransition(nowMs);
-  updateChillerPlacement(deltaSeconds);
   updateFirstViewSettle(nowMs);
+  feedstockHighlight.update(nowMs);
   updateIdleReset(nowMs);
   updateResetViewFab(nowMs);
   settingsUi.tick(nowMs);
@@ -11071,6 +12021,7 @@ function animate(nowMs = performance.now()) {
   const sceneViewShiftActive = updateSceneViewShift(deltaSeconds);
   updateSpoolAssemblyHighlight(nowMs);
   updateFeederWheelFloatingControls();
+  doorTouchHotspots.update(nowMs);
 
   // On-demand draw: render while anything is moving (sceneActive) OR when a
   // one-off/async change requested it (renderDirty, e.g. a joint move, drum fade,
@@ -11267,32 +12218,34 @@ if (feederDriveDownEl) {
   });
 }
 
-// Controls ▸ Feeder panel per-wheel jog: each button is a TOGGLE. Clicking the
-// wheel+direction that is already driving stops it; otherwise it starts (or
-// switches) that wheel in that direction via runFeederFloatingCommand().
-function runFeederJogToggle(side, direction) {
+// Controls ▸ Feeder panel, per wheel (Maksim, 2026-11-13): Up and Down START
+// that wheel in that direction, the Stop between them ends it. Up / Down are
+// no longer toggles -- with a Stop button a second press must not stop the
+// wheel by surprise. Stop only acts on its own wheel.
+function runFeederJog(side, direction) {
   markUserActivity();
-  if (feederDriveSide === side && feederDriveVertical === direction) {
-    setFeederDriveStop();
-    return;
-  }
   runFeederFloatingCommand(side, direction);
 }
-
-if (feederJogLeftUpEl) {
-  feederJogLeftUpEl.addEventListener("click", () => runFeederJogToggle("left", "up"));
+function stopFeederJog(side) {
+  markUserActivity();
+  if (feederDriveSide === side) {
+    setFeederDriveStop();
+  }
 }
-
-if (feederJogLeftDownEl) {
-  feederJogLeftDownEl.addEventListener("click", () => runFeederJogToggle("left", "down"));
+for (const [buttonEl, side, direction] of [
+  [feederJogLeftUpEl, "left", "up"],
+  [feederJogLeftDownEl, "left", "down"],
+  [feederJogRightUpEl, "right", "up"],
+  [feederJogRightDownEl, "right", "down"],
+]) {
+  if (buttonEl) {
+    buttonEl.addEventListener("click", () => runFeederJog(side, direction));
+  }
 }
-
-if (feederJogRightUpEl) {
-  feederJogRightUpEl.addEventListener("click", () => runFeederJogToggle("right", "up"));
-}
-
-if (feederJogRightDownEl) {
-  feederJogRightDownEl.addEventListener("click", () => runFeederJogToggle("right", "down"));
+for (const [buttonEl, side] of [[feederJogLeftStopEl, "left"], [feederJogRightStopEl, "right"]]) {
+  if (buttonEl) {
+    buttonEl.addEventListener("click", () => stopFeederJog(side));
+  }
 }
 
 if (feederWheelFloatLeftUpEl) {
@@ -11382,23 +12335,6 @@ if (filesFeederWheelRightEl) {
   });
 }
 
-if (feederCameraAnchorLeftEl) {
-  feederCameraAnchorLeftEl.addEventListener("click", () => {
-    markUserActivity();
-    focusFeederCameraAnchor("left");
-  });
-}
-
-// The Feeder View button's `.disabled` is driven by hasModel (see
-// updateFeederCameraAnchorButtons), independently of the permission gate that
-// now also wraps it (#feederDriveSection has data-requires-permission). The
-// permission module snapshots/restores `.disabled` around deny/grant, so a
-// deny captured before the model finished loading would otherwise leave the
-// button stuck disabled after signing in. Re-run our own update on every
-// permission change so the hasModel-driven state always wins last.
-if (window.MeltioPermissions && typeof window.MeltioPermissions.onChange === "function") {
-  window.MeltioPermissions.onChange(() => updateFeederCameraAnchorButtons());
-}
 
 if (wireDrumAppearButtonEl) {
   wireDrumAppearButtonEl.addEventListener("click", () => {
@@ -12054,7 +12990,9 @@ initMaterialsUi({
   closeMaterialsFromPopup: () => runBottomNavMaterialsAction(),
   clamp,
   OVERLAY_MENU_SAFE_MARGIN_PX,
-  setModelLift: (isRaised) => { materialsModelLiftTargetM = isRaised ? MATERIALS_MENU_MODEL_LIFT_M : 0; },
+  setModelLift: (isRaised) => onMaterialsMenuToggled(isRaised),
+  reframeMaterialsView: () => reframeMaterialsMenuView(),
+  reframeMaterialsViewIfDrumsChanged: () => reframeMaterialsMenuViewIfDrumsChanged(),
   setCloudModelMenuOpen: (open, opts) => setCloudModelMenuOpen(open, opts),
   isCloudModelMenuOpen: () => isCloudModelMenuOpen,
   setSlicerFullscreen: (open, opts) => slicerPaneUi.setFullscreen(open, opts),
