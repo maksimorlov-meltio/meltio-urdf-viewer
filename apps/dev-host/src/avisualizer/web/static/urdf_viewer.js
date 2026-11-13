@@ -36,6 +36,7 @@ import { createCalendarUi, formatCalendarDateTime } from "/hmi/calendar.js";
 import { createNotificationsUi } from "/hmi/notifications.js";
 import { createSettingsUi } from "/hmi/settings.js";
 import { createMovePanelUi, canOperateMotion } from "/hmi/movePanel.js";
+import { createNavIconsUi } from "/hmi/navIcons.js";
 import { createSlicerPaneUi } from "/hmi/slicerPane.js";
 import {
   createPrintDialogsUi,
@@ -136,6 +137,7 @@ let settingsUi = null;
 // starts its rAF loop — hence the optional call in animate(), replacing the
 // `typeof updateMoveReadout === "function"` guard that served the same purpose.
 let movePanelUi = null;
+let navIconsUi = null; // bottom bar icons (hmi/navIcons.js), created once the door accessors exist
 // Mirror of the module-owned advanced flag, updated via onAdvancedModeChanged;
 // read by cloud-control code that runs during the module's own init.
 let isAdvancedModeActive = false;
@@ -668,9 +670,9 @@ const NAV_MACHINE_BODY_SVG =
 // Closed: a flush seam + handle knob. Open: hinge stays at the seam (x11),
 // the leaf swings out past the cabinet's left edge, knob riding with it.
 const NAV_DOOR_ICON_CONSOLE = '<rect x="12.6" y="12.4" width="3.6" height="4.6" rx="0.6" />';
-// Front door: drawn by the <m600-front-door> component (see updateNavFrontDoorIcon).
+// Front door: drawn by the <m600-front-door> component (see hmi/navIcons.js).
 const NAV_DOOR_ICON_STOP_SVG = '<rect x="6" y="6" width="12" height="12" rx="1.5" />';
-// Top door: drawn by the <m600-top-door> component (see updateNavTopDoorIcon).
+// Top door: drawn by the <m600-top-door> component (see hmi/navIcons.js).
 // The front door's chamber window. The name is the contract with
 // apps/dev-host/tools/build_textured_assembly.py, which gives the pane this
 // material when it builds Front Door_2611.glb -- rename it in one place and
@@ -8247,318 +8249,35 @@ function updateQuickFrontDoorToggleButton() {
   updateBottomNavState();
 }
 
-// ---------------------------------------------------------------------------
-// Door icons in the bottom bar. Both are Maksim's web components and follow
-// the real door positions: <m600-front-door> (updateNavFrontDoorIcon) and
-// <m600-top-door> (updateNavTopDoorIcon). This block holds what they share:
-// the last position sent to each icon, the QA preview hook and the underline.
-const navStoryState = { front: { p: -1, motion: "idle" }, top: { p: -1, motion: "idle" } };
-let navStoryPreview = null;
-// Debug/QA: window.__navStoryPreview({ front: 0..1, top: 0..1 }) pins the icon
-// positions; call with no argument to follow the real doors again.
-window.__navStoryPreview = (override) => { navStoryPreview = override || null; };
-
-function navStoryFraction(value, closedValue, openValue) {
+// Bottom bar icons (hmi/navIcons.js): Maksim's door / Materials / Files
+// components, the underline under the four labels and the cat Easter egg. The
+// module is DOM-only; the scene edge it needs -- how far each door is open -- is
+// injected here as a 0..1 fraction.
+function doorOpenFraction(value, closedValue, openValue) {
   const span = openValue - closedValue;
   if (!(Math.abs(span) > 1e-9)) {
     return 0;
   }
   return THREE.MathUtils.clamp((value - closedValue) / span, 0, 1);
 }
-
-function syncNavStorySize() {
-  const nav = navDoorToggleEl ? navDoorToggleEl.closest(".bottom-nav") : null;
-  // Any plain light-DOM glyph still in the bar gives the base icon height; the
-  // CSS falls back to 46px (the pinned nav icon size) when there is none.
-  const reference = nav
-    ? Array.from(nav.querySelectorAll(".bottom-nav-item > svg")).find(
-      (svg) => svg.getBoundingClientRect().height > 0,
-    )
-    : null;
-  const height = reference ? reference.getBoundingClientRect().height : 0;
-  if (nav && height > 0) {
-    nav.style.setProperty("--nav-icon-h", `${height.toFixed(1)}px`);
-  }
-}
-window.addEventListener("resize", syncNavStorySize);
-
-// The underline under the label of all four bar buttons.
-function ensureNavDoorTrack(buttonEl) {
-  if (!buttonEl.querySelector(".nav-door-track")) {
-    const track = document.createElement("i");
-    track.className = "nav-door-track";
-    track.setAttribute("aria-hidden", "true");
-    track.appendChild(document.createElement("b"));
-    buttonEl.appendChild(track);
-    syncNavStorySize();
-  }
-}
-
-// 2026-11-11 (Maksim): the Front door icon is his <m600-front-door> web
-// component (ui/m600-front-door.js, "option D": solid slab, knob cut out, turns
-// 45 degrees with a soft stop) plus the separate cat Easter egg
-// (ui/m600-cat-egg.js). Both files are his hand-off and are used unmodified;
-// this is only the wiring: the icon gets the real door position every time it
-// changes, and the cat plays on Easter-egg opens (by default one random open
-// in every block of 50; Settings > "Door cat" cycles 1 in 50 / every open /
-// off). The module only knows "every Nth", so the 1-in-50 draw lives here:
-// the module is held at "off" and play() is called on the picked open.
-const navFrontDoorIconEl = document.getElementById("navFrontDoorIcon");
-const settingsDoorCatButtonEl = document.getElementById("settingsDoorCatButton");
-const FRONT_DOOR_CAT_MODE_KEY = "m600.frontDoor.catMode";
-const FRONT_DOOR_CAT_MODES = ["random50", "always", "off"];
-const FRONT_DOOR_CAT_DEFAULT_MODE = "random50";
-const FRONT_DOOR_CAT_LABELS = {
-  random50: "Door cat: 1 in 50 opens",
-  always: "Door cat: every open",
-  off: "Door cat: off",
-};
-const FRONT_DOOR_CAT_BLOCK_SIZE = 50;
-const FRONT_DOOR_CAT_BLOCK_KEY = "m600.frontDoor.catBlock";
-let navFrontDoorCatEgg = null;
-let frontDoorCatBlockFallback = null;
-
-// What the module itself is told: it has no random mode, and any name it does
-// not know silently means "every 3rd".
-function frontDoorCatEggMode(mode) {
-  return mode === "always" ? "always" : "off";
-}
-
-function newFrontDoorCatBlock() {
-  return { n: 0, pick: Math.floor(Math.random() * FRONT_DOOR_CAT_BLOCK_SIZE) };
-}
-
-function readFrontDoorCatBlock() {
-  let block = frontDoorCatBlockFallback;
-  try {
-    const stored = JSON.parse(window.localStorage.getItem(FRONT_DOOR_CAT_BLOCK_KEY) || "null");
-    if (stored) {
-      block = stored;
-    }
-  } catch (error) {
-    // storage blocked or unreadable: keep the in-memory block
-  }
-  const valid = block
-    && Number.isInteger(block.n) && block.n >= 0 && block.n < FRONT_DOOR_CAT_BLOCK_SIZE
-    && Number.isInteger(block.pick) && block.pick >= 0 && block.pick < FRONT_DOOR_CAT_BLOCK_SIZE;
-  return valid ? { n: block.n, pick: block.pick } : newFrontDoorCatBlock();
-}
-
-// One call per completed opening. True exactly once in every block of 50
-// openings, at a position drawn at random when the block starts. The block is
-// persisted so a restart neither re-rolls it nor loses the count.
-function rollFrontDoorCat() {
-  let block = readFrontDoorCatBlock();
-  const plays = block.n === block.pick;
-  block.n += 1;
-  if (block.n >= FRONT_DOOR_CAT_BLOCK_SIZE) {
-    block = newFrontDoorCatBlock();
-  }
-  frontDoorCatBlockFallback = block;
-  try {
-    window.localStorage.setItem(FRONT_DOOR_CAT_BLOCK_KEY, JSON.stringify(block));
-  } catch (error) {
-    // storage blocked: the block lasts for this session only
-  }
-  return plays;
-}
-// Debug/QA: one draw, exactly as a completed opening would make it.
-window.__frontDoorCatRoll = rollFrontDoorCat;
-
-function onNavFrontDoorOpened() {
-  if (!navFrontDoorCatEgg || readFrontDoorCatMode() !== "random50") {
-    return;
-  }
-  if (!rollFrontDoorCat()) {
-    return;
-  }
-  // play() skips the module's own reduced-motion check, so it is repeated here.
-  if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-    return;
-  }
-  navFrontDoorCatEgg.play();
-}
-
-function readFrontDoorCatMode() {
-  try {
-    const stored = window.localStorage.getItem(FRONT_DOOR_CAT_MODE_KEY);
-    if (FRONT_DOOR_CAT_MODES.includes(stored)) {
-      return stored;
-    }
-  } catch (error) {
-    // storage blocked: fall through to the default
-  }
-  return FRONT_DOOR_CAT_DEFAULT_MODE;
-}
-
-function applyFrontDoorCatMode(mode, { persist = false } = {}) {
-  const next = FRONT_DOOR_CAT_MODES.includes(mode) ? mode : FRONT_DOOR_CAT_DEFAULT_MODE;
-  if (persist) {
-    try {
-      window.localStorage.setItem(FRONT_DOOR_CAT_MODE_KEY, next);
-    } catch (error) {
-      // storage blocked: the choice lasts for this session only
-    }
-  }
-  if (navFrontDoorCatEgg) {
-    navFrontDoorCatEgg.mode = frontDoorCatEggMode(next);
-    if (next === "off") {
-      navFrontDoorCatEgg.reset();
-    }
-  }
-  if (settingsDoorCatButtonEl) {
-    settingsDoorCatButtonEl.textContent = FRONT_DOOR_CAT_LABELS[next];
-  }
-  return next;
-}
-// Debug/QA: window.__frontDoorCat("always" | "random50" | "off")
-window.__frontDoorCat = (mode) => applyFrontDoorCatMode(mode, { persist: true });
-applyFrontDoorCatMode(readFrontDoorCatMode());
-
-if (settingsDoorCatButtonEl) {
-  settingsDoorCatButtonEl.addEventListener("click", () => {
-    markUserActivity();
-    const current = readFrontDoorCatMode();
-    const next = FRONT_DOOR_CAT_MODES[(FRONT_DOOR_CAT_MODES.indexOf(current) + 1) % FRONT_DOOR_CAT_MODES.length];
-    applyFrontDoorCatMode(next, { persist: true });
-  });
-}
-
-// Materials icon without the wire that used to run up from the spool when the
-// tab is selected (Maksim, 2026-11-11). ui/m600-materials-icon.js stays
-// byte-identical to his hand-off and no documented custom property reaches the
-// wire, so it is hidden with one rule in the icon's shadow root (the cat module
-// adds its styles to the door icon the same way). The spool turn stays.
-function hideNavMaterialsWire() {
-  const icon = document.getElementById("navMaterialsIcon");
-  const root = icon ? icon.shadowRoot : null;
-  if (!root || root.querySelector("#m600-nav-no-wire")) {
-    return;
-  }
-  const style = document.createElement("style");
-  style.id = "m600-nav-no-wire";
-  style.textContent = ".wwrap{display:none}";
-  root.appendChild(style);
-}
-customElements.whenDefined("m600-materials-icon").then(hideNavMaterialsWire);
-
-// Materials icon without the spring at the end of its activation (Maksim,
-// 2026-11-11: "remove the last spring movement, activation and deactivation
-// should remain"). The module turns the spool back past its end position and
-// lets it bounce twice (-140 -> -106 -> -128 -> -117 -> -120 deg, 1.37 s).
-// The module stays unmodified, so its own running animation is re-keyed right
-// after it starts: one turn straight to the end position, with the easing and
-// length of the module's first segment, and then it stops. The animation
-// object is still the module's, so its interrupt / reverse handling keeps
-// working. Deactivation (two keyframes) is left exactly as it is.
-const NAV_MATERIALS_TURN_MS = 640;
-function removeNavMaterialsSpring(icon) {
-  const spool = icon && icon.shadowRoot ? icon.shadowRoot.querySelector(".spool") : null;
-  if (!spool || typeof spool.getAnimations !== "function") {
-    return;
-  }
-  spool.getAnimations().forEach((animation) => {
-    const effect = animation.effect;
-    const frames = effect && typeof effect.getKeyframes === "function" ? effect.getKeyframes() : [];
-    // Only the bouncing activation has more than two keyframes; the instant /
-    // reduced-motion state has one and deactivation has two.
-    if (frames.length <= 2) {
-      return;
-    }
-    effect.setKeyframes([
-      { transform: frames[0].transform, easing: "cubic-bezier(.3,.7,.3,1)" },
-      { transform: "rotate(-120deg)" },
-    ]);
-    effect.updateTiming({ duration: NAV_MATERIALS_TURN_MS });
-  });
-}
-
-function updateNavFrontDoorIcon() {
-  const icon = navFrontDoorIconEl;
-  if (!navDoorToggleEl || !icon || typeof icon.setState !== "function") {
-    return;
-  }
-  ensureNavDoorTrack(navDoorToggleEl);
-  if (!navFrontDoorCatEgg) {
-    navFrontDoorCatEgg = new M600CatEgg(icon, { mode: frontDoorCatEggMode(readFrontDoorCatMode()) });
-    icon.addEventListener("door-opened", onNavFrontDoorOpened);
-  }
-  const data = getFrontDoorControlData();
-  const live = data ? navStoryFraction(data.state.value, data.closedValue, data.openValue) : 0;
-  let p = navStoryPreview && typeof navStoryPreview.front === "number" ? navStoryPreview.front : live;
-  // The component reports "opened" only at exactly 1 and "closed" only at
-  // exactly 0, while the joint transition ends within 1e-4 of its target.
-  if (p < 0.001) {
-    p = 0;
-  } else if (p > 0.999) {
-    p = 1;
-  }
-  const state = navStoryState.front;
-  if (Math.abs(p - state.p) > 0.0005) {
-    const motion = state.p < 0 ? "idle" : (p > state.p ? "opening" : "closing");
-    state.p = p;
-    state.motion = motion;
-    icon.setState({ position: p, motion });
-    // Underline: lit from the moment the door starts to open, released the
-    // moment it starts to close (aria-pressed only flips at half travel).
-    navDoorToggleEl.classList.toggle("is-line-on", motion === "idle" ? p > 0.5 : motion === "opening");
-  } else if (state.motion !== "idle") {
-    state.motion = "idle";
-    icon.setState({ motion: "idle" });
-  }
-}
-
-// 2026-11-11 (Maksim): the Top door icon is his <m600-top-door> web component
-// (ui/m600-top-door.js, used unmodified; it replaces the cooking pot). Solid
-// enclosure with a front window; the hatch turns up to 45 degrees, a dotted
-// swing arc is drawn in step with it and a slot opens on top. Wired like the
-// front door: the icon gets the real lid position every time it changes.
-const navTopDoorIconEl = document.getElementById("navTopDoorIcon");
-
-function updateNavTopDoorIcon() {
-  const icon = navTopDoorIconEl;
-  if (!annotationNavTopCoverEl || !icon || typeof icon.setState !== "function") {
-    return;
-  }
-  ensureNavDoorTrack(annotationNavTopCoverEl);
-  const data = getTopCoverControlData();
-  const live = data ? navStoryFraction(data.topCoverState.value, data.closedValue, data.openValue) : 0;
-  let p = navStoryPreview && typeof navStoryPreview.top === "number" ? navStoryPreview.top : live;
-  // The end mark needs the position at 1 and the component reports
-  // "opened" / "closed" only at exactly 1 / 0, while the joint transition
-  // ends within 1e-4 of its target.
-  if (p < 0.001) {
-    p = 0;
-  } else if (p > 0.999) {
-    p = 1;
-  }
-  const state = navStoryState.top;
-  if (Math.abs(p - state.p) > 0.0005) {
-    const motion = state.p < 0 ? "idle" : (p > state.p ? "opening" : "closing");
-    state.p = p;
-    state.motion = motion;
-    icon.setState({ position: p, motion });
-    // Underline: lit from the moment the lid starts to open, released the
-    // moment it starts to close.
-    annotationNavTopCoverEl.classList.toggle("is-line-on", motion === "idle" ? p > 0.5 : motion === "opening");
-  } else if (state.motion !== "idle") {
-    state.motion = "idle";
-    icon.setState({ motion: "idle" });
-  }
-}
-
-function updateNavDoorStories() {
-  updateNavFrontDoorIcon();
-  // Materials and Files carry the same bar; CSS lights it off the selected
-  // state, so the element only has to exist.
-  if (navMaterialsToggleEl) {
-    ensureNavDoorTrack(navMaterialsToggleEl);
-  }
-  if (navFilesToggleEl) {
-    ensureNavDoorTrack(navFilesToggleEl);
-  }
-  updateNavTopDoorIcon();
-}
+navIconsUi = createNavIconsUi({
+  getFrontDoorFraction: () => {
+    const data = getFrontDoorControlData();
+    return data ? doorOpenFraction(data.state.value, data.closedValue, data.openValue) : 0;
+  },
+  getTopCoverFraction: () => {
+    const data = getTopCoverControlData();
+    return data ? doorOpenFraction(data.topCoverState.value, data.closedValue, data.openValue) : 0;
+  },
+  markUserActivity: () => markUserActivity(),
+  createCatEgg: (iconEl, options) => new M600CatEgg(iconEl, options),
+  prefersReducedMotion: () => Boolean(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches),
+});
+// Debug/QA (reference renders): pin the door icons at { front: 0..1, top: 0..1 },
+// set the cat mode ("random50" | "always" | "off"), make one 1-in-50 draw.
+window.__navStoryPreview = (override) => navIconsUi.setPreview(override);
+window.__frontDoorCat = (mode) => navIconsUi.setCatMode(mode);
+window.__frontDoorCatRoll = () => navIconsUi.rollCat();
 
 // Same per-frame observation / change-only DOM write pattern as the quick
 // front-door button above.
@@ -11057,7 +10776,7 @@ function updateBottomNavState() {
       // change, so the activation can be re-keyed in the same task.
       matIconEl.toggleAttribute("active", isMaterialsMenuOpen);
       if (isMaterialsMenuOpen) {
-        removeNavMaterialsSpring(matIconEl);
+        navIconsUi?.removeMaterialsSpring(matIconEl);
       }
     }
   }
@@ -11117,7 +10836,7 @@ function updateBottomNavState() {
       if (labelEl) {
         labelEl.textContent = doorLabel;
       }
-      // The door itself is drawn by <m600-front-door> (updateNavFrontDoorIcon);
+      // The door itself is drawn by <m600-front-door> (hmi/navIcons.js);
       // this svg only ever holds the print Stop square and is hidden otherwise.
       if (iconEl && iconEl.dataset.mode !== "door") {
         iconEl.innerHTML = "";
@@ -11377,7 +11096,7 @@ function animate(nowMs = performance.now()) {
   }
   updateQuickFrontDoorToggleButton();
   updateTopDoorShortcutButton();
-  updateNavDoorStories();
+  navIconsUi?.update();
 }
 
 reloadModelEl.addEventListener("click", () => {
