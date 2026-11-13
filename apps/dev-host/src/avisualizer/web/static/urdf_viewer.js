@@ -126,6 +126,7 @@ import {
   DEFAULT_PRINT_JOB_USAGE_GRAMS,
   hotspotMaterialAssignments,
   spoolRemainingAmountGramsByKey,
+  isFeederLoaded,
   normalizeSpoolKey,
   restorePersistedMaterialsState,
   getSelectedPrintJobRequiredGrams,
@@ -865,6 +866,9 @@ let wireDrum2Frame = null;
 let wireDrum2Parent = null;
 let wireDrum2RevealProgress = 0;
 let wireDrum2RevealTarget = 0;
+// Set when a drum joins or leaves the scene; getCachedResetViewState() then
+// re-measures the main view (it frames the machine plus the shown drums).
+let wireDrumSetChanged = false;
 // A non-active spool stays SOLID (Maksim 2026-11-09: spools are never
 // transparent); the highlight alone marks the active one.
 const FEEDSTOCK_DIM_OPACITY = 1.0;
@@ -2442,7 +2446,7 @@ function focusedFeederKey() {
 // Feeder 1's drum while that one is active too, otherwise slot A by the door.
 function computeWireDrum2SlotTargetLocal() {
   const target = wireDrum2SlotBaseLocal ? wireDrum2SlotBaseLocal.clone() : new THREE.Vector3();
-  if (isFeederDrumFed("spool1")) {
+  if (isFeederDrumShown("spool1")) {
     target.x += WIRE_DRUM_SLOT_B_OFFSET_LOCAL[0];
     target.y += WIRE_DRUM_SLOT_B_OFFSET_LOCAL[1];
     target.z += WIRE_DRUM_SLOT_B_OFFSET_LOCAL[2];
@@ -2593,12 +2597,14 @@ function applyFeedstockPresentation() {
   // treated as "the drum is the active source".
   const focusedIsDrum = focusedKey === "wiredrum" || feederFeedType[focusedKey] === "drum";
   const focusedFeeder = (focusedKey === "spool1" || focusedKey === "spool2") ? focusedKey : null;
-  const grams = (key) => Number(spoolRemainingAmountGramsByKey[key]) || 0;
 
   for (const spoolKey of ["spool1", "spool2"]) {
     const meshList = spoolKey === "spool1" ? spool1Meshes : spool2Meshes;
     const ownIsDrum = feederFeedType[spoolKey] === "drum";
-    const hasStock = grams(spoolKey) > 0;
+    // Loaded = material assigned and some left (Maksim, 2026-11-13: an unloaded
+    // feeder shows no spool; stock alone used to be enough, so a fresh install
+    // showed two spools of "Not assigned").
+    const hasStock = isFeederLoaded(spoolKey);
     const isFocusedFeeder = spoolKey === focusedFeeder;
 
     let visible;
@@ -2647,8 +2653,7 @@ function isDrumSelectedSource() {
 // Recompute all feedstock (spool + drum) visibility from the current feed types
 // and loaded amounts, then repaint. Call after any feed-type or amount change.
 function refreshFeedstockVisibility() {
-  wireDrumRevealTarget = computeWireDrumVisibleTarget("spool1");
-  wireDrum2RevealTarget = computeWireDrumVisibleTarget("spool2");
+  syncWireDrumRevealTargets();
   // A freshly SELECTED drum should appear solid at once (no translucent fade-in) —
   // snap its reveal to fully shown so the active source is never "dimmed". The
   // fade-out on deselect is untouched.
@@ -3137,8 +3142,7 @@ function isWireDrumConnected() {
 // route through here so their states stay in sync.
 function setWireDrumConnected(connected) {
   manualWireDrumConnect = Boolean(connected);
-  wireDrumRevealTarget = computeWireDrumVisibleTarget("spool1");
-  wireDrum2RevealTarget = computeWireDrumVisibleTarget("spool2");
+  syncWireDrumRevealTargets();
   markUserActivity();
   applyWireDrumAppearance();
 }
@@ -3163,6 +3167,24 @@ function isFeederRunning() {
 function isFeederDrumFed(spoolKey) {
   return Boolean(typeof feederFeedType === "object" && feederFeedType && feederFeedType[spoolKey] === "drum");
 }
+// This feeder's drum stands in the scene: the feeder is drum-fed AND loaded
+// (isFeederLoaded: material assigned and some left). Everything that shows,
+// places or frames a feeder's drum asks this, so the camera never makes room
+// for a drum that is not there (Maksim, 2026-11-13).
+function isFeederDrumShown(spoolKey) {
+  return isFeederDrumFed(spoolKey) && isFeederLoaded(spoolKey);
+}
+// Both drums' reveal targets from the feeders' state (feed type + loaded, plus
+// the Wire Drum card's connect for drum 1).
+function syncWireDrumRevealTargets() {
+  const next1 = computeWireDrumVisibleTarget("spool1");
+  const next2 = computeWireDrumVisibleTarget("spool2");
+  if (next1 !== wireDrumRevealTarget || next2 !== wireDrum2RevealTarget) {
+    wireDrumRevealTarget = next1;
+    wireDrum2RevealTarget = next2;
+    wireDrumSetChanged = true;
+  }
+}
 function isMaterialsViewOpen() {
   return Boolean(isMaterialsMenuOpen || activeHotspotPanelId === HOTSPOT_PANEL_MATERIALS_ID);
 }
@@ -3172,7 +3194,8 @@ function computeWireDrumVisibleTarget(spoolKey = "spool1") {
   // 2026-11-09 (Maksim): the drums stay visible while the Materials menu is
   // open too (they used to hide), and the menu view frames spools + drum
   // together -- see buildMaterialsMenuCameraState.
-  if (isFeederDrumFed(spoolKey)) {
+  // 2026-11-13 (Maksim): only while that feeder is loaded.
+  if (isFeederDrumShown(spoolKey)) {
     return 1;
   }
   // The Wire Drum card of this repo: confirming a material on it, or a print
@@ -3212,8 +3235,7 @@ function animateWireDrumAppearance(deltaSeconds) {
   // Recompute the drum-assembly visibility + door targets from the live door /
   // feeder state each frame (decoupled: the compartment door can show the drum
   // without opening the drum's own door). One reveal per drum.
-  wireDrumRevealTarget = computeWireDrumVisibleTarget("spool1");
-  wireDrum2RevealTarget = computeWireDrumVisibleTarget("spool2");
+  syncWireDrumRevealTargets();
 
   let changed = false;
   if (Math.abs(wireDrumRevealProgress - wireDrumRevealTarget) > 1e-6) {
@@ -7484,7 +7506,10 @@ const CHILLER_MM_TO_M = 1;
 // "left" in both the default 3/4 view and top-down). Tuned against the operator's
 // requested top-down layout. All metres, machine-relative so it is deterministic.
 const CHILLER_GAP_X = 0.087;        // gap beyond the machine's +X (left) face
-const CHILLER_DEPTH_OFFSET = 0.29;  // shift toward +Y (front) from machine centre
+// 0.19 (was 0.29 until 2026-11-13): the unit stays put while the front door
+// opens, so it stands 100 mm further back -- there the fully open door (135 deg)
+// passes its front corner with 20 mm to spare instead of cutting into it.
+const CHILLER_DEPTH_OFFSET = 0.19;  // shift toward +Y (front) from machine centre
 const CHILLER_Z_SPIN = -Math.PI / 2; // 90° clockwise viewed from above
 let chillerObject = null;
 let chillerLoadPromise = null;
@@ -7546,11 +7571,14 @@ function getChillerLocalBounds() {
   return chillerLocalBounds.isEmpty() ? null : chillerLocalBounds;
 }
 
-// Where the chiller belongs for the machine's CURRENT pose: just past the +X
-// (left) face, forward in depth, on the floor. The front door swings out past
-// that face, so with the door open the unit sits beside the open door and with
-// the door closed it tucks in beside the body (Maksim, 2026-11-09) -- see
-// updateChillerPlacement(), which glides between the two.
+// Where the chiller stands: just past the +X (left) face of the machine's BODY,
+// forward in depth, on the floor. It is a separate unit on the floor and it does
+// not move (Maksim, 2026-11-13: "when the door is opening the chiller shouldn't
+// move"). The machine is therefore measured with the front door CLOSED and
+// without the Materials lift, whatever it is doing right now, so the spot is the
+// same every time. (From 2026-11-09 it glided out beside the opened door: the
+// swung door widens the machine's bounding box. The door itself swings in front
+// of the unit and does not reach it.)
 function computeChillerTargetPosition() {
   if (!chillerObject || !robotRoot) {
     return null;
@@ -7559,8 +7587,21 @@ function computeChillerTargetPosition() {
   if (!chillerBounds) {
     return null;
   }
+  const frontDoor = getFrontDoorControlData();
+  const savedDoorValue = frontDoor ? frontDoor.state.value : 0;
+  if (frontDoor) {
+    setJointValue(frontDoor.state, frontDoor.closedValue, { syncSlider: false });
+  }
+  const savedLiftZ = robotRoot.position.z;
+  robotRoot.position.z = 0;
   robotRoot.updateMatrixWorld(true);
   const machineBounds = new THREE.Box3().setFromObject(robotRoot);
+  // Restored before anything is drawn, so a door in mid-swing carries on untouched.
+  robotRoot.position.z = savedLiftZ;
+  if (frontDoor) {
+    setJointValue(frontDoor.state, savedDoorValue, { syncSlider: false });
+  }
+  robotRoot.updateMatrixWorld(true);
   if (machineBounds.isEmpty()) {
     return null;
   }
@@ -7586,39 +7627,6 @@ function positionChillerBesideMachine() {
   }
   chillerObject.position.copy(target);
   chillerObject.updateMatrixWorld(true);
-  chillerPlacementTarget = target.clone();
-}
-
-// Per-frame: while the front door is swinging (or its state just settled), the
-// chiller glides to the placement that matches the machine's new footprint.
-let chillerPlacementTarget = null;
-let chillerLastDoorValue = null;
-const CHILLER_GLIDE_RATE = 7; // 1/s -- ~0.4 s to settle
-function updateChillerPlacement(deltaSeconds) {
-  if (!chillerObject || !chillerObject.visible || !robotRoot) {
-    return false;
-  }
-  const door = getFrontDoorControlData();
-  const doorValue = door ? door.state.value : 0;
-  if (chillerLastDoorValue === null || Math.abs(doorValue - chillerLastDoorValue) > 1e-5) {
-    chillerLastDoorValue = doorValue;
-    const target = computeChillerTargetPosition();
-    if (target) {
-      chillerPlacementTarget = target;
-    }
-  }
-  if (!chillerPlacementTarget) {
-    return false;
-  }
-  const remaining = chillerPlacementTarget.distanceTo(chillerObject.position);
-  if (remaining < 1e-4) {
-    return false;
-  }
-  const t = 1 - Math.exp(-CHILLER_GLIDE_RATE * deltaSeconds);
-  chillerObject.position.lerp(chillerPlacementTarget, remaining < 0.002 ? 1 : t);
-  chillerObject.updateMatrixWorld(true);
-  requestRender();
-  return true;
 }
 
 // Show/hide the chiller in step with the topbar toggle. Instant, no camera move.
@@ -7660,8 +7668,6 @@ function clearRobot() {
     });
   }
   robotRoot = null;
-  chillerPlacementTarget = null;
-  chillerLastDoorValue = null;
   jointStates = [];
   userStepMaterials = [];
   displayMaterials = [];
@@ -7788,11 +7794,11 @@ function measureDrumRestBounds(collect = null) {
     });
     return box;
   };
-  if (isFeederDrumFed("spool1")) {
+  if (isFeederDrumShown("spool1")) {
     const link = robotRoot.getObjectByName(`link:${WIRE_DRUM_LINK}`);
     if (link) bounds.union(measureIgnoringVisibility(link));
   }
-  if (isFeederDrumFed("spool2") && wireDrum2Frame && wireDrum2Parent) {
+  if (isFeederDrumShown("spool2") && wireDrum2Frame && wireDrum2Parent) {
     const wasAttached = wireDrum2Frame.parent === wireDrum2Parent;
     if (!wasAttached) wireDrum2Parent.add(wireDrum2Frame);
     bounds.union(measureIgnoringVisibility(wireDrum2Frame));
@@ -8093,6 +8099,10 @@ function computeResetViewStateUnshifted(zoomOutFactor) {
 // mesh tree, so it must not run every frame.
 let cachedResetViewState = null;
 function getCachedResetViewState() {
+  if (wireDrumSetChanged) {
+    wireDrumSetChanged = false;
+    cachedResetViewState = null;
+  }
   if (!cachedResetViewState) {
     cachedResetViewState = computeResetViewState();
   }
@@ -8149,10 +8159,21 @@ function isMenuViewOwnerActive(owner) {
   return false;
 }
 
+// Which drums the remembered Materials view frames ("10" = Feeder 1's only).
+// Load and Unload change the set; the open view then follows at once
+// (reframeMaterialsMenuViewIfDrumsChanged) instead of at the next reset.
+let materialsViewDrumSignature = "";
+function getMaterialsViewDrumSignature() {
+  return `${isFeederDrumShown("spool1") ? 1 : 0}${isFeederDrumShown("spool2") ? 1 : 0}`;
+}
+
 function rememberMenuViewCameraState(owner, state) {
   menuViewReturn = state
     ? { owner, state: { ...state, position: state.position.clone(), target: state.target.clone(), up: state.up.clone() } }
     : null;
+  if (owner === "materials") {
+    materialsViewDrumSignature = getMaterialsViewDrumSignature();
+  }
 }
 
 function clearMenuViewCameraState(owner) {
@@ -8170,6 +8191,7 @@ function refreshMenuViewHome() {
     const fresh = buildMaterialsMenuCameraState();
     if (fresh) {
       menuViewReturn.state = { ...fresh, position: fresh.position.clone(), target: fresh.target.clone(), up: fresh.up.clone() };
+      materialsViewDrumSignature = getMaterialsViewDrumSignature();
     }
   }
 }
@@ -8809,12 +8831,12 @@ navIconsUi = createNavIconsUi({
     const data = getTopCoverControlData();
     return data ? doorOpenFraction(data.topCoverState.value, data.closedValue, data.openValue) : 0;
   },
-  markUserActivity: () => markUserActivity(),
   createCatEgg: (iconEl, options) => new M600CatEgg(iconEl, options),
   prefersReducedMotion: () => Boolean(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches),
 });
 // Debug/QA (reference renders): pin the door icons at { front: 0..1, top: 0..1 },
-// set the cat mode ("random50" | "always" | "off"), make one 1-in-50 draw.
+// make every open a cat open for this page load ("always"; anything else goes
+// back to one in 50), make one 1-in-50 draw.
 window.__navStoryPreview = (override) => navIconsUi.setPreview(override);
 window.__frontDoorCat = (mode) => navIconsUi.setCatMode(mode);
 window.__frontDoorCatRoll = () => navIconsUi.rollCat();
@@ -10043,11 +10065,12 @@ function isWireDrumObject(object) {
   return object.name === `link:${WIRE_DRUM_LINK}` || object.name === `link:${WIRE_DRUM_2_LINK}`;
 }
 
-// World boxes of the drums whose feeder is drum-fed, measured where they WILL
-// stand (drum 2 at its target slot, even mid-glide) and ignoring the fade.
+// World boxes of the feeders' drums that are shown (drum-fed and loaded),
+// measured where they WILL stand (drum 2 at its target slot, even mid-glide)
+// and ignoring the fade.
 function getVisibleDrumWorldBoxes() {
   const boxes = [];
-  if (isFeederDrumFed("spool1") && robotRoot) {
+  if (isFeederDrumShown("spool1") && robotRoot) {
     const drum1 = robotRoot.getObjectByName(`link:${WIRE_DRUM_LINK}`);
     if (drum1) {
       drum1.updateMatrixWorld(true);
@@ -10055,7 +10078,7 @@ function getVisibleDrumWorldBoxes() {
       if (!box.isEmpty()) boxes.push(box);
     }
   }
-  if (isFeederDrumFed("spool2") && wireDrum2Frame && wireDrum2Parent) {
+  if (isFeederDrumShown("spool2") && wireDrum2Frame && wireDrum2Parent) {
     const wasAttached = wireDrum2Frame.parent === wireDrum2Parent;
     const savedPosition = wireDrum2Frame.position.clone();
     if (!wasAttached) wireDrum2Parent.add(wireDrum2Frame);
@@ -10080,12 +10103,25 @@ const MATERIALS_POPUP_CLEAR_GAP_PX = 28;
 // [hidden] (the camera state is built BEFORE the popup is shown): the hidden
 // attribute is lifted for one synchronous layout read with visibility:hidden,
 // so nothing paints. Returns null when the viewport is unmeasurable (0 x 0).
+const MATERIALS_POPUP_TRANSIENT_LINE_IDS = ["materialsConfirmStatus", "materialsSpoolAmountValidation"];
 function measureMaterialsPopupRect() {
   const popup = document.getElementById("materialsMenuPopup");
   const viewW = window.innerWidth;
   const viewH = window.innerHeight;
   if (!popup || viewW < 50 || viewH < 50) {
     return null;
+  }
+  // Status lines come and go ("Feeder 1 loaded.", the amount validation
+  // message) and make the popup 33 px taller while they show. The view must not
+  // follow them: fitted around a taller popup, the next Reset view / idle
+  // return landed 5-15 cm away from the view on screen (Maksim, 2026-11-13).
+  // Measure the popup's RESTING rect -- those lines taken out for the one
+  // synchronous layout read, so nothing paints.
+  const transientLines = MATERIALS_POPUP_TRANSIENT_LINE_IDS
+    .map((id) => document.getElementById(id))
+    .filter((el) => el && !el.hidden);
+  for (const el of transientLines) {
+    el.hidden = true;
   }
   const wasHidden = popup.hasAttribute("hidden");
   let rect;
@@ -10098,6 +10134,9 @@ function measureMaterialsPopupRect() {
     popup.style.visibility = prevVisibility;
   } else {
     rect = popup.getBoundingClientRect();
+  }
+  for (const el of transientLines) {
+    el.hidden = false;
   }
   if (!rect || rect.width <= 0 || rect.height <= 0) {
     return null;
@@ -10146,14 +10185,35 @@ function buildMaterialsMenuCameraState() {
   if (viewWasEnabled) {
     view.enabled = false;
   }
+  // The view is FOR the open menu, where the machine stands lifted by
+  // MATERIALS_MENU_MODEL_LIFT_M. It is built at the tap, before the lift has
+  // started, and again by Reset view and the idle return once it has finished.
+  // Measured at whatever height the machine had at that moment, those two came
+  // out 200 mm apart: the menu opened on one view and later "reset" to another
+  // (Maksim, 2026-11-13). Always measure the settled, lifted pose -- the same
+  // way measureRobotBoundsAtRest measures the main view at lift 0.
+  const savedLiftZ = robotRoot ? robotRoot.position.z : 0;
+  if (robotRoot) {
+    robotRoot.position.z = MATERIALS_MENU_MODEL_LIFT_M;
+    robotRoot.updateMatrixWorld(true);
+  }
   try {
     return buildMaterialsMenuCameraStateUnshifted();
   } finally {
+    if (robotRoot) {
+      robotRoot.position.z = savedLiftZ;
+      robotRoot.updateMatrixWorld(true);
+    }
     if (viewWasEnabled) {
       view.enabled = true;
     }
   }
 }
+// Debug/QA: the Materials view as it would be built right now.
+window.__materialsViewState = () => {
+  const state = robotRoot ? buildMaterialsMenuCameraState() : null;
+  return state ? { position: state.position.toArray(), target: state.target.toArray() } : null;
+};
 
 function buildMaterialsMenuCameraStateUnshifted() {
   const spoolsState = buildSpoolsDoorButtonCameraState(getSpoolsPairWorldPoint(controls.target));
@@ -10300,6 +10360,15 @@ function reframeMaterialsMenuView() {
   const cameraState = buildMaterialsMenuCameraState();
   beginCameraTransition(cameraState, SPOOLS_DOOR_BUTTON_CAMERA_DURATION_MS, { distanceLock: null });
   rememberMenuViewCameraState("materials", cameraState);
+}
+
+// Load / Unload in the open menu: a drum appeared or went away, so the framed
+// set changed -- glide to the view for the new set now (Maksim, 2026-11-13).
+// Nothing happens when the set is the same (a spool loaded, an amount edited).
+function reframeMaterialsMenuViewIfDrumsChanged() {
+  if (isMaterialsMenuOpen && getMaterialsViewDrumSignature() !== materialsViewDrumSignature) {
+    reframeMaterialsMenuView();
+  }
 }
 
 function runSpoolsDoorButtonAction(spoolsDoorWorldPoint) {
@@ -11963,7 +12032,6 @@ function animate(nowMs = performance.now()) {
   updateFilesMenuDoorSeeThrough();
   updateMaterialsModelLift(deltaSeconds);
   updateCameraTransition(nowMs);
-  updateChillerPlacement(deltaSeconds);
   updateFirstViewSettle(nowMs);
   feedstockHighlight.update(nowMs);
   updateIdleReset(nowMs);
@@ -12965,6 +13033,7 @@ initMaterialsUi({
   OVERLAY_MENU_SAFE_MARGIN_PX,
   setModelLift: (isRaised) => onMaterialsMenuToggled(isRaised),
   reframeMaterialsView: () => reframeMaterialsMenuView(),
+  reframeMaterialsViewIfDrumsChanged: () => reframeMaterialsMenuViewIfDrumsChanged(),
   setCloudModelMenuOpen: (open, opts) => setCloudModelMenuOpen(open, opts),
   isCloudModelMenuOpen: () => isCloudModelMenuOpen,
   setSlicerFullscreen: (open, opts) => slicerPaneUi.setFullscreen(open, opts),

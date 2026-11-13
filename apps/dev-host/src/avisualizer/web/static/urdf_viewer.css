@@ -10135,7 +10135,8 @@ body.light-mode .bottom-nav { --nav-story-ground: #f6f6f7; --nav-story-hole: #cf
 
 /* ==========================================================================
    Front door icon (2026-11-11): Maksim's <m600-front-door> web component +
-   cat Easter egg (ui/m600-front-door.js, ui/m600-cat-egg.js, used unmodified).
+   cat Easter egg (ui/m600-front-door.js used unmodified; ui/m600-cat-egg.js
+   with bigger sleeping z's, 2026-11-13).
    The drawing lives in the component's shadow root, so only its documented
    custom properties are set here (size and position: see "Sizing" below).
    The light-DOM svg in the button is only the print Stop square.

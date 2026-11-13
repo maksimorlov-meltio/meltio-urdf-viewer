@@ -13,7 +13,7 @@ import { mountUrdfDom, el } from "./support/domFixture.mjs";
 mountUrdfDom();
 const materials = await import("../../hmi/materials.js");
 
-const calls = { refresh: 0, reframe: 0, lift: [] };
+const calls = { refresh: 0, reframe: 0, reframeIfDrums: 0, lift: [] };
 const feederFeedType = { spool1: "spool", spool2: "spool" };
 materials.initMaterialsUi({
   escapeHtml: (value) => String(value),
@@ -22,6 +22,7 @@ materials.initMaterialsUi({
   persistFeederFeedType() {},
   refreshFeedstockVisibility() { calls.refresh += 1; },
   reframeMaterialsView() { calls.reframe += 1; },
+  reframeMaterialsViewIfDrumsChanged() { calls.reframeIfDrums += 1; },
   setModelLift(isRaised) { calls.lift.push(isRaised); },
   isCloudModelMenuOpen: () => false,
   setCloudModelMenuOpen() {},
@@ -81,4 +82,25 @@ test("changing a feeder's feed type updates the scene and asks the host to re-fr
   change("materialsFeedTypeSelect", "spool");
   assert.equal(feederFeedType.spool2, "spool");
   assert.equal(calls.reframe, reframeBefore + 2);
+});
+
+test("Load and Unload tell the host that a drum may have come or gone", () => {
+  // A feeder shows its drum only while it is loaded, so both actions can change
+  // what the Materials view has to frame. The host decides whether it did.
+  materials.setHotspotMaterialsFocusSpool("spool1");
+  change("materialsMaterialSelect", "ti64");
+  el("materialsSpoolAmountInput").value = "600";
+  const before = calls.reframeIfDrums;
+  assert.equal(materials.commitMaterialsMenuSelection(), true);
+  assert.equal(calls.reframeIfDrums, before + 1, "Load");
+  materials.unloadFocusedFeeder();
+  assert.equal(calls.reframeIfDrums, before + 2, "Unload");
+});
+
+test("a Load that is refused changes nothing and asks for nothing", () => {
+  materials.setHotspotMaterialsFocusSpool("spool1");
+  materials.unloadFocusedFeeder();                 // leaves no material picked
+  const before = calls.reframeIfDrums;
+  assert.equal(materials.commitMaterialsMenuSelection(), false);
+  assert.equal(calls.reframeIfDrums, before);
 });

@@ -293,6 +293,10 @@ export function unloadFocusedFeeder() {
   updateHotspotMaterialAssignmentStatus();
   deps.updateCloudPrintSimulationControls();
   persistMaterialsState();
+  // A drum may have come or gone with this: the open Materials view follows.
+  if (typeof deps.reframeMaterialsViewIfDrumsChanged === "function") {
+    deps.reframeMaterialsViewIfDrumsChanged();
+  }
 }
 
 export function setMaterialActionLoadingState(spoolKey, isLoading) {
@@ -875,6 +879,10 @@ export function commitMaterialsMenuSelection() {
   // material gate/consumption; it does not otherwise alter the print cycle.
   if (focusedSpoolKey === "wiredrum") {
     deps.setWireDrumConnected(true);
+  }
+  // A drum may have come or gone with this: the open Materials view follows.
+  if (typeof deps.reframeMaterialsViewIfDrumsChanged === "function") {
+    deps.reframeMaterialsViewIfDrumsChanged();
   }
   return true;
 }

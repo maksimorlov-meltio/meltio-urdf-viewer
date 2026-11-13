@@ -22,6 +22,7 @@ import {
   materialUsageLog,
   buildPersistedMaterialsState,
   restorePersistedMaterialsState,
+  isFeederLoaded,
 } from "../../hmi/state/materialsState.js";
 
 test("setSpoolAmountState sets manual amount and resets usage", () => {
@@ -217,4 +218,29 @@ test("the selected job's grams are read back through the accessor that pairs wit
   // see coming. This is the whole external surface they have left.
   setSelectedPrintJobUsage(640, 705);
   assert.deepEqual(getSelectedPrintJobUsage(), { estimatedGrams: 640, actualGrams: 705 });
+});
+
+test("a feeder is loaded only with a material assigned AND some of it left", () => {
+  // The scene shows a feeder's spool or drum only when this is true. The default
+  // amounts (800 g / 450 g) belong to "Not assigned": stock alone is not a load.
+  const saved = { m1: hotspotMaterialAssignments.spool1, m2: hotspotMaterialAssignments.spool2 };
+  try {
+    hotspotMaterialAssignments.spool1 = null;
+    hotspotMaterialAssignments.spool2 = null;
+    setSpoolAmountState("spool1", 800);
+    setSpoolAmountState("spool2", 450);
+    assert.equal(isFeederLoaded("spool1"), false, "amount without a material");
+
+    hotspotMaterialAssignments.spool1 = "ti64";
+    assert.equal(isFeederLoaded("spool1"), true);
+    assert.equal(isFeederLoaded("spool2"), false, "each feeder answers for itself");
+
+    spoolRemainingAmountGramsByKey.spool1 = 0;
+    assert.equal(isFeederLoaded("spool1"), false, "a material with nothing left");
+  } finally {
+    hotspotMaterialAssignments.spool1 = saved.m1;
+    hotspotMaterialAssignments.spool2 = saved.m2;
+    setSpoolAmountState("spool1", DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY.spool1);
+    setSpoolAmountState("spool2", DEFAULT_SPOOL_MANUAL_GRAMS_BY_KEY.spool2);
+  }
 });

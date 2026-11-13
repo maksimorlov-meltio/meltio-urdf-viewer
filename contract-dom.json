@@ -3,7 +3,7 @@
   "contractVersion": 2,
   "totals": {
     "modules": 32,
-    "domIds": 223,
+    "domIds": 222,
     "assemblyDomIds": 127,
     "globals": 8
   },
@@ -200,7 +200,6 @@
     "settingsCalibrateNozzleProbeButton",
     "settingsCalibrateToggle",
     "settingsCalibrateWorkingDistanceButton",
-    "settingsDoorCatButton",
     "settingsExitAdvancedMode",
     "settingsFixturesButton",
     "settingsLightToggle",
@@ -626,6 +625,7 @@
         "markUserActivity",
         "persistFeederFeedType",
         "reframeMaterialsView",
+        "reframeMaterialsViewIfDrumsChanged",
         "refreshFeedstockVisibility",
         "setActiveHotspotPanel",
         "setCloudModelMenuOpen",
@@ -689,14 +689,12 @@
         "navFrontDoorIcon",
         "navMaterialsIcon",
         "navMaterialsToggle",
-        "navTopDoorIcon",
-        "settingsDoorCatButton"
+        "navTopDoorIcon"
       ],
       "injectedDeps": [
         "createCatEgg",
         "getFrontDoorFraction",
         "getTopCoverFraction",
-        "markUserActivity",
         "prefersReducedMotion"
       ],
       "globalsRead": [
