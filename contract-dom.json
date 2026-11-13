@@ -4,7 +4,7 @@
   "totals": {
     "modules": 32,
     "domIds": 222,
-    "assemblyDomIds": 127,
+    "assemblyDomIds": 128,
     "globals": 8
   },
   "domIds": [
@@ -279,15 +279,16 @@
     "controlsSidebarToggle",
     "controlsTopCoverButton",
     "displayTransparencyEnabled",
-    "feederCameraAnchorLeft",
     "feederDriveDown",
     "feederDriveLeft",
     "feederDriveRight",
     "feederDriveStop",
     "feederDriveUp",
     "feederJogLeftDown",
+    "feederJogLeftStop",
     "feederJogLeftUp",
     "feederJogRightDown",
+    "feederJogRightStop",
     "feederJogRightUp",
     "feederWheelFloatLeftDown",
     "feederWheelFloatLeftStop",

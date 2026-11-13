@@ -240,12 +240,13 @@ const feederDriveStopEl = document.getElementById("feederDriveStop");
 const feederDriveRightEl = document.getElementById("feederDriveRight");
 const feederDriveUpEl = document.getElementById("feederDriveUp");
 const feederDriveDownEl = document.getElementById("feederDriveDown");
-const feederCameraAnchorLeftEl = document.getElementById("feederCameraAnchorLeft");
 // Controls ▸ Feeder panel per-wheel jog (replaces the old wheel-switch + single
 // Up/Stop/Down "Feeder Drive"). Each button is a TOGGLE: click drives that
 // wheel, clicking the active one again stops it (see the click wiring below).
 const feederJogLeftUpEl = document.getElementById("feederJogLeftUp");
 const feederJogLeftDownEl = document.getElementById("feederJogLeftDown");
+const feederJogLeftStopEl = document.getElementById("feederJogLeftStop");
+const feederJogRightStopEl = document.getElementById("feederJogRightStop");
 const feederJogRightUpEl = document.getElementById("feederJogRightUp");
 const feederJogRightDownEl = document.getElementById("feederJogRightDown");
 const hotspotContextPanelEl = document.getElementById("hotspotContextPanel");
@@ -1351,40 +1352,10 @@ function applyCameraState(state) {
   camera.updateProjectionMatrix();
 }
 
+// The Controls "Feeder view" button this used to drive is gone (Maksim,
+// 2026-11-13); what remains is the refresh of the floating wheel controls that
+// follows every change of the feeder camera anchor.
 function updateFeederCameraAnchorButtons() {
-  const hasModel = Boolean(robotRoot);
-  // The Feeder View button now lives inside #feederDriveSection
-  // (data-requires-permission="machine.motion"). That permission gate
-  // snapshots/restores `.disabled` around deny/grant, which would otherwise
-  // fight with the hasModel-driven disable below (e.g. a deny snapshot taken
-  // before the model finished loading gets restored stale after sign-in).
-  // Re-check the live permission here so this function is always the final,
-  // correct word, in both directions, whenever it re-runs (model load,
-  // camera-anchor changes, or the MeltioPermissions.onChange hook below).
-  const permissionDenied = Boolean(
-    window.MeltioPermissions
-    && typeof window.MeltioPermissions.can === "function"
-    && !window.MeltioPermissions.can("machine.motion"),
-  );
-  const buttonConfigs = [
-    [feederCameraAnchorLeftEl, "left"],
-  ];
-
-  for (const [buttonEl, side] of buttonConfigs) {
-    if (!buttonEl) {
-      continue;
-    }
-
-    const isActive = hasModel && activeFeederCameraAnchorSide === side;
-    buttonEl.disabled = !hasModel || permissionDenied;
-    buttonEl.classList.toggle("active", isActive);
-    buttonEl.setAttribute("aria-pressed", isActive ? "true" : "false");
-  }
-
-  // The Feeder section (Feeder View toggle + per-wheel jog) is always visible
-  // in Controls now, regardless of whether the Feeder camera view is active
-  // (permission gating via data-requires-permission still applies).
-
   updateFeederWheelFloatingControls();
 }
 
@@ -2097,11 +2068,14 @@ function updateFeederDriveButtons() {
   setToggleButtonState(feederDriveRightEl, rightActive);
   setToggleButtonState(feederDriveUpEl, upActive);
   setToggleButtonState(feederDriveDownEl, downActive);
-  // Controls ▸ Feeder panel per-wheel jog buttons (one active at a time).
+  // Controls ▸ Feeder panel, per wheel: Up / Stop / Down. Exactly one of the
+  // three is lit in each column; Stop while that wheel stands still.
   setToggleButtonState(feederJogLeftUpEl, leftActive && upActive);
   setToggleButtonState(feederJogLeftDownEl, leftActive && downActive);
+  setToggleButtonState(feederJogLeftStopEl, !(leftActive && (upActive || downActive)));
   setToggleButtonState(feederJogRightUpEl, rightActive && upActive);
   setToggleButtonState(feederJogRightDownEl, rightActive && downActive);
+  setToggleButtonState(feederJogRightStopEl, !(rightActive && (upActive || downActive)));
   updateFilesSelectedSpoolFeederButtons();
 
   updateFeederDriveDirectionIndicator();
@@ -12244,32 +12218,34 @@ if (feederDriveDownEl) {
   });
 }
 
-// Controls ▸ Feeder panel per-wheel jog: each button is a TOGGLE. Clicking the
-// wheel+direction that is already driving stops it; otherwise it starts (or
-// switches) that wheel in that direction via runFeederFloatingCommand().
-function runFeederJogToggle(side, direction) {
+// Controls ▸ Feeder panel, per wheel (Maksim, 2026-11-13): Up and Down START
+// that wheel in that direction, the Stop between them ends it. Up / Down are
+// no longer toggles -- with a Stop button a second press must not stop the
+// wheel by surprise. Stop only acts on its own wheel.
+function runFeederJog(side, direction) {
   markUserActivity();
-  if (feederDriveSide === side && feederDriveVertical === direction) {
-    setFeederDriveStop();
-    return;
-  }
   runFeederFloatingCommand(side, direction);
 }
-
-if (feederJogLeftUpEl) {
-  feederJogLeftUpEl.addEventListener("click", () => runFeederJogToggle("left", "up"));
+function stopFeederJog(side) {
+  markUserActivity();
+  if (feederDriveSide === side) {
+    setFeederDriveStop();
+  }
 }
-
-if (feederJogLeftDownEl) {
-  feederJogLeftDownEl.addEventListener("click", () => runFeederJogToggle("left", "down"));
+for (const [buttonEl, side, direction] of [
+  [feederJogLeftUpEl, "left", "up"],
+  [feederJogLeftDownEl, "left", "down"],
+  [feederJogRightUpEl, "right", "up"],
+  [feederJogRightDownEl, "right", "down"],
+]) {
+  if (buttonEl) {
+    buttonEl.addEventListener("click", () => runFeederJog(side, direction));
+  }
 }
-
-if (feederJogRightUpEl) {
-  feederJogRightUpEl.addEventListener("click", () => runFeederJogToggle("right", "up"));
-}
-
-if (feederJogRightDownEl) {
-  feederJogRightDownEl.addEventListener("click", () => runFeederJogToggle("right", "down"));
+for (const [buttonEl, side] of [[feederJogLeftStopEl, "left"], [feederJogRightStopEl, "right"]]) {
+  if (buttonEl) {
+    buttonEl.addEventListener("click", () => stopFeederJog(side));
+  }
 }
 
 if (feederWheelFloatLeftUpEl) {
@@ -12359,23 +12335,6 @@ if (filesFeederWheelRightEl) {
   });
 }
 
-if (feederCameraAnchorLeftEl) {
-  feederCameraAnchorLeftEl.addEventListener("click", () => {
-    markUserActivity();
-    focusFeederCameraAnchor("left");
-  });
-}
-
-// The Feeder View button's `.disabled` is driven by hasModel (see
-// updateFeederCameraAnchorButtons), independently of the permission gate that
-// now also wraps it (#feederDriveSection has data-requires-permission). The
-// permission module snapshots/restores `.disabled` around deny/grant, so a
-// deny captured before the model finished loading would otherwise leave the
-// button stuck disabled after signing in. Re-run our own update on every
-// permission change so the hasModel-driven state always wins last.
-if (window.MeltioPermissions && typeof window.MeltioPermissions.onChange === "function") {
-  window.MeltioPermissions.onChange(() => updateFeederCameraAnchorButtons());
-}
 
 if (wireDrumAppearButtonEl) {
   wireDrumAppearButtonEl.addEventListener("click", () => {
