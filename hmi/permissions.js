@@ -299,12 +299,42 @@
     lastChipKey = key;
     accountChipEl.innerHTML = "";
     accountChipEl.classList.toggle("is-signed-in", isSignedIn());
+    // Signed out the chip is just "Sign in" (Maksim, 2026-11-10: no "Not signed
+    // in" line, the button highlights on hover). Signed in: name + level.
     const text = h("span", { class: "perm-account-chip-text" },
-      h("span", { class: "perm-account-chip-name" }, currentUser ? currentUser.name : "Sign in"),
-      h("span", { class: "perm-account-chip-level" }, currentLevelName()));
+      h("span", { class: "perm-account-chip-name" }, currentUser ? currentUser.name : "Sign in"));
+    if (currentUser) {
+      text.append(h("span", { class: "perm-account-chip-level" }, currentLevelName()));
+    }
     accountChipEl.append(avatarEl(currentUser, "perm-avatar-sm"), text);
     accountChipEl.title = currentUser ? `${currentUser.name} — ${currentLevelName()}` : "Sign in";
   }
+
+  // ---- Sign-in prompt -------------------------------------------------------
+  // Signed out, a tap on anything locked for guests (the dimmed Controls
+  // sections, gated buttons) pulses the top-bar "Sign in" chip so the operator
+  // sees WHERE to unlock it (Maksim, 2026-11-10). Locked controls have
+  // pointer-events:none, so the tap lands on their gated container. One
+  // listener on the document, installed once; it touches a class on the chip
+  // and nothing else.
+  let signInPromptTimer = null;
+  function promptSignIn() {
+    if (!accountChipEl || isSignedIn()) return;
+    accountChipEl.classList.remove("perm-attention");
+    void accountChipEl.offsetWidth; // restart the animation on repeated taps
+    accountChipEl.classList.add("perm-attention");
+    clearTimeout(signInPromptTimer);
+    signInPromptTimer = setTimeout(() => accountChipEl && accountChipEl.classList.remove("perm-attention"), 2400);
+  }
+  function installSignInPrompt() {
+    document.addEventListener("pointerdown", (event) => {
+      if (isSignedIn()) return;
+      const target = event.target && typeof event.target.closest === "function" ? event.target : null;
+      if (!target || !target.closest(".perm-denied-guest")) return;
+      promptSignIn();
+    }, true);
+  }
+  installSignInPrompt();
 
   // ---- Settings header account block ----------------------------------------
   // The Sign in/out button is created ONCE here and never replaced. That is the
@@ -346,11 +376,16 @@
     if (key === lastSettingsKey) return;
     lastSettingsKey = key;
     settingsAccountInfoEl.innerHTML = "";
-    settingsAccountInfoEl.append(
-      avatarEl(currentUser, "perm-avatar-lg"),
-      h("div", { class: "perm-settings-account-text" },
-        h("span", { class: "perm-settings-account-name" }, currentUser ? currentUser.name : "Not signed in"),
-        h("span", { class: currentUser ? "perm-settings-account-level" : "perm-settings-account-level is-hint" }, currentLevelName())));
+    // Signed out: the avatar and one full-width Sign in button, no "Not signed
+    // in" twice (Maksim, 2026-11-10). The button itself is never recreated.
+    settingsAccountEl.classList.toggle("is-signed-out", !currentUser);
+    settingsAccountInfoEl.append(avatarEl(currentUser, "perm-avatar-lg"));
+    if (currentUser) {
+      settingsAccountInfoEl.append(
+        h("div", { class: "perm-settings-account-text" },
+          h("span", { class: "perm-settings-account-name" }, currentUser.name),
+          h("span", { class: "perm-settings-account-level" }, currentLevelName())));
+    }
     settingsAccountButtonEl.className = isSignedIn() ? "btn-secondary" : "btn-primary";
     settingsAccountButtonEl.textContent = isSignedIn() ? "Sign out" : "Sign in";
   }

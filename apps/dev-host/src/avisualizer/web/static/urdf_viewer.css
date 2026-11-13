@@ -9902,6 +9902,52 @@ body.light-mode .ds-select-option svg { stroke: #07080a; }
 }
 
 /* ==========================================================================
+   2026-11-10 (Maksim) -- sign-in chip, sign-in prompt, Settings menu gap.
+   ========================================================================== */
+/* Signed out: just "Sign in" -- no status dot, no second line; the button
+   highlights on hover. */
+.perm-account-chip:not(.is-signed-in)::after { content: none; }
+.perm-account-chip:not(.is-signed-in) { padding-right: 14px; transition: background 0.15s ease, border-color 0.15s ease; }
+.perm-account-chip:not(.is-signed-in):hover,
+.perm-account-chip:not(.is-signed-in):focus-visible {
+  border-color: rgba(255, 255, 255, 0.60);
+  background: rgba(255, 255, 255, 0.08);
+}
+body.light-mode .perm-account-chip:not(.is-signed-in):hover,
+body.light-mode .perm-account-chip:not(.is-signed-in):focus-visible {
+  border-color: rgba(7, 8, 10, 0.55);
+  background: rgba(7, 8, 10, 0.06);
+}
+/* A signed-out tap on a locked control pulses the chip (white accent, DS v3). */
+@keyframes permSignInAttention {
+  0%, 100% { background: transparent; border-color: rgba(255, 255, 255, 0.30); }
+  50% { background: rgba(255, 255, 255, 0.20); border-color: #ffffff; }
+}
+.perm-account-chip.perm-attention:not(.is-signed-in) {
+  animation: permSignInAttention 0.8s ease-in-out 3;
+}
+@keyframes permSignInAttentionLight {
+  0%, 100% { background: transparent; border-color: rgba(7, 8, 10, 0.30); }
+  50% { background: rgba(7, 8, 10, 0.16); border-color: #07080a; }
+}
+body.light-mode .perm-account-chip.perm-attention:not(.is-signed-in) {
+  animation-name: permSignInAttentionLight;
+}
+/* Settings account block, signed out: avatar + one full-width Sign in button. */
+.perm-settings-account.is-signed-out .perm-settings-account-info { flex: none; }
+.perm-settings-account.is-signed-out .perm-settings-account-actions { flex: 1 1 auto; min-width: 0; }
+.perm-settings-account.is-signed-out .perm-settings-account-actions > button { width: 100%; }
+/* Settings menu hangs at the SAME distance below the top bar as the Controls
+   panel (was 1 px under the bar). Tops mirror the .controls-panel media rules. */
+.topbar-settings-menu { position: fixed; top: 84px; right: 12px; }
+@media screen and (orientation: portrait) and (min-width: 1000px) and (min-height: 1600px) {
+  .topbar-settings-menu { top: 122px; right: 14px; }
+}
+@media screen and (orientation: landscape) and (min-width: 1900px) and (max-width: 1940px) and (min-height: 1000px) and (max-height: 1120px) {
+  .topbar-settings-menu { top: 96px; }
+}
+
+/* ==========================================================================
    2026-11-10 -- Materials peek card (long press on the materials door / drum).
    DS v3: solid ground, hairline border, no shadow, white accent.
    ========================================================================== */
